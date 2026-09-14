@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import mimetypes
 import os
 import re
@@ -308,6 +309,12 @@ class IPTVEngine:
     def output(self, channel_id):
         return IPTV_DIR / safe_channel_id(channel_id) / "channel.mp4"
 
+    def hls_dir(self, channel_id):
+        return IPTV_DIR / safe_channel_id(channel_id) / "hls"
+
+    def hls_manifest(self, channel_id):
+        return self.hls_dir(channel_id) / "channel.m3u8"
+
     def runtime_status(self):
         with self.lock:
             result = copy.deepcopy(self.status)
@@ -315,8 +322,8 @@ class IPTVEngine:
             channel_id = safe_channel_id(channel.get("id", ""))
             if channel_id not in result:
                 result[channel_id] = {
-                    "state": "ready" if self.output(channel_id).is_file() else "not_built",
-                    "message": "Canale pronto" if self.output(channel_id).is_file() else "Premi Crea/Aggiorna canale",
+                    "state": "ready" if self.hls_manifest(channel_id).is_file() else "not_built",
+                    "message": "Canale HLS pronto" if self.hls_manifest(channel_id).is_file() else "Premi Crea/Aggiorna canale",
                     "time": "",
                 }
         return result
@@ -377,6 +384,7 @@ class IPTVEngine:
                     "-map", "0:v:0", "-map", "1:a:0", "-vf", video_filter,
                     "-c:v", "libx264", "-preset", "superfast",
                     "-crf", "22", "-profile:v", "high", "-level", "4.0",
+                    "-g", "50", "-keyint_min", "50", "-sc_threshold", "0",
                     "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "96k",
                     "-ar", "48000", "-ac", "2", "-t", str(duration), "-shortest",
                     "-movflags", "+faststart", str(part),
@@ -398,8 +406,43 @@ class IPTVEngine:
             ], check=True, capture_output=True, text=True, timeout=30)
             if probe.stdout.strip() != "h264" or temporary.stat().st_size < 1024:
                 raise RuntimeError("Il file IPTV generato non è un video H.264 valido")
+            self.set_status(channel_id, "building", "Preparazione flusso HLS compatibile con Smart TV")
+            hls_temporary = work / "hls.tmp"
+            shutil.rmtree(hls_temporary, ignore_errors=True)
+            hls_temporary.mkdir(parents=True, exist_ok=True)
+            loop_segment = hls_temporary / "loop.ts"
+            subprocess.run([
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                "-i", str(temporary), "-map", "0:v:0", "-map", "0:a:0?",
+                "-c", "copy", "-bsf:v", "h264_mp4toannexb",
+                "-mpegts_flags", "+resend_headers", "-f", "mpegts", str(loop_segment),
+            ], check=True, timeout=600)
+            duration_probe = subprocess.run([
+                "ffprobe", "-v", "error", "-show_entries", "format=duration",
+                "-of", "default=nw=1:nk=1", str(temporary),
+            ], check=True, capture_output=True, text=True, timeout=30)
+            cycle_duration = max(1.0, float(duration_probe.stdout.strip()))
+            repetitions = min(50000, max(1, math.ceil((24 * 60 * 60) / cycle_duration)))
+            manifest_lines = [
+                "#EXTM3U",
+                "#EXT-X-VERSION:3",
+                f"#EXT-X-TARGETDURATION:{math.ceil(cycle_duration)}",
+                "#EXT-X-MEDIA-SEQUENCE:0",
+                "#EXT-X-PLAYLIST-TYPE:VOD",
+            ]
+            for repetition in range(repetitions):
+                if repetition:
+                    manifest_lines.append("#EXT-X-DISCONTINUITY")
+                manifest_lines += [f"#EXTINF:{cycle_duration:.3f},", f"loop.ts?v={repetition}"]
+            manifest_lines.append("#EXT-X-ENDLIST")
+            (hls_temporary / "channel.m3u8").write_text(
+                "\n".join(manifest_lines) + "\n", encoding="utf-8"
+            )
+            final_hls = self.hls_dir(channel_id)
+            shutil.rmtree(final_hls, ignore_errors=True)
+            os.replace(hls_temporary, final_hls)
             os.replace(temporary, self.output(channel_id))
-            self.set_status(channel_id, "ready", "Canale pronto")
+            self.set_status(channel_id, "ready", "Canale HLS pronto (foto e video)")
             store.log("success", f"Canale IPTV creato: {channel.get('name', channel_id)}")
         except Exception as error:
             self.set_status(channel_id, "error", str(error))
@@ -725,6 +768,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Accept-Ranges", "bytes")
         self.send_header("Content-Length", str(length))
         self.send_header("Cache-Control", "public, max-age=3600" if cache else "no-store")
+        self.send_header("Access-Control-Allow-Origin", "*")
         if status == HTTPStatus.PARTIAL_CONTENT:
             self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
         self.end_headers()
@@ -762,7 +806,7 @@ class Handler(BaseHTTPRequestHandler):
                 for channel in iptv.channels():
                     channel_id = safe_channel_id(channel.get("id", ""))
                     name = channel.get("name") or channel_id
-                    lines += [f'#EXTINF:-1 tvg-id="{channel_id}" group-title="Carellas",{name}', f"{local_base_url()}/iptv/{channel_id}.ts"]
+                    lines += [f'#EXTINF:-1 tvg-id="{channel_id}" group-title="Carellas",{name}', f"{local_base_url()}/iptv/{channel_id}/channel.m3u8"]
                 self.send_text("\r\n".join(lines) + "\r\n", "audio/x-mpegurl; charset=utf-8")
                 return
             match = re.fullmatch(r"/iptv/([a-z0-9-]+)\.m3u", path)
@@ -773,8 +817,15 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_text("Canale non trovato", status=404)
                     return
                 name = channel.get("name") or channel_id
-                payload = f'#EXTM3U\r\n#EXTINF:-1 tvg-id="{channel_id}" group-title="Carellas",{name}\r\n{local_base_url()}/iptv/{channel_id}.ts\r\n'
+                payload = f'#EXTM3U\r\n#EXTINF:-1 tvg-id="{channel_id}" group-title="Carellas",{name}\r\n{local_base_url()}/iptv/{channel_id}/channel.m3u8\r\n'
                 self.send_text(payload, "audio/x-mpegurl; charset=utf-8")
+                return
+            match = re.fullmatch(r"/iptv/([a-z0-9-]+)/(channel\.m3u8|loop\.ts)", path)
+            if match:
+                channel_id = safe_channel_id(match.group(1))
+                filename = match.group(2)
+                target = iptv.hls_dir(channel_id) / filename
+                self.send_file(target, cache=filename == "loop.ts")
                 return
             match = re.fullmatch(r"/iptv/([a-z0-9-]+)\.ts", path)
             if match:

@@ -129,7 +129,7 @@ class CarellasServerTest(unittest.TestCase):
             body = response.read().decode()
             self.assertEqual(response.headers.get_content_type(), "audio/x-mpegurl")
         self.assertIn("Sala Napoli", body)
-        self.assertIn("/iptv/sala-napoli.ts", body)
+        self.assertIn("/iptv/sala-napoli/channel.m3u8", body)
 
     def test_multi_tv_m3u_also_lists_channels_with_automation_disabled(self):
         self.app.store.update({"iptv": {"channels": [{
@@ -142,7 +142,21 @@ class CarellasServerTest(unittest.TestCase):
         with urllib.request.urlopen(self.base + "/iptv/channels.m3u") as response:
             body = response.read().decode()
         self.assertIn("Menu serale", body)
-        self.assertIn("/iptv/menu-serale.ts", body)
+        self.assertIn("/iptv/menu-serale/channel.m3u8", body)
+
+    def test_hls_manifest_and_segment_are_served(self):
+        hls = self.app.iptv.hls_dir("menu-serale")
+        hls.mkdir(parents=True, exist_ok=True)
+        (hls / "channel.m3u8").write_text(
+            "#EXTM3U\n#EXTINF:10.0,\nloop.ts?v=0\n#EXT-X-ENDLIST\n",
+            encoding="utf-8",
+        )
+        (hls / "loop.ts").write_bytes(b"transport-stream")
+        with urllib.request.urlopen(self.base + "/iptv/menu-serale/channel.m3u8") as response:
+            self.assertIn(b"loop.ts?v=0", response.read())
+            self.assertEqual(response.headers.get("Access-Control-Allow-Origin"), "*")
+        with urllib.request.urlopen(self.base + "/iptv/menu-serale/loop.ts?v=0") as response:
+            self.assertEqual(response.read(), b"transport-stream")
 
     def test_iptv_head_probe_returns_without_starting_ffmpeg(self):
         channel_id = "sala-napoli"
