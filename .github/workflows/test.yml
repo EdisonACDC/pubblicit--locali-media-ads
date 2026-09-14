@@ -18,5 +18,17 @@ jobs:
           python-version: "3.13"
       - name: Compile
         run: python -m py_compile carellas_media_ads/app/server.py
+      - name: Validate dashboard JavaScript
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          html = Path("carellas_media_ads/app/index.html").read_text()
+          scripts = re.findall(r"<script>(.*?)</script>", html, re.S)
+          if not scripts:
+              raise SystemExit("No inline JavaScript found")
+          Path("/tmp/carellas-dashboard.js").write_text("\n".join(scripts))
+          PY
+          node --check /tmp/carellas-dashboard.js
       - name: Unit tests
         run: python -m unittest discover -s tests -v
