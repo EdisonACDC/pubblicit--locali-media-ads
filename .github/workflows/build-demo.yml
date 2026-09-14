@@ -1,0 +1,57 @@
+name: Build Carellas demo media
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/build-demo.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  demo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download official Carellas photos
+        run: |
+          mkdir -p /tmp/carellas-demo
+          curl --fail --location --retry 3 "https://carellas.de/wp-content/uploads/2026/06/image.png" -o /tmp/carellas-demo/hero.png
+          curl --fail --location --retry 3 "https://carellas.de/wp-content/uploads/2021/08/carellas-restaurant-start-ueberuns.jpg" -o /tmp/carellas-demo/interior.jpg
+          curl --fail --location --retry 3 "https://carellas.de/wp-content/uploads/2025/02/Gutscheinvorlage.jpg" -o /tmp/carellas-demo/gutschein.jpg
+      - name: Create Full HD slides and H.264 demo
+        run: |
+          OUT="carellas_media_ads/app/bundled_media"
+          FONT="/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+          SMALL="/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+          FILTER1="scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,drawbox=x=0:y=0:w=iw:h=ih:color=black@0.30:t=fill,drawbox=x=80:y=705:w=1760:h=285:color=black@0.68:t=fill,drawtext=fontfile=${FONT}:text='BENVENUTI':fontcolor=white:fontsize=92:x=(w-text_w)/2:y=745,drawtext=fontfile=${SMALL}:text='Herzlich willkommen bei der Familie Carella':fontcolor=white:fontsize=43:x=(w-text_w)/2:y=875"
+          FILTER2="scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,drawbox=x=0:y=0:w=iw:h=ih:color=black@0.24:t=fill,drawbox=x=60:y=690:w=1800:h=310:color=black@0.70:t=fill,drawtext=fontfile=${FONT}:text='ITALIENISCHE LEIDENSCHAFT':fontcolor=white:fontsize=67:x=(w-text_w)/2:y=735,drawtext=fontfile=${SMALL}:text='Pizza aus dem Steinofen - Pasta - Dry Aged Steaks':fontcolor=white:fontsize=40:x=(w-text_w)/2:y=870"
+          FILTER3="scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,drawbox=x=0:y=0:w=iw:h=ih:color=black@0.28:t=fill,drawbox=x=80:y=705:w=1760:h=285:color=black@0.70:t=fill,drawtext=fontfile=${FONT}:text='ZEIT FUER GENUSS':fontcolor=white:fontsize=80:x=(w-text_w)/2:y=750,drawtext=fontfile=${SMALL}:text='Carellas Ristorante - Tauberbischofsheim':fontcolor=white:fontsize=43:x=(w-text_w)/2:y=875"
+          ffmpeg -hide_banner -loglevel error -y -i /tmp/carellas-demo/hero.png -vf "${FILTER1}" -frames:v 1 -q:v 2 "${OUT}/Demo_Carellas_01_Benvenuti.jpg"
+          ffmpeg -hide_banner -loglevel error -y -i /tmp/carellas-demo/interior.jpg -vf "${FILTER2}" -frames:v 1 -q:v 2 "${OUT}/Demo_Carellas_02_Cucina.jpg"
+          ffmpeg -hide_banner -loglevel error -y -i /tmp/carellas-demo/gutschein.jpg -vf "${FILTER3}" -frames:v 1 -q:v 2 "${OUT}/Demo_Carellas_03_Genuss.jpg"
+          {
+            echo "file '${GITHUB_WORKSPACE}/${OUT}/Demo_Carellas_01_Benvenuti.jpg'"
+            echo "duration 6"
+            echo "file '${GITHUB_WORKSPACE}/${OUT}/Demo_Carellas_02_Cucina.jpg'"
+            echo "duration 6"
+            echo "file '${GITHUB_WORKSPACE}/${OUT}/Demo_Carellas_03_Genuss.jpg'"
+            echo "duration 6"
+            echo "file '${GITHUB_WORKSPACE}/${OUT}/Demo_Carellas_03_Genuss.jpg'"
+          } > /tmp/carellas-demo/playlist.txt
+          ffmpeg -hide_banner -loglevel error -y -f concat -safe 0 -i /tmp/carellas-demo/playlist.txt -vf "fps=25,format=yuv420p" -c:v libx264 -profile:v high -level 4.0 -crf 21 -movflags +faststart "${OUT}/Demo_Carellas_SmartTV_DLNA.mp4"
+      - name: Validate generated media
+        run: |
+          test -s carellas_media_ads/app/bundled_media/Demo_Carellas_01_Benvenuti.jpg
+          test -s carellas_media_ads/app/bundled_media/Demo_Carellas_02_Cucina.jpg
+          test -s carellas_media_ads/app/bundled_media/Demo_Carellas_03_Genuss.jpg
+          ffprobe -v error -show_entries format=duration -of default=nw=1 carellas_media_ads/app/bundled_media/Demo_Carellas_SmartTV_DLNA.mp4
+      - name: Commit demo files
+        run: |
+          git config user.name "Carellas Demo Builder"
+          git config user.email "actions@users.noreply.github.com"
+          git add carellas_media_ads/app/bundled_media/Demo_Carellas_*
+          git commit -m "Add Carellas Smart TV demo media"
+          git push
