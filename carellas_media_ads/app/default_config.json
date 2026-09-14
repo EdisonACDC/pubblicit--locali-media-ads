@@ -1,0 +1,33 @@
+{
+  "language": "it",
+  "media_base_url": "",
+  "audio": {
+    "enabled": false,
+    "players": [],
+    "ads": [],
+    "mode": "rotate",
+    "interval_minutes": 30,
+    "repeat_count": 1,
+    "repeat_gap_seconds": 70,
+    "daily_limit": 20,
+    "volume": 35,
+    "only_when_playing": true,
+    "schedule": []
+  },
+  "music": {
+    "enabled": false,
+    "players": [],
+    "content_id": "",
+    "content_type": "music",
+    "volume": 25,
+    "stop_at_end": true,
+    "schedule": []
+  },
+  "tv": {
+    "enabled": false,
+    "player": "",
+    "playlist": [],
+    "loop": true,
+    "schedule": []
+  }
+}

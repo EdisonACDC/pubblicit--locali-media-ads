@@ -1,0 +1,575 @@
+#!/usr/bin/env python3
+"""Carellas Media Ads - Home Assistant app, no external Python dependencies."""
+
+from __future__ import annotations
+
+import copy
+import json
+import mimetypes
+import os
+import re
+import shutil
+import threading
+import time
+import traceback
+import urllib.error
+import urllib.parse
+import urllib.request
+import uuid
+from datetime import datetime
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+
+APP_DIR = Path(__file__).resolve().parent
+DATA_DIR = Path(os.environ.get("CARELLAS_DATA_DIR", "/data"))
+MEDIA_DIR = Path(os.environ.get("CARELLAS_MEDIA_DIR", "/media/carellas_media_ads"))
+CONFIG_FILE = DATA_DIR / "carellas_media_ads.json"
+DEFAULT_FILE = APP_DIR / "default_config.json"
+TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
+HA_API = os.environ.get("CARELLAS_HA_API", "http://supervisor/core/api")
+PORT = 8099
+MAX_UPLOAD = 1024 * 1024 * 500
+ALLOWED = {
+    "audio": {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"},
+    "image": {".jpg", ".jpeg", ".png", ".webp", ".gif"},
+    "video": {".mp4", ".m4v", ".mov", ".webm", ".mkv"},
+}
+
+
+def now_iso():
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def safe_name(value):
+    value = Path(urllib.parse.unquote(value)).name
+    value = re.sub(r"[^A-Za-z0-9À-ÿ._ -]+", "_", value).strip(" .")
+    return value[:180] or f"media-{uuid.uuid4().hex[:8]}"
+
+
+def deep_merge(base, override):
+    result = copy.deepcopy(base)
+    for key, value in (override or {}).items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
+class Store:
+    def __init__(self):
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+        self.lock = threading.RLock()
+        self.logs = []
+        defaults = json.loads(DEFAULT_FILE.read_text(encoding="utf-8"))
+        try:
+            saved = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError):
+            saved = {}
+        self.config = deep_merge(defaults, saved)
+        self.save()
+        self.install_bundled_media()
+
+    def install_bundled_media(self):
+        source = APP_DIR / "bundled_media"
+        if not source.exists():
+            return
+        for item in source.iterdir():
+            target = MEDIA_DIR / item.name
+            if item.is_file() and not target.exists():
+                shutil.copy2(item, target)
+
+    def save(self):
+        with self.lock:
+            temp = CONFIG_FILE.with_suffix(".tmp")
+            temp.write_text(json.dumps(self.config, ensure_ascii=False, indent=2), encoding="utf-8")
+            os.replace(temp, CONFIG_FILE)
+
+    def update(self, payload):
+        with self.lock:
+            self.config = deep_merge(self.config, payload)
+            self.save()
+            return copy.deepcopy(self.config)
+
+    def log(self, level, message):
+        entry = {"time": now_iso(), "level": level, "message": message}
+        with self.lock:
+            self.logs.insert(0, entry)
+            del self.logs[200:]
+        print(f"[{entry['time']}] {level.upper()}: {message}", flush=True)
+
+    def media(self):
+        result = []
+        for path in sorted(MEDIA_DIR.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+            if not path.is_file():
+                continue
+            suffix = path.suffix.lower()
+            kind = next((k for k, extensions in ALLOWED.items() if suffix in extensions), "other")
+            if kind == "other":
+                continue
+            stat = path.stat()
+            result.append({
+                "name": path.name,
+                "kind": kind,
+                "size": stat.st_size,
+                "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
+                "url": f"/media/{urllib.parse.quote(path.name)}",
+            })
+        return result
+
+
+class HomeAssistant:
+    def request(self, method, path, payload=None, timeout=12):
+        headers = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
+        data = json.dumps(payload).encode() if payload is not None else None
+        request = urllib.request.Request(HA_API + path, data=data, headers=headers, method=method)
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                raw = response.read()
+                return json.loads(raw) if raw else None
+        except urllib.error.HTTPError as error:
+            detail = error.read().decode(errors="replace")
+            raise RuntimeError(f"Home Assistant {error.code}: {detail[:300]}") from error
+
+    def states(self):
+        return self.request("GET", "/states") or []
+
+    def config(self):
+        return self.request("GET", "/config") or {}
+
+    def service(self, domain, service, payload):
+        return self.request("POST", f"/services/{domain}/{service}", payload) or []
+
+
+store = Store()
+ha = HomeAssistant()
+
+
+def local_base_url():
+    configured = store.config.get("media_base_url", "").strip().rstrip("/")
+    if configured:
+        return configured
+    try:
+        url = ha.config().get("internal_url") or ha.config().get("external_url") or ""
+        parsed = urllib.parse.urlsplit(url)
+        if parsed.hostname:
+            host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
+            return f"{parsed.scheme or 'http'}://{host}:{PORT}"
+    except Exception:
+        pass
+    return f"http://homeassistant.local:{PORT}"
+
+
+def media_url(filename):
+    return f"{local_base_url()}/media/{urllib.parse.quote(filename)}"
+
+
+def is_schedule_active(schedule, moment=None):
+    if not schedule:
+        return True
+    moment = moment or datetime.now().astimezone()
+    weekday = moment.weekday()
+    current = moment.hour * 60 + moment.minute
+    for row in schedule:
+        if row.get("enabled", True) is False:
+            continue
+        days = row.get("days", [])
+        try:
+            sh, sm = map(int, row.get("start", "00:00").split(":"))
+            eh, em = map(int, row.get("end", "23:59").split(":"))
+            start, end = sh * 60 + sm, eh * 60 + em
+        except (TypeError, ValueError):
+            continue
+        if start <= end and weekday in days and start <= current < end:
+            return True
+        if start > end and ((weekday in days and current >= start) or ((weekday - 1) % 7 in days and current < end)):
+            return True
+    return False
+
+
+def play_audio(filename=None, manual=False):
+    cfg = store.config["audio"]
+    players = cfg.get("players", [])
+    ads = cfg.get("ads", [])
+    if not players:
+        raise RuntimeError("Nessun Sonos selezionato")
+    if not filename:
+        filename = scheduler.pick_audio(ads, cfg.get("mode", "rotate"))
+    if not filename:
+        raise RuntimeError("Nessuno spot audio configurato")
+    repetitions = max(1, min(int(cfg.get("repeat_count", 1)), 10))
+    gap = max(0, min(int(cfg.get("repeat_gap_seconds", 3)), 60))
+    for index in range(repetitions):
+        ha.service("media_player", "play_media", {
+            "entity_id": players,
+            "announce": True,
+            "media_content_type": "music",
+            "media_content_id": media_url(filename),
+            "extra": {"volume": max(1, min(int(cfg.get("volume", 35)), 100))},
+        })
+        store.log("success", f"Spot audio avviato: {filename} ({index + 1}/{repetitions})")
+        if index + 1 < repetitions:
+            time.sleep(gap + 2)
+    if not manual:
+        scheduler.daily_audio_count += repetitions
+    return filename
+
+
+def start_music():
+    cfg = store.config["music"]
+    if not cfg.get("players") or not cfg.get("content_id"):
+        raise RuntimeError("Configurazione musica incompleta")
+    ha.service("media_player", "volume_set", {
+        "entity_id": cfg["players"], "volume_level": max(0, min(int(cfg.get("volume", 25)), 100)) / 100
+    })
+    payload = {
+        "entity_id": cfg["players"],
+        "media_content_type": cfg.get("content_type", "music"),
+        "media_content_id": cfg["content_id"],
+    }
+    ha.service("media_player", "play_media", payload)
+    store.log("success", "Musica del locale avviata dalla programmazione")
+
+
+def stop_music():
+    players = store.config["music"].get("players", [])
+    if players:
+        ha.service("media_player", "media_stop", {"entity_id": players})
+        store.log("info", "Musica del locale arrestata dalla programmazione")
+
+
+def play_tv_item(item):
+    player = store.config["tv"].get("player")
+    if not player:
+        raise RuntimeError("Nessuna TV selezionata")
+    filename = item.get("name")
+    kind = item.get("kind") or "video"
+    if not filename:
+        raise RuntimeError("Contenuto TV non valido")
+    ha.service("media_player", "play_media", {
+        "entity_id": player,
+        "media_content_type": kind,
+        "media_content_id": media_url(filename),
+    })
+    store.log("success", f"Pubblicità TV avviata: {filename}")
+
+
+class Scheduler(threading.Thread):
+    daemon = True
+
+    def __init__(self):
+        super().__init__(name="carellas-scheduler")
+        self.last_audio = time.monotonic()
+        self.audio_index = 0
+        self.tv_index = 0
+        self.tv_next = 0.0
+        self.music_active = False
+        self.tv_active = False
+        self.daily_audio_count = 0
+        self.day = datetime.now().date()
+        self.busy = threading.Lock()
+
+    def pick_audio(self, ads, mode):
+        if not ads:
+            return None
+        if mode == "female":
+            return next((x for x in ads if "femmin" in x.lower() or "female" in x.lower()), ads[0])
+        if mode == "male":
+            return next((x for x in ads if "maschil" in x.lower() or "male" in x.lower()), ads[0])
+        selected = ads[self.audio_index % len(ads)]
+        self.audio_index += 1
+        return selected
+
+    def selected_playing(self):
+        selected = set(store.config["audio"].get("players", []))
+        if not selected:
+            return False
+        try:
+            states = {x.get("entity_id"): x.get("state") for x in ha.states()}
+            return any(states.get(entity) == "playing" for entity in selected)
+        except Exception as error:
+            store.log("error", f"Lettura Sonos non riuscita: {error}")
+            return False
+
+    def audio_tick(self):
+        cfg = store.config["audio"]
+        if not cfg.get("enabled") or not is_schedule_active(cfg.get("schedule", [])):
+            self.last_audio = time.monotonic()
+            return
+        interval = max(1, int(cfg.get("interval_minutes", 30))) * 60
+        if time.monotonic() - self.last_audio < interval:
+            return
+        if self.daily_audio_count >= max(1, int(cfg.get("daily_limit", 20))):
+            return
+        if cfg.get("only_when_playing", True) and not self.selected_playing():
+            return
+        if not self.busy.acquire(blocking=False):
+            return
+        self.last_audio = time.monotonic()
+        try:
+            play_audio()
+        except Exception as error:
+            store.log("error", f"Spot audio non riuscito: {error}")
+        finally:
+            self.busy.release()
+
+    def music_tick(self):
+        cfg = store.config["music"]
+        active = bool(cfg.get("enabled") and is_schedule_active(cfg.get("schedule", [])))
+        if active and not self.music_active:
+            try:
+                start_music()
+            except Exception as error:
+                store.log("error", f"Avvio musica non riuscito: {error}")
+        elif not active and self.music_active and cfg.get("stop_at_end", True):
+            try:
+                stop_music()
+            except Exception as error:
+                store.log("error", f"Arresto musica non riuscito: {error}")
+        self.music_active = active
+
+    def tv_tick(self):
+        cfg = store.config["tv"]
+        playlist = cfg.get("playlist", [])
+        active = bool(cfg.get("enabled") and cfg.get("player") and playlist and is_schedule_active(cfg.get("schedule", [])))
+        if not active:
+            self.tv_active = False
+            self.tv_next = 0
+            return
+        if not self.tv_active:
+            self.tv_active = True
+            self.tv_index = 0
+            self.tv_next = 0
+        if time.monotonic() < self.tv_next:
+            return
+        item = playlist[self.tv_index % len(playlist)]
+        try:
+            play_tv_item(item)
+            duration = max(2, min(int(item.get("duration", 15)), 86400))
+            self.tv_next = time.monotonic() + duration
+            self.tv_index += 1
+            if not cfg.get("loop", True) and self.tv_index >= len(playlist):
+                self.tv_active = False
+                self.tv_next = float("inf")
+        except Exception as error:
+            store.log("error", f"Riproduzione TV non riuscita: {error}")
+            self.tv_next = time.monotonic() + 30
+
+    def run(self):
+        store.log("info", "Motore Carellas Media Ads avviato")
+        while True:
+            try:
+                today = datetime.now().date()
+                if today != self.day:
+                    self.day = today
+                    self.daily_audio_count = 0
+                self.music_tick()
+                self.audio_tick()
+                self.tv_tick()
+            except Exception:
+                store.log("error", traceback.format_exc(limit=2))
+            time.sleep(5)
+
+
+scheduler = Scheduler()
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "CarellasMediaAds/0.1"
+
+    def log_message(self, fmt, *args):
+        return
+
+    def route_path(self):
+        path = urllib.parse.urlsplit(self.path).path
+        api_position = path.rfind("/api/")
+        if api_position >= 0:
+            return path[api_position:]
+        positions = [path.rfind(marker) for marker in ("/media/", "/assets/")]
+        media_position = max(positions)
+        if media_position >= 0:
+            return path[media_position:]
+        return path
+
+    def json_body(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        if length > 2 * 1024 * 1024:
+            raise ValueError("Richiesta troppo grande")
+        return json.loads(self.rfile.read(length) or b"{}")
+
+    def send_json(self, payload, status=200):
+        data = json.dumps(payload, ensure_ascii=False).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def send_file(self, path, cache=False):
+        if not path.is_file():
+            self.send_error(404)
+            return
+        size = path.stat().st_size
+        start, end, status = 0, size - 1, HTTPStatus.OK
+        range_header = self.headers.get("Range")
+        if range_header:
+            match = re.match(r"bytes=(\d*)-(\d*)", range_header)
+            if match:
+                start = int(match.group(1) or 0)
+                end = min(int(match.group(2) or size - 1), size - 1)
+                status = HTTPStatus.PARTIAL_CONTENT
+        length = max(0, end - start + 1)
+        self.send_response(status)
+        self.send_header("Content-Type", mimetypes.guess_type(path.name)[0] or "application/octet-stream")
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(length))
+        self.send_header("Cache-Control", "public, max-age=3600" if cache else "no-store")
+        if status == HTTPStatus.PARTIAL_CONTENT:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.end_headers()
+        if self.command == "HEAD":
+            return
+        with path.open("rb") as handle:
+            handle.seek(start)
+            remaining = length
+            while remaining:
+                chunk = handle.read(min(1024 * 128, remaining))
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                remaining -= len(chunk)
+
+    def do_HEAD(self):
+        self.do_GET()
+
+    def do_GET(self):
+        path = self.route_path()
+        try:
+            if path == "/api/state":
+                entities = []
+                error = None
+                try:
+                    for state in ha.states():
+                        entity_id = state.get("entity_id", "")
+                        if entity_id.startswith("media_player."):
+                            attrs = state.get("attributes", {})
+                            entities.append({
+                                "entity_id": entity_id,
+                                "name": attrs.get("friendly_name", entity_id),
+                                "state": state.get("state"),
+                                "device_class": attrs.get("device_class"),
+                            })
+                except Exception as exc:
+                    error = str(exc)
+                self.send_json({
+                    "config": store.config,
+                    "media": store.media(),
+                    "entities": sorted(entities, key=lambda x: x["name"].lower()),
+                    "logs": store.logs,
+                    "runtime": {
+                        "audio_today": scheduler.daily_audio_count,
+                        "music_active": scheduler.music_active,
+                        "tv_active": scheduler.tv_active,
+                        "media_base_url": local_base_url(),
+                    },
+                    "ha_error": error,
+                })
+                return
+            if path.startswith("/media/"):
+                name = safe_name(path.removeprefix("/media/"))
+                self.send_file(MEDIA_DIR / name, cache=True)
+                return
+            if path.startswith("/assets/"):
+                name = safe_name(path.removeprefix("/assets/"))
+                self.send_file(APP_DIR / "assets" / name, cache=True)
+                return
+            self.send_file(APP_DIR / "index.html")
+        except Exception as error:
+            store.log("error", f"GET {path}: {error}")
+            self.send_json({"error": str(error)}, 500)
+
+    def do_POST(self):
+        path = self.route_path()
+        try:
+            if path == "/api/config":
+                config = store.update(self.json_body())
+                self.send_json({"ok": True, "config": config})
+                return
+            if path == "/api/upload":
+                query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+                filename = safe_name(query.get("filename", [""])[0])
+                kind = query.get("kind", [""])[0]
+                extension = Path(filename).suffix.lower()
+                if kind not in ALLOWED or extension not in ALLOWED[kind]:
+                    self.send_json({"error": "Formato file non supportato"}, 400)
+                    return
+                length = int(self.headers.get("Content-Length", "0"))
+                if length <= 0 or length > MAX_UPLOAD:
+                    self.send_json({"error": "Dimensione file non valida (massimo 500 MB)"}, 400)
+                    return
+                target = MEDIA_DIR / filename
+                if target.exists():
+                    target = MEDIA_DIR / f"{target.stem}-{uuid.uuid4().hex[:6]}{target.suffix}"
+                remaining = length
+                with target.open("wb") as handle:
+                    while remaining:
+                        chunk = self.rfile.read(min(1024 * 1024, remaining))
+                        if not chunk:
+                            raise IOError("Caricamento interrotto")
+                        handle.write(chunk)
+                        remaining -= len(chunk)
+                store.log("success", f"File caricato: {target.name}")
+                self.send_json({"ok": True, "name": target.name, "kind": kind})
+                return
+            if path == "/api/test/audio":
+                body = self.json_body()
+                threading.Thread(target=play_audio, args=(body.get("name"), True), daemon=True).start()
+                self.send_json({"ok": True})
+                return
+            if path == "/api/test/tv":
+                play_tv_item(self.json_body())
+                self.send_json({"ok": True})
+                return
+            if path == "/api/music/start":
+                start_music()
+                self.send_json({"ok": True})
+                return
+            if path == "/api/music/stop":
+                stop_music()
+                self.send_json({"ok": True})
+                return
+            self.send_json({"error": "Operazione sconosciuta"}, 404)
+        except Exception as error:
+            store.log("error", f"POST {path}: {error}")
+            self.send_json({"error": str(error)}, 500)
+
+    def do_DELETE(self):
+        path = self.route_path()
+        if not path.startswith("/api/media/"):
+            self.send_json({"error": "Operazione sconosciuta"}, 404)
+            return
+        name = safe_name(path.removeprefix("/api/media/"))
+        target = MEDIA_DIR / name
+        try:
+            target.unlink()
+            for section in ("audio", "tv"):
+                if section == "audio":
+                    store.config[section]["ads"] = [x for x in store.config[section].get("ads", []) if x != name]
+                else:
+                    store.config[section]["playlist"] = [x for x in store.config[section].get("playlist", []) if x.get("name") != name]
+            store.save()
+            store.log("info", f"File eliminato: {name}")
+            self.send_json({"ok": True})
+        except FileNotFoundError:
+            self.send_json({"error": "File non trovato"}, 404)
+
+
+if __name__ == "__main__":
+    scheduler.start()
+    server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+    store.log("info", f"Interfaccia pronta sulla porta {PORT}")
+    server.serve_forever()
