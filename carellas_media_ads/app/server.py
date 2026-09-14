@@ -284,6 +284,43 @@ def play_tv_item(item):
     store.log("success", f"Pubblicità TV avviata: {filename}")
 
 
+def _power_entity_action(entity_id, turn_on):
+    if not entity_id or "." not in entity_id:
+        raise RuntimeError("Entità di alimentazione TV non valida")
+    domain = entity_id.split(".", 1)[0]
+    if domain == "button":
+        service = "press"
+    elif domain == "script":
+        service = "turn_on"
+    elif domain in ("media_player", "switch"):
+        service = "turn_on" if turn_on else "turn_off"
+    else:
+        raise RuntimeError(f"Tipo entità non supportato per alimentazione TV: {domain}")
+    ha.service(domain, service, {"entity_id": entity_id})
+
+
+def tv_power_on():
+    cfg = store.config["tv"]
+    mac = re.sub(r"[^0-9A-Fa-f]", "", cfg.get("wol_mac", ""))
+    if mac:
+        if len(mac) != 12:
+            raise RuntimeError("Indirizzo MAC Wake-on-LAN non valido")
+        formatted = ":".join(mac[index:index + 2] for index in range(0, 12, 2))
+        ha.service("wake_on_lan", "send_magic_packet", {"mac": formatted})
+        store.log("success", f"Comando Wake-on-LAN inviato alla TV: {formatted}")
+        return
+    entity = cfg.get("power_on_entity") or cfg.get("player")
+    _power_entity_action(entity, True)
+    store.log("success", f"Comando accensione TV inviato: {entity}")
+
+
+def tv_power_off():
+    cfg = store.config["tv"]
+    entity = cfg.get("power_off_entity") or cfg.get("player")
+    _power_entity_action(entity, False)
+    store.log("success", f"Comando spegnimento TV inviato: {entity}")
+
+
 class Scheduler(threading.Thread):
     daemon = True
 
@@ -295,6 +332,7 @@ class Scheduler(threading.Thread):
         self.tv_next = 0.0
         self.music_active = False
         self.tv_active = False
+        self.tv_ready_at = 0.0
         self.daily_audio_count = 0
         self.day = datetime.now().date()
         self.busy = threading.Lock()
@@ -363,18 +401,36 @@ class Scheduler(threading.Thread):
         playlist = cfg.get("playlist", [])
         mode = cfg.get("mode", "media_player")
         target_ready = mode == "lan_screen" or bool(cfg.get("player"))
-        active = bool(cfg.get("enabled") and target_ready and playlist and is_schedule_active(cfg.get("schedule", [])))
-        if not active:
+        scheduled = bool(cfg.get("enabled") and target_ready and playlist and is_schedule_active(cfg.get("schedule", [])))
+
+        if not scheduled:
+            if self.tv_active and mode == "dlna" and cfg.get("power_off_at_end", True):
+                try:
+                    tv_power_off()
+                except Exception as error:
+                    store.log("error", f"Spegnimento TV non riuscito: {error}")
             self.tv_active = False
             self.tv_next = 0
+            self.tv_ready_at = 0
             return
-        self.tv_active = True
+
+        if not self.tv_active:
+            self.tv_active = True
+            self.tv_index = 0
+            self.tv_next = 0
+            if mode == "dlna" and cfg.get("power_on_at_start", True):
+                try:
+                    tv_power_on()
+                except Exception as error:
+                    store.log("error", f"Accensione TV non riuscita: {error}")
+                delay = max(0, min(int(cfg.get("startup_delay_seconds", 20)), 300))
+                self.tv_ready_at = time.monotonic() + delay
+
         if mode == "lan_screen":
             return
-        if self.tv_next == 0:
-            self.tv_index = 0
-        if time.monotonic() < self.tv_next:
+        if time.monotonic() < self.tv_ready_at or time.monotonic() < self.tv_next:
             return
+
         item = playlist[self.tv_index % len(playlist)]
         try:
             play_tv_item(item)
@@ -382,7 +438,6 @@ class Scheduler(threading.Thread):
             self.tv_next = time.monotonic() + duration
             self.tv_index += 1
             if not cfg.get("loop", True) and self.tv_index >= len(playlist):
-                self.tv_active = False
                 self.tv_next = float("inf")
         except Exception as error:
             store.log("error", f"Riproduzione TV non riuscita: {error}")
@@ -408,7 +463,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.2-beta"
+    server_version = "CarellasMediaAds/0.3-beta"
 
     def log_message(self, fmt, *args):
         return
@@ -502,24 +557,29 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path == "/api/state":
                 entities = []
+                power_entities = []
                 error = None
                 try:
                     for state in ha.states():
                         entity_id = state.get("entity_id", "")
+                        attrs = state.get("attributes", {})
+                        item = {
+                            "entity_id": entity_id,
+                            "name": attrs.get("friendly_name", entity_id),
+                            "state": state.get("state"),
+                            "device_class": attrs.get("device_class"),
+                        }
                         if entity_id.startswith("media_player."):
-                            attrs = state.get("attributes", {})
-                            entities.append({
-                                "entity_id": entity_id,
-                                "name": attrs.get("friendly_name", entity_id),
-                                "state": state.get("state"),
-                                "device_class": attrs.get("device_class"),
-                            })
+                            entities.append(item)
+                        if entity_id.startswith(("media_player.", "switch.", "button.", "script.")):
+                            power_entities.append(item)
                 except Exception as exc:
                     error = str(exc)
                 self.send_json({
                     "config": store.config,
                     "media": store.media(),
                     "entities": sorted(entities, key=lambda x: x["name"].lower()),
+                    "power_entities": sorted(power_entities, key=lambda x: x["name"].lower()),
                     "logs": store.logs,
                     "runtime": {
                         "audio_today": scheduler.daily_audio_count,
@@ -586,6 +646,14 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path == "/api/test/tv":
                 play_tv_item(self.json_body())
+                self.send_json({"ok": True})
+                return
+            if path == "/api/tv/power/on":
+                tv_power_on()
+                self.send_json({"ok": True})
+                return
+            if path == "/api/tv/power/off":
+                tv_power_off()
                 self.send_json({"ok": True})
                 return
             if path == "/api/music/start":
