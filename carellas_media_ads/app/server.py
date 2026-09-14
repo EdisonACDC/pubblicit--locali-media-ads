@@ -32,7 +32,8 @@ DEFAULT_FILE = APP_DIR / "default_config.json"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 HA_API = os.environ.get("CARELLAS_HA_API", "http://supervisor/core/api")
 PORT = 8099
-MAX_UPLOAD = 1024 * 1024 * 500
+MAX_UPLOAD = 1024 * 1024 * 1024 * 4
+MIN_FREE_AFTER_UPLOAD = 1024 * 1024 * 512
 ALLOWED = {
     "audio": {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"},
     "image": {".jpg", ".jpeg", ".png", ".webp", ".gif"},
@@ -862,19 +863,30 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 length = int(self.headers.get("Content-Length", "0"))
                 if length <= 0 or length > MAX_UPLOAD:
-                    self.send_json({"error": "Dimensione file non valida (massimo 500 MB)"}, 400)
+                    self.send_json({"error": "Dimensione file non valida (massimo 4 GB)"}, 400)
+                    return
+                free_space = shutil.disk_usage(MEDIA_DIR).free
+                if free_space - length < MIN_FREE_AFTER_UPLOAD:
+                    available_mb = max(0, (free_space - MIN_FREE_AFTER_UPLOAD) // (1024 * 1024))
+                    self.send_json({
+                        "error": f"Spazio insufficiente. Disponibili circa {available_mb} MB mantenendo 512 MB liberi"
+                    }, 507)
                     return
                 target = MEDIA_DIR / filename
                 if target.exists():
                     target = MEDIA_DIR / f"{target.stem}-{uuid.uuid4().hex[:6]}{target.suffix}"
                 remaining = length
-                with target.open("wb") as handle:
-                    while remaining:
-                        chunk = self.rfile.read(min(1024 * 1024, remaining))
-                        if not chunk:
-                            raise IOError("Caricamento interrotto")
-                        handle.write(chunk)
-                        remaining -= len(chunk)
+                try:
+                    with target.open("wb") as handle:
+                        while remaining:
+                            chunk = self.rfile.read(min(1024 * 1024, remaining))
+                            if not chunk:
+                                raise IOError("Caricamento interrotto")
+                            handle.write(chunk)
+                            remaining -= len(chunk)
+                except Exception:
+                    target.unlink(missing_ok=True)
+                    raise
                 store.log("success", f"File caricato: {target.name}")
                 self.send_json({"ok": True, "name": target.name, "kind": kind})
                 return
