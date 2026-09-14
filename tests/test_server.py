@@ -116,6 +116,20 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(self.calls[0][2]["mac"], "AA:BB:CC:DD:EE:FF")
         self.assertEqual(self.calls[1][0:2], ("switch", "turn_off"))
 
+    def test_multi_tv_m3u_lists_independent_channel(self):
+        self.app.store.update({"iptv": {"channels": [{
+            "id": "sala-napoli",
+            "name": "Sala Napoli",
+            "enabled": True,
+            "playlist": [{"name": "Demo_Carellas_SmartTV_DLNA.mp4", "kind": "video", "duration": 18}],
+            "schedule": [],
+        }]}})
+        with urllib.request.urlopen(self.base + "/iptv/channels.m3u") as response:
+            body = response.read().decode()
+            self.assertEqual(response.headers.get_content_type(), "audio/x-mpegurl")
+        self.assertIn("Sala Napoli", body)
+        self.assertIn("/iptv/sala-napoli.ts", body)
+
     def test_overnight_schedule(self):
         schedule = [{"days": [6], "start": "22:00", "end": "02:00", "enabled": True}]
         self.assertTrue(self.app.is_schedule_active(schedule, datetime(2026, 9, 13, 23, 0)))
