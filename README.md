@@ -1,14 +1,19 @@
 # Carellas Media Ads
 
-Repository Home Assistant per la gestione professionale della pubblicità audio su Sonos e di immagini/video su TV.
+Repository Home Assistant per gestire pubblicità audio su Sonos o Alexa e playlist di immagini/video su Smart TV.
+
+> Versione beta 0.2: il supporto Alexa usa l'integrazione non ufficiale Alexa Media Player. Amazon può modificarne il funzionamento e il ripristino dello stesso brano non è garantito.
 
 ## Funzioni
 
-- Annunci Sonos sopra qualsiasi sorgente già in riproduzione, con ripristino automatico della musica.
-- Scelta di più diffusori, volume annuncio, intervallo, ripetizioni e limite giornaliero.
-- Avvio/arresto programmato della musica del locale tramite URI, URL o Preferito Sonos.
+- Annunci Sonos sopra la sorgente in riproduzione, con ripristino automatico della musica.
+- Modalità Alexa beta con volume, intervallo, ripetizioni, durata dello spot e riavvio opzionale della sorgente musicale configurata.
+- Scelta di più altoparlanti, limite giornaliero e fasce orarie settimanali.
+- Avvio/arresto programmato della musica del locale tramite URI, URL o sorgente supportata dal media player.
 - Libreria audio, immagini e video con caricamento da telefono, tablet e PC.
-- Playlist TV con durata separata per ogni contenuto, ripetizione e programmazione settimanale.
+- Schermo Smart TV via browser e rete LAN: non richiede l'integrazione della TV in Home Assistant.
+- Modalità alternativa per TV, Chromecast o Android TV già integrati come `media_player`.
+- Playlist TV con durata separata per ogni contenuto, ripetizione, adattamento allo schermo e programmazione settimanale.
 - Interfaccia Ingress italiano/tedesco e registro attività.
 
 ## Installazione
@@ -17,6 +22,28 @@ Repository Home Assistant per la gestione professionale della pubblicità audio 
 2. Aprire il menu in alto a destra, scegliere **Repository** e aggiungere:
    `https://github.com/EdisonACDC/pubblicit--locali-media-ads`
 3. Installare **Carellas Media Ads**, attivare *Mostra nella barra laterale* e avviare.
-4. Aprire il pannello e completare la configurazione guidata.
+4. Aprire il pannello e completare la configurazione.
 
-Per consentire a Sonos e alla TV di raggiungere i file, la porta `8099` deve essere disponibile nella rete locale. Non è necessario aprirla su Internet.
+La porta `8099` deve essere disponibile soltanto nella rete locale. Non aprirla su Internet.
+
+## Prova audio con Alexa
+
+1. Installare e configurare **Alexa Media Player** in Home Assistant tramite HACS.
+2. Verificare che l'Echo compaia in Home Assistant come entità `media_player`.
+3. In **Pubblicità audio**, scegliere **Alexa Media Player (beta)** e selezionare l'Echo.
+4. Caricare o selezionare lo spot MP3. Per la prima prova disattivare **solo se la musica è già attiva**.
+5. Impostare la durata reale dello spot e premere **Prova spot**.
+6. Per riavviare la musica dopo l'annuncio, configurare anche altoparlante e sorgente nella sezione **Musica**.
+
+Alexa non offre il meccanismo `announce` di Sonos: la pubblicità sostituisce la riproduzione corrente. Se l'Echo non riesce a leggere l'MP3 dalla rete locale, il limite dipende da Alexa Media Player/Amazon e non dal timer dell'add-on.
+
+## Prova Smart TV via LAN
+
+1. Collegare Home Assistant e Smart TV allo stesso router, tramite cavo LAN o Wi-Fi.
+2. Nella sezione **TV** scegliere **Smart TV via browser e cavo LAN**.
+3. Caricare foto o video, selezionarli nella playlist, impostare i secondi e salvare.
+4. Sul browser della Smart TV aprire:
+   `http://INDIRIZZO-IP-HOME-ASSISTANT:8099/screen`
+5. Lasciare il browser aperto a schermo intero. La pagina aggiorna automaticamente playlist e orari.
+
+Per la prova a casa si può usare prima lo stesso indirizzo su PC, tablet o telefono. È consigliato MP4 H.264/AAC per i video e JPG/PNG per le immagini. I video sono silenziati per impostazione predefinita così il browser può avviarli automaticamente.
