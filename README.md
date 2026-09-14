@@ -2,7 +2,7 @@
 
 Repository Home Assistant per gestire pubblicità audio su Sonos o Alexa e playlist di immagini/video su Smart TV.
 
-> Versione beta 0.2: il supporto Alexa usa l'integrazione non ufficiale Alexa Media Player. Amazon può modificarne il funzionamento e il ripristino dello stesso brano non è garantito.
+> Versione beta 0.3: il supporto Alexa usa l'integrazione non ufficiale Alexa Media Player. Amazon può modificarne il funzionamento e il ripristino dello stesso brano non è garantito.
 
 ## Funzioni
 
@@ -12,6 +12,7 @@ Repository Home Assistant per gestire pubblicità audio su Sonos o Alexa e playl
 - Avvio/arresto programmato della musica del locale tramite URI, URL o sorgente supportata dal media player.
 - Libreria audio, immagini e video con caricamento da telefono, tablet e PC.
 - Schermo Smart TV via browser e rete LAN: non richiede l'integrazione della TV in Home Assistant.
+- Modalità DLNA/DMR con playlist, Wake-on-LAN, ritardo di avvio e spegnimento programmato.
 - Modalità alternativa per TV, Chromecast o Android TV già integrati come `media_player`.
 - Playlist TV con durata separata per ogni contenuto, ripetizione, adattamento allo schermo e programmazione settimanale.
 - Interfaccia Ingress italiano/tedesco e registro attività.
@@ -47,3 +48,16 @@ Alexa non offre il meccanismo `announce` di Sonos: la pubblicità sostituisce la
 5. Lasciare il browser aperto a schermo intero. La pagina aggiorna automaticamente playlist e orari.
 
 Per la prova a casa si può usare prima lo stesso indirizzo su PC, tablet o telefono. È consigliato MP4 H.264/AAC per i video e JPG/PNG per le immagini. I video sono silenziati per impostazione predefinita così il browser può avviarli automaticamente.
+
+
+## Prova Smart TV con DLNA e alimentazione automatica
+
+1. Collegare la TV via cavo LAN e attivare nelle impostazioni della TV **DLNA/Renderer**, **avvio tramite rete**, **Wake-on-LAN** o la voce equivalente.
+2. In Home Assistant aprire **Impostazioni → Dispositivi e servizi → Aggiungi integrazione** e aggiungere **DLNA Digital Media Renderer**.
+3. Se si vuole usare il MAC per l'accensione, aggiungere anche l'integrazione **Wake on LAN**.
+4. In Carellas Media Ads selezionare **DLNA / DMR con accensione e spegnimento** e scegliere l'entità DLNA della TV.
+5. Inserire il MAC della porta LAN, impostare un'attesa iniziale di circa 20–30 secondi e usare **Prova accensione**.
+6. Per lo spegnimento selezionare l'entità nativa della TV, uno switch o uno script Home Assistant e usare **Prova spegnimento**.
+7. Solo dopo che entrambi i pulsanti funzionano, attivare la programmazione e impostare gli orari.
+
+All'inizio della fascia l'add-on accende la TV, attende il tempo configurato e avvia la playlist. Alla fine invia il comando di spegnimento. DLNA standard gestisce soprattutto la riproduzione: l'accensione dipende dal Wake-on-LAN della TV e lo spegnimento dipende dall'entità o integrazione scelta.
