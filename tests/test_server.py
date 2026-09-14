@@ -61,7 +61,7 @@ class CarellasServerTest(unittest.TestCase):
 
     def test_sonos_announce(self):
         ad = "Carellas_Ristorante_Spot_DE_Maschile.mp3"
-        self.app.store.update({"audio": {"players": ["media_player.sala"], "ads": [ad], "repeat_count": 1, "volume": 35}})
+        self.app.store.update({"audio": {"driver": "sonos", "players": ["media_player.sala"], "ads": [ad], "repeat_count": 1, "volume": 35}})
         self.app.play_audio(ad, manual=True)
         _, service, payload = self.calls[-1]
         self.assertEqual(service, "play_media")
