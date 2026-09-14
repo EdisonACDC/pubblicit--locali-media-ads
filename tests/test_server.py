@@ -131,6 +131,19 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("Sala Napoli", body)
         self.assertIn("/iptv/sala-napoli.ts", body)
 
+    def test_multi_tv_m3u_also_lists_channels_with_automation_disabled(self):
+        self.app.store.update({"iptv": {"channels": [{
+            "id": "menu-serale",
+            "name": "Menu serale",
+            "enabled": False,
+            "playlist": [{"name": "promo.jpg", "kind": "image", "duration": 10}],
+            "schedule": [],
+        }]}})
+        with urllib.request.urlopen(self.base + "/iptv/channels.m3u") as response:
+            body = response.read().decode()
+        self.assertIn("Menu serale", body)
+        self.assertIn("/iptv/menu-serale.ts", body)
+
     def test_iptv_head_probe_returns_without_starting_ffmpeg(self):
         channel_id = "sala-napoli"
         output = self.app.iptv.output(channel_id)

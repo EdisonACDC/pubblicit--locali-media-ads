@@ -760,8 +760,6 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/iptv/channels.m3u":
                 lines = ["#EXTM3U"]
                 for channel in iptv.channels():
-                    if not channel.get("enabled", True):
-                        continue
                     channel_id = safe_channel_id(channel.get("id", ""))
                     name = channel.get("name") or channel_id
                     lines += [f'#EXTINF:-1 tvg-id="{channel_id}" group-title="Carellas",{name}', f"{local_base_url()}/iptv/{channel_id}.ts"]
