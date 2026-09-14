@@ -47,5 +47,27 @@
     "power_off_entity": "",
     "wol_mac": "",
     "startup_delay_seconds": 20
+  },
+  "iptv": {
+    "channels": [
+      {
+        "id": "carellas-demo",
+        "name": "TV Demo Carellas",
+        "enabled": false,
+        "playlist": [
+          {
+            "name": "Demo_Carellas_SmartTV_DLNA.mp4",
+            "kind": "video",
+            "duration": 18
+          }
+        ],
+        "schedule": [],
+        "power_on_at_start": false,
+        "power_off_at_end": false,
+        "wol_mac": "",
+        "power_on_entity": "",
+        "power_off_entity": ""
+      }
+    ]
   }
 }
