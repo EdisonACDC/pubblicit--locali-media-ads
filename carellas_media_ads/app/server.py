@@ -194,29 +194,56 @@ def play_audio(filename=None, manual=False):
     cfg = store.config["audio"]
     players = cfg.get("players", [])
     ads = cfg.get("ads", [])
+    driver = cfg.get("driver", "sonos")
     if not players:
-        raise RuntimeError("Nessun Sonos selezionato")
+        raise RuntimeError("Nessun altoparlante selezionato")
     if not filename:
         filename = scheduler.pick_audio(ads, cfg.get("mode", "rotate"))
     if not filename:
         raise RuntimeError("Nessuno spot audio configurato")
+
     repetitions = max(1, min(int(cfg.get("repeat_count", 1)), 10))
-    gap = max(0, min(int(cfg.get("repeat_gap_seconds", 3)), 60))
+    gap = max(0, min(int(cfg.get("repeat_gap_seconds", 5)), 600))
+    duration = max(5, min(int(cfg.get("spot_duration_seconds", 65)), 600))
+    volume = max(1, min(int(cfg.get("volume", 35)), 100))
+    was_playing = scheduler.selected_playing()
+
     for index in range(repetitions):
-        ha.service("media_player", "play_media", {
-            "entity_id": players,
-            "announce": True,
-            "media_content_type": "music",
-            "media_content_id": media_url(filename),
-            "extra": {"volume": max(1, min(int(cfg.get("volume", 35)), 100))},
-        })
-        store.log("success", f"Spot audio avviato: {filename} ({index + 1}/{repetitions})")
+        if driver == "alexa":
+            ha.service("media_player", "volume_set", {
+                "entity_id": players,
+                "volume_level": volume / 100,
+            })
+            payload = {
+                "entity_id": players,
+                "media_content_type": "music",
+                "media_content_id": media_url(filename),
+            }
+        else:
+            payload = {
+                "entity_id": players,
+                "announce": True,
+                "media_content_type": "music",
+                "media_content_id": media_url(filename),
+                "extra": {"volume": volume},
+            }
+        ha.service("media_player", "play_media", payload)
+        store.log("success", f"Spot audio {driver} avviato: {filename} ({index + 1}/{repetitions})")
         if index + 1 < repetitions:
-            time.sleep(gap + 2)
+            time.sleep(duration + gap)
+
+    if driver == "alexa" and was_playing and cfg.get("resume_music_after_ad", True):
+        time.sleep(duration)
+        music = store.config.get("music", {})
+        if music.get("players") and music.get("content_id"):
+            start_music()
+            store.log("info", "Sorgente musicale riavviata dopo lo spot Alexa")
+        else:
+            store.log("warning", "Alexa non può ripristinare il brano esatto: configura una sorgente in Musica locale")
+
     if not manual:
         scheduler.daily_audio_count += repetitions
     return filename
-
 
 def start_music():
     cfg = store.config["music"]
@@ -334,15 +361,18 @@ class Scheduler(threading.Thread):
     def tv_tick(self):
         cfg = store.config["tv"]
         playlist = cfg.get("playlist", [])
-        active = bool(cfg.get("enabled") and cfg.get("player") and playlist and is_schedule_active(cfg.get("schedule", [])))
+        mode = cfg.get("mode", "media_player")
+        target_ready = mode == "lan_screen" or bool(cfg.get("player"))
+        active = bool(cfg.get("enabled") and target_ready and playlist and is_schedule_active(cfg.get("schedule", [])))
         if not active:
             self.tv_active = False
             self.tv_next = 0
             return
-        if not self.tv_active:
-            self.tv_active = True
+        self.tv_active = True
+        if mode == "lan_screen":
+            return
+        if self.tv_next == 0:
             self.tv_index = 0
-            self.tv_next = 0
         if time.monotonic() < self.tv_next:
             return
         item = playlist[self.tv_index % len(playlist)]
@@ -378,7 +408,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.1"
+    server_version = "CarellasMediaAds/0.2-beta"
 
     def log_message(self, fmt, *args):
         return
@@ -449,6 +479,27 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = self.route_path()
         try:
+            if path == "/api/screen":
+                cfg = store.config["tv"]
+                playlist = []
+                for item in cfg.get("playlist", []):
+                    filename = safe_name(item.get("name", ""))
+                    if filename:
+                        playlist.append({
+                            "name": filename,
+                            "kind": item.get("kind", "video"),
+                            "duration": max(2, min(int(item.get("duration", 15)), 86400)),
+                            "url": media_url(filename),
+                        })
+                active = bool(cfg.get("enabled") and playlist and is_schedule_active(cfg.get("schedule", [])))
+                self.send_json({
+                    "active": active,
+                    "playlist": playlist,
+                    "loop": cfg.get("loop", True),
+                    "fit": cfg.get("fit", "contain"),
+                    "muted": cfg.get("muted", True),
+                })
+                return
             if path == "/api/state":
                 entities = []
                 error = None
@@ -486,6 +537,9 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith("/assets/"):
                 name = safe_name(path.removeprefix("/assets/"))
                 self.send_file(APP_DIR / "assets" / name, cache=True)
+                return
+            if path in ("/screen", "/screen/"):
+                self.send_file(APP_DIR / "screen.html")
                 return
             self.send_file(APP_DIR / "index.html")
         except Exception as error:
