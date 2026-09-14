@@ -2,7 +2,7 @@
 
 Repository Home Assistant per gestire pubblicità audio su Sonos o Alexa e playlist di immagini/video su Smart TV.
 
-> Versione beta 0.3: il supporto Alexa usa l'integrazione non ufficiale Alexa Media Player. Amazon può modificarne il funzionamento e il ripristino dello stesso brano non è garantito.
+> Versione beta 0.3.0-beta.2: il supporto Alexa usa l'integrazione non ufficiale Alexa Media Player. Amazon può modificarne il funzionamento e il ripristino dello stesso brano non è garantito.
 
 ## Funzioni
 
@@ -61,3 +61,8 @@ Per la prova a casa si può usare prima lo stesso indirizzo su PC, tablet o tele
 7. Solo dopo che entrambi i pulsanti funzionano, attivare la programmazione e impostare gli orari.
 
 All'inizio della fascia l'add-on accende la TV, attende il tempo configurato e avvia la playlist. Alla fine invia il comando di spegnimento. DLNA standard gestisce soprattutto la riproduzione: l'accensione dipende dal Wake-on-LAN della TV e lo spegnimento dipende dall'entità o integrazione scelta.
+
+
+## Demo Carellas inclusa
+
+L'add-on include tre schermate Full HD e il video `Demo_Carellas_SmartTV_DLNA.mp4` (H.264, circa 18 secondi), creati con immagini del sito ufficiale `carellas.de`. Nelle nuove installazioni il video è già selezionato; negli aggiornamenti esistenti usare **TV → Seleziona demo Carellas → Prova**.
