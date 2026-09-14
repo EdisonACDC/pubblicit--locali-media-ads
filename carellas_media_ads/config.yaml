@@ -1,7 +1,7 @@
 name: Carellas Media Ads
-version: "0.1.0"
+version: "0.2.0-beta.1"
 slug: carellas_media_ads
-description: Pubblicità audio Sonos e playlist foto/video TV con timer e programmazione.
+description: Beta pubblicità audio Sonos/Alexa e schermo Smart TV via LAN con timer e programmazione.
 url: https://github.com/EdisonACDC/pubblicit--locali-media-ads
 arch:
   - amd64
@@ -22,7 +22,7 @@ map:
 ports:
   8099/tcp: 8099
 ports_description:
-  8099/tcp: Accesso locale ai contenuti per Sonos e TV
+  8099/tcp: Accesso locale per audio e schermo Smart TV
 webui: http://[HOST]:[PORT:8099]
 watchdog: http://[HOST]:[PORT:8099]/api/state
 options: {}
