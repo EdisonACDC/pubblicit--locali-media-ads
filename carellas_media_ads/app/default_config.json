@@ -34,6 +34,12 @@
     "loop": true,
     "fit": "contain",
     "muted": true,
-    "schedule": []
+    "schedule": [],
+    "power_on_at_start": true,
+    "power_off_at_end": true,
+    "power_on_entity": "",
+    "power_off_entity": "",
+    "wol_mac": "",
+    "startup_delay_seconds": 20
   }
 }
