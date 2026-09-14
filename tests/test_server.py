@@ -144,6 +144,17 @@ class CarellasServerTest(unittest.TestCase):
                 self.assertEqual(response.read(), b"")
         popen.assert_not_called()
 
+    def test_cors_preflight_allows_direct_large_uploads(self):
+        request = urllib.request.Request(
+            self.base + "/api/upload",
+            method="OPTIONS",
+            headers={"Origin": "http://homeassistant.local:8123", "Access-Control-Request-Method": "POST"},
+        )
+        with urllib.request.urlopen(request) as response:
+            self.assertEqual(response.status, 204)
+            self.assertEqual(response.headers.get("Access-Control-Allow-Origin"), "*")
+            self.assertIn("POST", response.headers.get("Access-Control-Allow-Methods"))
+
     def test_overnight_schedule(self):
         schedule = [{"days": [6], "start": "22:00", "end": "02:00", "enabled": True}]
         self.assertTrue(self.app.is_schedule_active(schedule, datetime(2026, 9, 13, 23, 0)))
