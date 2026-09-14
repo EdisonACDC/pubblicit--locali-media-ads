@@ -344,11 +344,17 @@ class IPTVEngine:
         concat_lines = []
         video_filter = "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=25,format=yuv420p"
         try:
+            total_items = len(playlist)
             for index, item in enumerate(playlist):
                 name = safe_name(item.get("name", ""))
                 source = MEDIA_DIR / name
                 if not source.is_file():
                     raise RuntimeError(f"File non trovato: {name}")
+                self.set_status(
+                    channel_id,
+                    "building",
+                    f"Conversione file {index + 1}/{total_items}: {name}",
+                )
                 duration = max(2, min(int(item.get("duration", 15)), 3600))
                 part = parts / f"{index:04d}.mp4"
                 kind = item.get("kind") or next(
@@ -357,13 +363,22 @@ class IPTVEngine:
                 )
                 command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
                 if kind == "image":
-                    command += ["-loop", "1", "-i", str(source), "-t", str(duration)]
+                    command += ["-loop", "1", "-i", str(source)]
                 else:
-                    command += ["-i", str(source), "-t", str(duration)]
+                    # Repeat short clips so every item lasts for the configured time.
+                    command += ["-stream_loop", "-1", "-i", str(source)]
+                # A silent AAC track makes the transport stream compatible with
+                # IPTV players that reject video-only MPEG-TS channels.
                 command += [
-                    "-vf", video_filter, "-an", "-c:v", "libx264", "-preset", "veryfast",
+                    "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+                ]
+                command += [
+                    "-map", "0:v:0", "-map", "1:a:0", "-vf", video_filter,
+                    "-c:v", "libx264", "-preset", "superfast",
                     "-crf", "22", "-profile:v", "high", "-level", "4.0",
-                    "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(part),
+                    "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "96k",
+                    "-ar", "48000", "-ac", "2", "-t", str(duration), "-shortest",
+                    "-movflags", "+faststart", str(part),
                 ]
                 subprocess.run(command, check=True, timeout=max(120, duration * 4))
                 concat_lines.append(f"file '{part.as_posix()}'")
@@ -375,6 +390,13 @@ class IPTVEngine:
                 "-f", "concat", "-safe", "0", "-i", str(concat_file),
                 "-c", "copy", "-movflags", "+faststart", str(temporary),
             ], check=True, timeout=600)
+            probe = subprocess.run([
+                "ffprobe", "-v", "error", "-select_streams", "v:0",
+                "-show_entries", "stream=codec_name", "-of", "default=nw=1:nk=1",
+                str(temporary),
+            ], check=True, capture_output=True, text=True, timeout=30)
+            if probe.stdout.strip() != "h264" or temporary.stat().st_size < 1024:
+                raise RuntimeError("Il file IPTV generato non è un video H.264 valido")
             os.replace(temporary, self.output(channel_id))
             self.set_status(channel_id, "ready", "Canale pronto")
             store.log("success", f"Canale IPTV creato: {channel.get('name', channel_id)}")
@@ -643,9 +665,21 @@ class Handler(BaseHTTPRequestHandler):
         if not output.is_file():
             self.send_text("Canale non ancora creato", status=404)
             return
+        # IPTV clients commonly probe a channel with HEAD first. Starting the
+        # endless FFmpeg stream for a HEAD request leaves those clients waiting
+        # forever and appears as an infinite loading spinner.
+        if self.command == "HEAD":
+            self.send_response(200)
+            self.send_header("Content-Type", "video/mp2t")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            return
         command = [
             "ffmpeg", "-hide_banner", "-loglevel", "error", "-re", "-stream_loop", "-1",
-            "-i", str(output), "-c", "copy", "-f", "mpegts", "pipe:1",
+            "-i", str(output), "-map", "0:v:0", "-map", "0:a:0?", "-c", "copy",
+            "-mpegts_flags", "+resend_headers", "-muxdelay", "0", "-muxpreload", "0",
+            "-f", "mpegts", "pipe:1",
         ]
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         try:

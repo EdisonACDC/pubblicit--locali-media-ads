@@ -5,6 +5,7 @@ import tempfile
 import threading
 import unittest
 import urllib.request
+from unittest import mock
 from datetime import datetime
 from pathlib import Path
 from http.server import ThreadingHTTPServer
@@ -129,6 +130,19 @@ class CarellasServerTest(unittest.TestCase):
             self.assertEqual(response.headers.get_content_type(), "audio/x-mpegurl")
         self.assertIn("Sala Napoli", body)
         self.assertIn("/iptv/sala-napoli.ts", body)
+
+    def test_iptv_head_probe_returns_without_starting_ffmpeg(self):
+        channel_id = "sala-napoli"
+        output = self.app.iptv.output(channel_id)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(b"fake-mp4")
+        with mock.patch.object(self.app.subprocess, "Popen") as popen:
+            request = urllib.request.Request(self.base + f"/iptv/{channel_id}.ts", method="HEAD")
+            with urllib.request.urlopen(request, timeout=2) as response:
+                self.assertEqual(response.status, 200)
+                self.assertEqual(response.headers.get_content_type(), "video/mp2t")
+                self.assertEqual(response.read(), b"")
+        popen.assert_not_called()
 
     def test_overnight_schedule(self):
         schedule = [{"days": [6], "start": "22:00", "end": "02:00", "enabled": True}]
