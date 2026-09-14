@@ -102,6 +102,20 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(payload["playlist"][0]["duration"], 12)
         self.assertEqual(payload["fit"], "cover")
 
+    def test_dlna_power_on_with_wol_and_power_off_entity(self):
+        self.app.store.update({"tv": {
+            "mode": "dlna",
+            "player": "media_player.sala",
+            "wol_mac": "AA-BB-CC-DD-EE-FF",
+            "power_off_entity": "switch.tv_power",
+        }})
+        self.calls.clear()
+        self.app.tv_power_on()
+        self.app.tv_power_off()
+        self.assertEqual(self.calls[0][0:2], ("wake_on_lan", "send_magic_packet"))
+        self.assertEqual(self.calls[0][2]["mac"], "AA:BB:CC:DD:EE:FF")
+        self.assertEqual(self.calls[1][0:2], ("switch", "turn_off"))
+
     def test_overnight_schedule(self):
         schedule = [{"days": [6], "start": "22:00", "end": "02:00", "enabled": True}]
         self.assertTrue(self.app.is_schedule_active(schedule, datetime(2026, 9, 13, 23, 0)))
