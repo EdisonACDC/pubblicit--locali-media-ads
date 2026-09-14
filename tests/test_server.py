@@ -68,6 +68,40 @@ class CarellasServerTest(unittest.TestCase):
         self.assertTrue(payload["announce"])
         self.assertIn(ad, payload["media_content_id"])
 
+    def test_alexa_beta_uses_direct_media_without_sonos_announce(self):
+        ad = "Carellas_Ristorante_Spot_DE_Femminile.mp3"
+        self.app.store.update({"audio": {
+            "driver": "alexa",
+            "players": ["media_player.sala"],
+            "ads": [ad],
+            "repeat_count": 1,
+            "volume": 40,
+            "resume_music_after_ad": False,
+        }})
+        self.calls.clear()
+        self.app.play_audio(ad, manual=True)
+        services = [call[1] for call in self.calls]
+        self.assertEqual(services, ["volume_set", "play_media"])
+        payload = self.calls[-1][2]
+        self.assertNotIn("announce", payload)
+        self.assertIn(ad, payload["media_content_id"])
+
+    def test_lan_screen_api(self):
+        self.app.store.update({"tv": {
+            "enabled": True,
+            "mode": "lan_screen",
+            "playlist": [{"name": "promo.jpg", "kind": "image", "duration": 12}],
+            "schedule": [],
+            "loop": True,
+            "fit": "cover",
+            "muted": True,
+        }})
+        status, payload = self.request("/api/screen")
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["active"])
+        self.assertEqual(payload["playlist"][0]["duration"], 12)
+        self.assertEqual(payload["fit"], "cover")
+
     def test_overnight_schedule(self):
         schedule = [{"days": [6], "start": "22:00", "end": "02:00", "enabled": True}]
         self.assertTrue(self.app.is_schedule_active(schedule, datetime(2026, 9, 13, 23, 0)))
