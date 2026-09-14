@@ -2,7 +2,7 @@
 
 Repository Home Assistant per gestire pubblicità audio su Sonos o Alexa e playlist di immagini/video su Smart TV.
 
-> Versione beta 0.3.0-beta.2: il supporto Alexa usa l'integrazione non ufficiale Alexa Media Player. Amazon può modificarne il funzionamento e il ripristino dello stesso brano non è garantito.
+> Versione beta 0.4.0-beta.1: il supporto Alexa usa l'integrazione non ufficiale Alexa Media Player. Amazon può modificarne il funzionamento e il ripristino dello stesso brano non è garantito.
 
 ## Funzioni
 
@@ -66,3 +66,18 @@ All'inizio della fascia l'add-on accende la TV, attende il tempo configurato e a
 ## Demo Carellas inclusa
 
 L'add-on include tre schermate Full HD e il video `Demo_Carellas_SmartTV_DLNA.mp4` (H.264, circa 18 secondi), creati con immagini del sito ufficiale `carellas.de`. Nelle nuove installazioni il video è già selezionato; negli aggiornamenti esistenti usare **TV → Seleziona demo Carellas → Prova**.
+
+
+## IPTV multi-TV
+
+La sezione **Canali IPTV per più TV** permette di creare zone indipendenti. Ogni canale possiede nome, playlist, giorni, orario, MAC Wake-on-LAN e comando di spegnimento.
+
+Procedura:
+
+1. Aggiungere una TV/zona e scegliere foto e video.
+2. Salvare e premere **Crea/Aggiorna canale**; la conversione preventiva può richiedere alcuni minuti.
+3. Copiare l'URL M3U del canale e inserirlo nell'app IPTV della TV.
+4. Ripetere la procedura per ogni zona, senza necessità di sincronizzazione.
+5. Per importare tutti i canali in una sola volta usare `http://IP-HOME-ASSISTANT:8099/iptv/channels.m3u`.
+
+I contenuti vengono normalizzati a H.264 1280×720 e trasmessi come MPEG-TS HTTP in ciclo continuo. La conversione avviene solo quando si crea o aggiorna il canale; ogni TV riceve poi un flusso indipendente.
