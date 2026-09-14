@@ -584,7 +584,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4-beta"
+    server_version = "CarellasMediaAds/0.4.1-beta"
 
     def log_message(self, fmt, *args):
         return
@@ -621,6 +621,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(data)
 
@@ -639,6 +640,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "video/mp2t")
             self.send_header("Cache-Control", "no-store")
             self.send_header("Connection", "close")
+            self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             while True:
                 chunk = process.stdout.read(128 * 1024)
@@ -705,8 +707,8 @@ class Handler(BaseHTTPRequestHandler):
                         continue
                     channel_id = safe_channel_id(channel.get("id", ""))
                     name = channel.get("name") or channel_id
-                    lines += [f'#EXTINF:-1 tvg-id="{channel_id}",{name}', f"{local_base_url()}/iptv/{channel_id}.ts"]
-                self.send_text("\n".join(lines) + "\n", "audio/x-mpegurl; charset=utf-8")
+                    lines += [f'#EXTINF:-1 tvg-id="{channel_id}" group-title="Carellas",{name}', f"{local_base_url()}/iptv/{channel_id}.ts"]
+                self.send_text("\r\n".join(lines) + "\r\n", "audio/x-mpegurl; charset=utf-8")
                 return
             match = re.fullmatch(r"/iptv/([a-z0-9-]+)\.m3u", path)
             if match:
@@ -716,7 +718,7 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_text("Canale non trovato", status=404)
                     return
                 name = channel.get("name") or channel_id
-                payload = f'#EXTM3U\n#EXTINF:-1 tvg-id="{channel_id}",{name}\n{local_base_url()}/iptv/{channel_id}.ts\n'
+                payload = f'#EXTM3U\r\n#EXTINF:-1 tvg-id="{channel_id}" group-title="Carellas",{name}\r\n{local_base_url()}/iptv/{channel_id}.ts\r\n'
                 self.send_text(payload, "audio/x-mpegurl; charset=utf-8")
                 return
             match = re.fullmatch(r"/iptv/([a-z0-9-]+)\.ts", path)
