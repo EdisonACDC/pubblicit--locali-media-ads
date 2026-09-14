@@ -9,6 +9,7 @@ import mimetypes
 import os
 import re
 import shutil
+import subprocess
 import threading
 import time
 import traceback
@@ -25,6 +26,7 @@ from pathlib import Path
 APP_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("CARELLAS_DATA_DIR", "/data"))
 MEDIA_DIR = Path(os.environ.get("CARELLAS_MEDIA_DIR", "/media/carellas_media_ads"))
+IPTV_DIR = DATA_DIR / "iptv"
 CONFIG_FILE = DATA_DIR / "carellas_media_ads.json"
 DEFAULT_FILE = APP_DIR / "default_config.json"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
@@ -62,6 +64,7 @@ class Store:
     def __init__(self):
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+        IPTV_DIR.mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
         self.logs = []
         defaults = json.loads(DEFAULT_FILE.read_text(encoding="utf-8"))
@@ -284,6 +287,101 @@ def play_tv_item(item):
     store.log("success", f"Pubblicità TV avviata: {filename}")
 
 
+def safe_channel_id(value):
+    value = re.sub(r"[^a-z0-9-]+", "-", str(value).lower()).strip("-")
+    return value[:48] or f"canale-{uuid.uuid4().hex[:6]}"
+
+
+class IPTVEngine:
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.status = {}
+
+    def channels(self):
+        return store.config.get("iptv", {}).get("channels", [])
+
+    def channel(self, channel_id):
+        channel_id = safe_channel_id(channel_id)
+        return next((item for item in self.channels() if safe_channel_id(item.get("id", "")) == channel_id), None)
+
+    def output(self, channel_id):
+        return IPTV_DIR / safe_channel_id(channel_id) / "channel.mp4"
+
+    def set_status(self, channel_id, state, message=""):
+        with self.lock:
+            self.status[safe_channel_id(channel_id)] = {
+                "state": state,
+                "message": message,
+                "time": now_iso(),
+            }
+
+    def build(self, channel_id):
+        channel = self.channel(channel_id)
+        if not channel:
+            raise RuntimeError("Canale IPTV non trovato")
+        channel_id = safe_channel_id(channel.get("id"))
+        self.set_status(channel_id, "building", "Conversione in corso")
+        work = IPTV_DIR / channel_id
+        parts = work / "parts"
+        shutil.rmtree(parts, ignore_errors=True)
+        parts.mkdir(parents=True, exist_ok=True)
+        playlist = channel.get("playlist", [])
+        if not playlist:
+            raise RuntimeError("La playlist del canale è vuota")
+        concat_lines = []
+        video_filter = "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=25,format=yuv420p"
+        try:
+            for index, item in enumerate(playlist):
+                name = safe_name(item.get("name", ""))
+                source = MEDIA_DIR / name
+                if not source.is_file():
+                    raise RuntimeError(f"File non trovato: {name}")
+                duration = max(2, min(int(item.get("duration", 15)), 3600))
+                part = parts / f"{index:04d}.mp4"
+                kind = item.get("kind") or next(
+                    (key for key, values in ALLOWED.items() if source.suffix.lower() in values),
+                    "video",
+                )
+                command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
+                if kind == "image":
+                    command += ["-loop", "1", "-i", str(source), "-t", str(duration)]
+                else:
+                    command += ["-i", str(source), "-t", str(duration)]
+                command += [
+                    "-vf", video_filter, "-an", "-c:v", "libx264", "-preset", "veryfast",
+                    "-crf", "22", "-profile:v", "high", "-level", "4.0",
+                    "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(part),
+                ]
+                subprocess.run(command, check=True, timeout=max(120, duration * 4))
+                concat_lines.append(f"file '{part.as_posix()}'")
+            concat_file = parts / "concat.txt"
+            concat_file.write_text("\n".join(concat_lines) + "\n", encoding="utf-8")
+            temporary = work / "channel.tmp.mp4"
+            subprocess.run([
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                "-f", "concat", "-safe", "0", "-i", str(concat_file),
+                "-c", "copy", "-movflags", "+faststart", str(temporary),
+            ], check=True, timeout=600)
+            os.replace(temporary, self.output(channel_id))
+            self.set_status(channel_id, "ready", "Canale pronto")
+            store.log("success", f"Canale IPTV creato: {channel.get('name', channel_id)}")
+        except Exception as error:
+            self.set_status(channel_id, "error", str(error))
+            store.log("error", f"Creazione canale IPTV non riuscita ({channel_id}): {error}")
+            raise
+
+    def build_async(self, channel_id):
+        def worker():
+            try:
+                self.build(channel_id)
+            except Exception:
+                pass
+        threading.Thread(target=worker, name=f"iptv-build-{safe_channel_id(channel_id)}", daemon=True).start()
+
+
+iptv = IPTVEngine()
+
+
 def _power_entity_action(entity_id, turn_on):
     if not entity_id or "." not in entity_id:
         raise RuntimeError("Entità di alimentazione TV non valida")
@@ -299,8 +397,8 @@ def _power_entity_action(entity_id, turn_on):
     ha.service(domain, service, {"entity_id": entity_id})
 
 
-def tv_power_on():
-    cfg = store.config["tv"]
+def tv_power_on(cfg=None):
+    cfg = cfg or store.config["tv"]
     mac = re.sub(r"[^0-9A-Fa-f]", "", cfg.get("wol_mac", ""))
     if mac:
         if len(mac) != 12:
@@ -314,8 +412,8 @@ def tv_power_on():
     store.log("success", f"Comando accensione TV inviato: {entity}")
 
 
-def tv_power_off():
-    cfg = store.config["tv"]
+def tv_power_off(cfg=None):
+    cfg = cfg or store.config["tv"]
     entity = cfg.get("power_off_entity") or cfg.get("player")
     _power_entity_action(entity, False)
     store.log("success", f"Comando spegnimento TV inviato: {entity}")
@@ -333,6 +431,7 @@ class Scheduler(threading.Thread):
         self.music_active = False
         self.tv_active = False
         self.tv_ready_at = 0.0
+        self.iptv_active = {}
         self.daily_audio_count = 0
         self.day = datetime.now().date()
         self.busy = threading.Lock()
@@ -443,6 +542,27 @@ class Scheduler(threading.Thread):
             store.log("error", f"Riproduzione TV non riuscita: {error}")
             self.tv_next = time.monotonic() + 30
 
+    def iptv_tick(self):
+        current_ids = set()
+        for channel in iptv.channels():
+            channel_id = safe_channel_id(channel.get("id", ""))
+            current_ids.add(channel_id)
+            active = bool(channel.get("enabled") and is_schedule_active(channel.get("schedule", [])))
+            previous = self.iptv_active.get(channel_id, False)
+            if active and not previous and channel.get("power_on_at_start", False):
+                try:
+                    tv_power_on(channel)
+                except Exception as error:
+                    store.log("error", f"Accensione {channel.get('name', channel_id)} non riuscita: {error}")
+            elif not active and previous and channel.get("power_off_at_end", False):
+                try:
+                    tv_power_off(channel)
+                except Exception as error:
+                    store.log("error", f"Spegnimento {channel.get('name', channel_id)} non riuscito: {error}")
+            self.iptv_active[channel_id] = active
+        for channel_id in set(self.iptv_active) - current_ids:
+            self.iptv_active.pop(channel_id, None)
+
     def run(self):
         store.log("info", "Motore Carellas Media Ads avviato")
         while True:
@@ -454,6 +574,7 @@ class Scheduler(threading.Thread):
                 self.music_tick()
                 self.audio_tick()
                 self.tv_tick()
+                self.iptv_tick()
             except Exception:
                 store.log("error", traceback.format_exc(limit=2))
             time.sleep(5)
@@ -463,7 +584,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.3-beta"
+    server_version = "CarellasMediaAds/0.4-beta"
 
     def log_message(self, fmt, *args):
         return
@@ -473,7 +594,7 @@ class Handler(BaseHTTPRequestHandler):
         api_position = path.rfind("/api/")
         if api_position >= 0:
             return path[api_position:]
-        positions = [path.rfind(marker) for marker in ("/media/", "/assets/")]
+        positions = [path.rfind(marker) for marker in ("/media/", "/assets/", "/iptv/")]
         media_position = max(positions)
         if media_position >= 0:
             return path[media_position:]
@@ -493,6 +614,46 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(data)
+
+    def send_text(self, payload, content_type="text/plain; charset=utf-8", status=200):
+        data = payload.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def send_iptv_stream(self, channel_id):
+        output = iptv.output(channel_id)
+        if not output.is_file():
+            self.send_text("Canale non ancora creato", status=404)
+            return
+        command = [
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-re", "-stream_loop", "-1",
+            "-i", str(output), "-c", "copy", "-f", "mpegts", "pipe:1",
+        ]
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "video/mp2t")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            while True:
+                chunk = process.stdout.read(128 * 1024)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        finally:
+            process.terminate()
+            try:
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                process.kill()
 
     def send_file(self, path, cache=False):
         if not path.is_file():
@@ -534,6 +695,34 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = self.route_path()
         try:
+            if path == "/api/iptv/status":
+                self.send_json({"channels": iptv.status})
+                return
+            if path == "/iptv/channels.m3u":
+                lines = ["#EXTM3U"]
+                for channel in iptv.channels():
+                    if not channel.get("enabled", True):
+                        continue
+                    channel_id = safe_channel_id(channel.get("id", ""))
+                    name = channel.get("name") or channel_id
+                    lines += [f'#EXTINF:-1 tvg-id="{channel_id}",{name}', f"{local_base_url()}/iptv/{channel_id}.ts"]
+                self.send_text("\n".join(lines) + "\n", "audio/x-mpegurl; charset=utf-8")
+                return
+            match = re.fullmatch(r"/iptv/([a-z0-9-]+)\.m3u", path)
+            if match:
+                channel_id = safe_channel_id(match.group(1))
+                channel = iptv.channel(channel_id)
+                if not channel:
+                    self.send_text("Canale non trovato", status=404)
+                    return
+                name = channel.get("name") or channel_id
+                payload = f'#EXTM3U\n#EXTINF:-1 tvg-id="{channel_id}",{name}\n{local_base_url()}/iptv/{channel_id}.ts\n'
+                self.send_text(payload, "audio/x-mpegurl; charset=utf-8")
+                return
+            match = re.fullmatch(r"/iptv/([a-z0-9-]+)\.ts", path)
+            if match:
+                self.send_iptv_stream(match.group(1))
+                return
             if path == "/api/screen":
                 cfg = store.config["tv"]
                 playlist = []
@@ -638,6 +827,30 @@ class Handler(BaseHTTPRequestHandler):
                         remaining -= len(chunk)
                 store.log("success", f"File caricato: {target.name}")
                 self.send_json({"ok": True, "name": target.name, "kind": kind})
+                return
+            if path == "/api/iptv/rebuild":
+                body = self.json_body()
+                channel_id = safe_channel_id(body.get("id", ""))
+                if not iptv.channel(channel_id):
+                    raise RuntimeError("Canale IPTV non trovato")
+                iptv.build_async(channel_id)
+                self.send_json({"ok": True, "id": channel_id})
+                return
+            if path == "/api/iptv/power/on":
+                body = self.json_body()
+                channel = iptv.channel(body.get("id", ""))
+                if not channel:
+                    raise RuntimeError("Canale IPTV non trovato")
+                tv_power_on(channel)
+                self.send_json({"ok": True})
+                return
+            if path == "/api/iptv/power/off":
+                body = self.json_body()
+                channel = iptv.channel(body.get("id", ""))
+                if not channel:
+                    raise RuntimeError("Canale IPTV non trovato")
+                tv_power_off(channel)
+                self.send_json({"ok": True})
                 return
             if path == "/api/test/audio":
                 body = self.json_body()
