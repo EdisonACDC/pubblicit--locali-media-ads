@@ -307,6 +307,19 @@ class IPTVEngine:
     def output(self, channel_id):
         return IPTV_DIR / safe_channel_id(channel_id) / "channel.mp4"
 
+    def runtime_status(self):
+        with self.lock:
+            result = copy.deepcopy(self.status)
+        for channel in self.channels():
+            channel_id = safe_channel_id(channel.get("id", ""))
+            if channel_id not in result:
+                result[channel_id] = {
+                    "state": "ready" if self.output(channel_id).is_file() else "not_built",
+                    "message": "Canale pronto" if self.output(channel_id).is_file() else "Premi Crea/Aggiorna canale",
+                    "time": "",
+                }
+        return result
+
     def set_status(self, channel_id, state, message=""):
         with self.lock:
             self.status[safe_channel_id(channel_id)] = {
@@ -777,6 +790,7 @@ class Handler(BaseHTTPRequestHandler):
                         "music_active": scheduler.music_active,
                         "tv_active": scheduler.tv_active,
                         "media_base_url": local_base_url(),
+                        "iptv_status": iptv.runtime_status(),
                     },
                     "ha_error": error,
                 })
