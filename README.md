@@ -2,7 +2,7 @@
 
 Repository Home Assistant per gestire pubblicità audio su Sonos e playlist di immagini/video su Smart TV.
 
-> Versione stabile 0.4.1 con annunci Sonos, caricamento remoto, schermo LAN/DLNA e canali IPTV HLS indipendenti.
+> Versione stabile 0.4.2 con annunci Sonos, caricamento remoto, schermo LAN/DLNA e canali IPTV HLS indipendenti.
 
 ## Funzioni
 

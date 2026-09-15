@@ -652,7 +652,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4.1"
+    server_version = "CarellasMediaAds/0.4.2"
 
     def log_message(self, fmt, *args):
         return
@@ -990,8 +990,20 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_json({"error": "File ricevuto incompleto: riprova"}, 400)
                     return
                 target = MEDIA_DIR / metadata["target_name"]
-                os.replace(partial_path, target)
-                metadata_path.unlink(missing_ok=True)
+                destination_temporary = MEDIA_DIR / f".{target.name}.{upload_id}.upload"
+                try:
+                    # /data and /media are separate mounts in Home Assistant OS.
+                    # Copy into the destination filesystem first, then rename
+                    # atomically so incomplete files never appear in the library.
+                    shutil.copy2(partial_path, destination_temporary)
+                    os.replace(destination_temporary, target)
+                    partial_path.unlink(missing_ok=True)
+                    metadata_path.unlink(missing_ok=True)
+                except Exception:
+                    destination_temporary.unlink(missing_ok=True)
+                    partial_path.unlink(missing_ok=True)
+                    metadata_path.unlink(missing_ok=True)
+                    raise
                 store.log("success", f"File caricato da remoto: {target.name}")
                 self.send_json({"ok": True, "complete": True, "name": target.name, "kind": kind})
                 return

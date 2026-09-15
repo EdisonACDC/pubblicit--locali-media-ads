@@ -65,7 +65,16 @@ class CarellasServerTest(unittest.TestCase):
         first = content[:10]
         second = content[10:]
         common = "upload_id=abcdef12-3456&filename=remote.jpg&kind=image&total=2&size=20"
-        with mock.patch.object(self.app, "UPLOAD_CHUNK_SIZE", 10):
+        real_replace = os.replace
+
+        def reject_cross_device_replace(source, destination):
+            if Path(source).parent != Path(destination).parent:
+                raise OSError(18, "Cross-device link")
+            return real_replace(source, destination)
+
+        with mock.patch.object(self.app, "UPLOAD_CHUNK_SIZE", 10), mock.patch.object(
+            self.app.os, "replace", side_effect=reject_cross_device_replace
+        ):
             status, payload = self.request(
                 "/api/hassio_ingress/example/api/upload/chunk?" + common + "&index=0",
                 "POST",
