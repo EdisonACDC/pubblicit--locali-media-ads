@@ -1,13 +1,12 @@
 # Carellas Media Ads
 
-Repository Home Assistant per gestire pubblicità audio su Sonos o Alexa e playlist di immagini/video su Smart TV.
+Repository Home Assistant per gestire pubblicità audio su Sonos e playlist di immagini/video su Smart TV.
 
-> Versione beta 0.4.0-beta.1: il supporto Alexa usa l'integrazione non ufficiale Alexa Media Player. Amazon può modificarne il funzionamento e il ripristino dello stesso brano non è garantito.
+> Versione stabile 0.4.0 con annunci Sonos, schermo LAN/DLNA e canali IPTV HLS indipendenti.
 
 ## Funzioni
 
 - Annunci Sonos sopra la sorgente in riproduzione, con ripristino automatico della musica.
-- Modalità Alexa beta con volume, intervallo, ripetizioni, durata dello spot e riavvio opzionale della sorgente musicale configurata.
 - Scelta di più altoparlanti, limite giornaliero e fasce orarie settimanali.
 - Avvio/arresto programmato della musica del locale tramite URI, URL o sorgente supportata dal media player.
 - Libreria audio, immagini e video con caricamento da telefono, tablet e PC.
@@ -27,16 +26,15 @@ Repository Home Assistant per gestire pubblicità audio su Sonos o Alexa e playl
 
 La porta `8099` deve essere disponibile soltanto nella rete locale. Non aprirla su Internet.
 
-## Prova audio con Alexa
+## Prova audio con Sonos
 
-1. Installare e configurare **Alexa Media Player** in Home Assistant tramite HACS.
-2. Verificare che l'Echo compaia in Home Assistant come entità `media_player`.
-3. In **Pubblicità audio**, scegliere **Alexa Media Player (beta)** e selezionare l'Echo.
+1. Configurare l'integrazione **Sonos** in Home Assistant.
+2. Verificare che ogni diffusore compaia come entità `media_player`.
+3. In **Pubblicità audio Sonos**, selezionare uno o più diffusori.
 4. Caricare o selezionare lo spot MP3. Per la prima prova disattivare **solo se la musica è già attiva**.
-5. Impostare la durata reale dello spot e premere **Prova spot**.
-6. Per riavviare la musica dopo l'annuncio, configurare anche altoparlante e sorgente nella sezione **Musica**.
+5. Impostare durata, volume e ripetizioni, quindi premere **Prova spot**.
 
-Alexa non offre il meccanismo `announce` di Sonos: la pubblicità sostituisce la riproduzione corrente. Se l'Echo non riesce a leggere l'MP3 dalla rete locale, il limite dipende da Alexa Media Player/Amazon e non dal timer dell'add-on.
+Lo spot viene inviato come annuncio Sonos: la sorgente musicale in riproduzione riprende automaticamente al termine.
 
 ## Prova Smart TV via LAN
 
@@ -80,4 +78,4 @@ Procedura:
 4. Ripetere la procedura per ogni zona, senza necessità di sincronizzazione.
 5. Per importare tutti i canali in una sola volta usare `http://IP-HOME-ASSISTANT:8099/iptv/channels.m3u`.
 
-I contenuti vengono normalizzati a H.264 1280×720 e trasmessi come MPEG-TS HTTP in ciclo continuo. La conversione avviene solo quando si crea o aggiorna il canale; ogni TV riceve poi un flusso indipendente.
+I contenuti vengono normalizzati a H.264/AAC 1280×720 e distribuiti come canali HLS in ciclo continuo. La conversione avviene solo quando si crea o aggiorna il canale; ogni TV riceve poi un flusso indipendente.

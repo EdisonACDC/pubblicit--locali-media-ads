@@ -75,6 +75,10 @@ class Store:
         except (FileNotFoundError, json.JSONDecodeError):
             saved = {}
         self.config = deep_merge(defaults, saved)
+        # Stable releases support Sonos only. Remove obsolete audio-driver
+        # settings from configurations created by earlier test versions.
+        self.config.setdefault("audio", {}).pop("driver", None)
+        self.config["audio"].pop("resume_music_after_ad", None)
         self.save()
         self.install_bundled_media()
 
@@ -199,7 +203,6 @@ def play_audio(filename=None, manual=False):
     cfg = store.config["audio"]
     players = cfg.get("players", [])
     ads = cfg.get("ads", [])
-    driver = cfg.get("driver", "sonos")
     if not players:
         raise RuntimeError("Nessun altoparlante selezionato")
     if not filename:
@@ -211,40 +214,18 @@ def play_audio(filename=None, manual=False):
     gap = max(0, min(int(cfg.get("repeat_gap_seconds", 5)), 600))
     duration = max(5, min(int(cfg.get("spot_duration_seconds", 65)), 600))
     volume = max(1, min(int(cfg.get("volume", 35)), 100))
-    was_playing = scheduler.selected_playing()
-
     for index in range(repetitions):
-        if driver == "alexa":
-            ha.service("media_player", "volume_set", {
-                "entity_id": players,
-                "volume_level": volume / 100,
-            })
-            payload = {
-                "entity_id": players,
-                "media_content_type": "music",
-                "media_content_id": media_url(filename),
-            }
-        else:
-            payload = {
-                "entity_id": players,
-                "announce": True,
-                "media_content_type": "music",
-                "media_content_id": media_url(filename),
-                "extra": {"volume": volume},
-            }
+        payload = {
+            "entity_id": players,
+            "announce": True,
+            "media_content_type": "music",
+            "media_content_id": media_url(filename),
+            "extra": {"volume": volume},
+        }
         ha.service("media_player", "play_media", payload)
-        store.log("success", f"Spot audio {driver} avviato: {filename} ({index + 1}/{repetitions})")
+        store.log("success", f"Spot audio Sonos avviato: {filename} ({index + 1}/{repetitions})")
         if index + 1 < repetitions:
             time.sleep(duration + gap)
-
-    if driver == "alexa" and was_playing and cfg.get("resume_music_after_ad", True):
-        time.sleep(duration)
-        music = store.config.get("music", {})
-        if music.get("players") and music.get("content_id"):
-            start_music()
-            store.log("info", "Sorgente musicale riavviata dopo lo spot Alexa")
-        else:
-            store.log("warning", "Alexa non può ripristinare il brano esatto: configura una sorgente in Musica locale")
 
     if not manual:
         scheduler.daily_audio_count += repetitions
@@ -663,7 +644,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4.1-beta"
+    server_version = "CarellasMediaAds/0.4.0"
 
     def log_message(self, fmt, *args):
         return

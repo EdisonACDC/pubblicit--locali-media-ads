@@ -1,7 +1,7 @@
 name: Carellas Media Ads
-version: "0.4.0-beta.8"
+version: "0.4.0"
 slug: carellas_media_ads
-description: Beta pubblicità Sonos/Alexa e multi-TV IPTV/LAN/DLNA con playlist e orari indipendenti.
+description: Pubblicità Sonos e multi-TV IPTV/LAN/DLNA con playlist e orari indipendenti.
 url: https://github.com/EdisonACDC/pubblicit--locali-media-ads
 arch:
   - amd64
@@ -10,7 +10,7 @@ arch:
 startup: application
 boot: auto
 init: false
-stage: experimental
+stage: stable
 ingress: true
 ingress_port: 8099
 panel_icon: mdi:bullhorn-variant

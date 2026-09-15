@@ -62,29 +62,11 @@ class CarellasServerTest(unittest.TestCase):
 
     def test_sonos_announce(self):
         ad = "Carellas_Ristorante_Spot_DE_Maschile.mp3"
-        self.app.store.update({"audio": {"driver": "sonos", "players": ["media_player.sala"], "ads": [ad], "repeat_count": 1, "volume": 35}})
+        self.app.store.update({"audio": {"players": ["media_player.sala"], "ads": [ad], "repeat_count": 1, "volume": 35}})
         self.app.play_audio(ad, manual=True)
         _, service, payload = self.calls[-1]
         self.assertEqual(service, "play_media")
         self.assertTrue(payload["announce"])
-        self.assertIn(ad, payload["media_content_id"])
-
-    def test_alexa_beta_uses_direct_media_without_sonos_announce(self):
-        ad = "Carellas_Ristorante_Spot_DE_Femminile.mp3"
-        self.app.store.update({"audio": {
-            "driver": "alexa",
-            "players": ["media_player.sala"],
-            "ads": [ad],
-            "repeat_count": 1,
-            "volume": 40,
-            "resume_music_after_ad": False,
-        }})
-        self.calls.clear()
-        self.app.play_audio(ad, manual=True)
-        services = [call[1] for call in self.calls]
-        self.assertEqual(services, ["volume_set", "play_media"])
-        payload = self.calls[-1][2]
-        self.assertNotIn("announce", payload)
         self.assertIn(ad, payload["media_content_id"])
 
     def test_lan_screen_api(self):
