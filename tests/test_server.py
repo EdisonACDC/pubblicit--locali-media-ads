@@ -60,6 +60,31 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(payload["ok"])
 
+    def test_remote_chunk_upload_through_ingress(self):
+        content = b"remote-photo-content"
+        first = content[:10]
+        second = content[10:]
+        common = "upload_id=abcdef12-3456&filename=remote.jpg&kind=image&total=2&size=20"
+        with mock.patch.object(self.app, "UPLOAD_CHUNK_SIZE", 10):
+            status, payload = self.request(
+                "/api/hassio_ingress/example/api/upload/chunk?" + common + "&index=0",
+                "POST",
+                first,
+                "application/octet-stream",
+            )
+            self.assertEqual(status, 200)
+            self.assertFalse(payload["complete"])
+            status, payload = self.request(
+                "/api/hassio_ingress/example/api/upload/chunk?" + common + "&index=1",
+                "POST",
+                second,
+                "application/octet-stream",
+            )
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["complete"])
+        self.assertEqual((self.app.MEDIA_DIR / payload["name"]).read_bytes(), content)
+        self.request("/api/media/" + payload["name"], "DELETE")
+
     def test_sonos_announce(self):
         ad = "Carellas_Ristorante_Spot_DE_Maschile.mp3"
         self.app.store.update({"audio": {"players": ["media_player.sala"], "ads": [ad], "repeat_count": 1, "volume": 35}})

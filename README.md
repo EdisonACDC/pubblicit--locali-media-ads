@@ -2,7 +2,7 @@
 
 Repository Home Assistant per gestire pubblicità audio su Sonos e playlist di immagini/video su Smart TV.
 
-> Versione stabile 0.4.0 con annunci Sonos, schermo LAN/DLNA e canali IPTV HLS indipendenti.
+> Versione stabile 0.4.1 con annunci Sonos, caricamento remoto, schermo LAN/DLNA e canali IPTV HLS indipendenti.
 
 ## Funzioni
 
@@ -10,6 +10,7 @@ Repository Home Assistant per gestire pubblicità audio su Sonos e playlist di i
 - Scelta di più altoparlanti, limite giornaliero e fasce orarie settimanali.
 - Avvio/arresto programmato della musica del locale tramite URI, URL o sorgente supportata dal media player.
 - Libreria audio, immagini e video con caricamento da telefono, tablet e PC.
+- Caricamento remoto a blocchi tramite Home Assistant, senza esporre la porta `8099` su Internet.
 - Schermo Smart TV via browser e rete LAN: non richiede l'integrazione della TV in Home Assistant.
 - Modalità DLNA/DMR con playlist, Wake-on-LAN, ritardo di avvio e spegnimento programmato.
 - Modalità alternativa per TV, Chromecast o Android TV già integrati come `media_player`.

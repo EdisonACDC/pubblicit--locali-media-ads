@@ -28,12 +28,14 @@ APP_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("CARELLAS_DATA_DIR", "/data"))
 MEDIA_DIR = Path(os.environ.get("CARELLAS_MEDIA_DIR", "/media/carellas_media_ads"))
 IPTV_DIR = DATA_DIR / "iptv"
+UPLOAD_DIR = DATA_DIR / "uploads"
 CONFIG_FILE = DATA_DIR / "carellas_media_ads.json"
 DEFAULT_FILE = APP_DIR / "default_config.json"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 HA_API = os.environ.get("CARELLAS_HA_API", "http://supervisor/core/api")
 PORT = 8099
 MAX_UPLOAD = 1024 * 1024 * 1024 * 4
+UPLOAD_CHUNK_SIZE = 4 * 1024 * 1024
 MIN_FREE_AFTER_UPLOAD = 1024 * 1024 * 512
 ALLOWED = {
     "audio": {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"},
@@ -67,6 +69,11 @@ class Store:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         MEDIA_DIR.mkdir(parents=True, exist_ok=True)
         IPTV_DIR.mkdir(parents=True, exist_ok=True)
+        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        cutoff = time.time() - 24 * 60 * 60
+        for item in UPLOAD_DIR.iterdir():
+            if item.is_file() and item.stat().st_mtime < cutoff:
+                item.unlink(missing_ok=True)
         self.lock = threading.RLock()
         self.logs = []
         defaults = json.loads(DEFAULT_FILE.read_text(encoding="utf-8"))
@@ -155,6 +162,7 @@ class HomeAssistant:
 
 store = Store()
 ha = HomeAssistant()
+upload_lock = threading.Lock()
 
 
 def local_base_url():
@@ -644,7 +652,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4.0"
+    server_version = "CarellasMediaAds/0.4.1"
 
     def log_message(self, fmt, *args):
         return
@@ -885,12 +893,123 @@ class Handler(BaseHTTPRequestHandler):
             store.log("error", f"GET {path}: {error}")
             self.send_json({"error": str(error)}, 500)
 
+    def receive_upload_chunk(self):
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+        upload_id = query.get("upload_id", [""])[0].lower()
+        filename = safe_name(query.get("filename", [""])[0])
+        kind = query.get("kind", [""])[0]
+        try:
+            index = int(query.get("index", ["-1"])[0])
+            total = int(query.get("total", ["0"])[0])
+            file_size = int(query.get("size", ["0"])[0])
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            self.send_json({"error": "Parametri del caricamento non validi"}, 400)
+            return
+        extension = Path(filename).suffix.lower()
+        expected_total = math.ceil(file_size / UPLOAD_CHUNK_SIZE) if file_size else 0
+        expected_length = min(UPLOAD_CHUNK_SIZE, file_size - index * UPLOAD_CHUNK_SIZE)
+        if not re.fullmatch(r"[a-f0-9-]{8,64}", upload_id):
+            self.send_json({"error": "Identificativo caricamento non valido"}, 400)
+            return
+        if kind not in ALLOWED or extension not in ALLOWED[kind]:
+            self.send_json({"error": "Formato file non supportato"}, 400)
+            return
+        if file_size <= 0 or file_size > MAX_UPLOAD or total != expected_total:
+            self.send_json({"error": "Dimensione file non valida (massimo 4 GB)"}, 400)
+            return
+        if index < 0 or index >= total or length != expected_length or length > UPLOAD_CHUNK_SIZE:
+            self.send_json({"error": "Blocco del caricamento non valido"}, 400)
+            return
+
+        metadata_path = UPLOAD_DIR / f"{upload_id}.json"
+        partial_path = UPLOAD_DIR / f"{upload_id}.part"
+        with upload_lock:
+            if index == 0:
+                if metadata_path.exists() or partial_path.exists():
+                    self.send_json({"error": "Caricamento già iniziato: seleziona nuovamente il file"}, 409)
+                    return
+                free_space = shutil.disk_usage(MEDIA_DIR).free
+                if free_space - file_size < MIN_FREE_AFTER_UPLOAD:
+                    available_mb = max(0, (free_space - MIN_FREE_AFTER_UPLOAD) // (1024 * 1024))
+                    self.send_json({
+                        "error": f"Spazio insufficiente. Disponibili circa {available_mb} MB mantenendo 512 MB liberi"
+                    }, 507)
+                    return
+                target = MEDIA_DIR / filename
+                if target.exists():
+                    target = MEDIA_DIR / f"{target.stem}-{uuid.uuid4().hex[:6]}{target.suffix}"
+                metadata = {
+                    "filename": filename,
+                    "target_name": target.name,
+                    "kind": kind,
+                    "size": file_size,
+                    "total": total,
+                    "next_index": 0,
+                    "written": 0,
+                }
+                metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+            else:
+                try:
+                    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                except (FileNotFoundError, json.JSONDecodeError):
+                    self.send_json({"error": "Sessione di caricamento scaduta: riprova"}, 409)
+                    return
+
+            if any((
+                metadata.get("filename") != filename,
+                metadata.get("kind") != kind,
+                metadata.get("size") != file_size,
+                metadata.get("total") != total,
+                metadata.get("next_index") != index,
+            )):
+                self.send_json({"error": "Ordine dei blocchi non valido: riprova il caricamento"}, 409)
+                return
+
+            remaining = length
+            try:
+                with partial_path.open("ab") as handle:
+                    while remaining:
+                        chunk = self.rfile.read(min(1024 * 1024, remaining))
+                        if not chunk:
+                            raise IOError("Caricamento interrotto")
+                        handle.write(chunk)
+                        remaining -= len(chunk)
+            except Exception:
+                metadata_path.unlink(missing_ok=True)
+                partial_path.unlink(missing_ok=True)
+                raise
+
+            metadata["written"] += length
+            metadata["next_index"] += 1
+            complete = metadata["next_index"] == total
+            if complete:
+                if metadata["written"] != file_size or partial_path.stat().st_size != file_size:
+                    metadata_path.unlink(missing_ok=True)
+                    partial_path.unlink(missing_ok=True)
+                    self.send_json({"error": "File ricevuto incompleto: riprova"}, 400)
+                    return
+                target = MEDIA_DIR / metadata["target_name"]
+                os.replace(partial_path, target)
+                metadata_path.unlink(missing_ok=True)
+                store.log("success", f"File caricato da remoto: {target.name}")
+                self.send_json({"ok": True, "complete": True, "name": target.name, "kind": kind})
+                return
+
+            temporary_metadata = metadata_path.with_suffix(".tmp")
+            temporary_metadata.write_text(json.dumps(metadata), encoding="utf-8")
+            os.replace(temporary_metadata, metadata_path)
+            self.send_json({"ok": True, "complete": False, "next_index": metadata["next_index"]})
+
     def do_POST(self):
         path = self.route_path()
         try:
             if path == "/api/config":
                 config = store.update(self.json_body())
                 self.send_json({"ok": True, "config": config})
+                return
+            if path == "/api/upload/chunk":
+                self.receive_upload_chunk()
                 return
             if path == "/api/upload":
                 query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
