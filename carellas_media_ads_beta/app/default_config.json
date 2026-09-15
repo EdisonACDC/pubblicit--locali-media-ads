@@ -1,0 +1,61 @@
+{
+  "language": "it",
+  "media_base_url": "",
+  "audio": {
+    "enabled": false,
+    "driver": "sonos",
+    "players": [],
+    "ads": [],
+    "mode": "rotate",
+    "interval_minutes": 30,
+    "repeat_count": 1,
+    "repeat_gap_seconds": 5,
+    "spot_duration_seconds": 65,
+    "resume_music_after_ad": true,
+    "daily_limit": 20,
+    "volume": 35,
+    "only_when_playing": true,
+    "schedule": []
+  },
+  "music": {
+    "enabled": false,
+    "players": [],
+    "content_id": "",
+    "content_type": "music",
+    "volume": 25,
+    "stop_at_end": true,
+    "schedule": []
+  },
+  "tv": {
+    "enabled": false,
+    "mode": "lan_screen",
+    "player": "",
+    "playlist": [],
+    "loop": true,
+    "fit": "contain",
+    "muted": true,
+    "schedule": [],
+    "power_on_at_start": true,
+    "power_off_at_end": true,
+    "power_on_entity": "",
+    "power_off_entity": "",
+    "wol_mac": "",
+    "startup_delay_seconds": 20
+  },
+  "iptv": {
+    "channels": [
+      {
+        "id": "carellas-demo",
+        "name": "TV Demo Carellas",
+        "enabled": false,
+        "playlist": [],
+        "schedule": [],
+        "power_on_at_start": false,
+        "power_off_at_end": false,
+        "wol_mac": "",
+        "power_on_entity": "",
+        "power_off_entity": ""
+      }
+    ]
+  }
+}

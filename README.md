@@ -4,6 +4,8 @@ Repository Home Assistant per gestire pubblicità audio su Sonos e playlist di i
 
 > Versione stabile 0.4.2 con annunci Sonos, caricamento remoto, schermo LAN/DLNA e canali IPTV HLS indipendenti.
 
+Nel repository è disponibile anche **Carellas Media Ads Beta 0.5.0-beta.1** come applicazione separata sulla porta `8100`. La stabile rimane Sonos-only; la beta mantiene Alexa e aggiunge sequenze IPTV ordinabili, video completi, adattamento 16:9, collage ed effetti.
+
 ## Funzioni
 
 - Annunci Sonos sopra la sorgente in riproduzione, con ripristino automatico della musica.
@@ -22,7 +24,7 @@ Repository Home Assistant per gestire pubblicità audio su Sonos e playlist di i
 1. In Home Assistant aprire **Impostazioni → Applicazioni → Store applicazioni**.
 2. Aprire il menu in alto a destra, scegliere **Repository** e aggiungere:
    `https://github.com/EdisonACDC/pubblicit--locali-media-ads`
-3. Installare **Carellas Media Ads**, attivare *Mostra nella barra laterale* e avviare.
+3. Installare **Carellas Media Ads** per la stabile oppure **Carellas Media Ads Beta** per le funzioni in prova; attivare *Mostra nella barra laterale* e avviare.
 4. Aprire il pannello e completare la configurazione.
 
 La porta `8099` deve essere disponibile soltanto nella rete locale. Non aprirla su Internet.

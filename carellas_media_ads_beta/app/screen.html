@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>Carellas Media Ads – Schermo</title>
+<style>
+html,body{width:100%;height:100%;margin:0;background:#050505;color:#fff;overflow:hidden;font-family:system-ui,-apple-system,sans-serif}
+#stage{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#050505}
+.media{display:none;width:100%;height:100%;object-fit:contain;background:#050505}
+#idle{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;text-align:center;padding:36px}
+#idle .mark{font-size:clamp(48px,10vw,120px)}
+#idle h1{font-size:clamp(28px,5vw,64px);margin:0}
+#idle p{font-size:clamp(16px,2.4vw,30px);margin:0;color:#bbb}
+#status{position:fixed;right:14px;bottom:10px;padding:6px 10px;border-radius:8px;background:#0008;color:#aaa;font-size:13px}
+</style>
+</head>
+<body>
+<div id="stage">
+  <img id="photo" class="media" alt="Pubblicità">
+  <video id="video" class="media" autoplay playsinline preload="auto"></video>
+  <div id="idle"><div class="mark">🇮🇹</div><h1>Carellas Ristorante</h1><p>Schermo pubblicitario pronto</p></div>
+</div>
+<div id="status">Connessione…</div>
+<script>
+const photo=document.getElementById("photo"),video=document.getElementById("video");
+const idle=document.getElementById("idle"),statusEl=document.getElementById("status");
+let config=null,index=0,timer=null,signature="",running=false;
+
+function stopTimer(){if(timer){clearTimeout(timer);timer=null}}
+function hideMedia(){
+  stopTimer(); photo.style.display="none"; video.style.display="none";
+  video.pause(); video.removeAttribute("src"); video.load();
+}
+function showIdle(message){
+  running=false; hideMedia(); idle.style.display="flex";
+  idle.querySelector("p").textContent=message||"Schermo pubblicitario pronto";
+}
+function scheduleNext(seconds){stopTimer();timer=setTimeout(nextItem,Math.max(2,Number(seconds)||15)*1000)}
+function nextItem(){
+  if(!config||!config.active||!config.playlist.length){showIdle("Fuori dall’orario programmato");return}
+  if(!config.loop&&index>=config.playlist.length){showIdle("Playlist terminata");return}
+  const item=config.playlist[index%config.playlist.length]; index++;
+  idle.style.display="none"; photo.style.display="none"; video.style.display="none";
+  const fit=config.fit==="cover"?"cover":"contain";
+  if(item.kind==="image"){
+    video.pause(); photo.style.objectFit=fit; photo.onload=()=>scheduleNext(item.duration);
+    photo.onerror=()=>scheduleNext(5); photo.src=item.url; photo.style.display="block";
+  }else{
+    photo.removeAttribute("src"); video.style.objectFit=fit; video.muted=config.muted!==false;
+    video.src=item.url; video.style.display="block";
+    video.play().catch(()=>{statusEl.textContent="Tocca lo schermo per avviare il video"});
+    scheduleNext(item.duration);
+  }
+}
+async function refresh(){
+  try{
+    const response=await fetch("/api/screen",{cache:"no-store"});
+    if(!response.ok)throw new Error("HTTP "+response.status);
+    const next=await response.json();
+    const nextSignature=JSON.stringify(next);
+    statusEl.textContent=next.active?"Online • pubblicità attiva":"Online • in attesa";
+    if(nextSignature!==signature){
+      signature=nextSignature; config=next; index=0; running=false; hideMedia();
+    }else config=next;
+    if(config.active&&config.playlist.length&&!running){running=true;nextItem()}
+    if(!config.active)showIdle("Fuori dall’orario programmato");
+  }catch(error){
+    statusEl.textContent="Connessione a Home Assistant interrotta";
+    showIdle("Riconnessione in corso…");
+  }
+}
+document.body.addEventListener("click",()=>{if(video.style.display==="block")video.play().catch(()=>{})});
+refresh();setInterval(refresh,10000);
+</script>
+</body>
+</html>
