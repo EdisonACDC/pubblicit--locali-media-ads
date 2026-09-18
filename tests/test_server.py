@@ -50,6 +50,27 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(payload["entities"][0]["entity_id"], "media_player.sala")
         self.assertEqual(payload["runtime"]["media_base_url"], "http://192.168.1.10:8099")
 
+    def test_state_exposes_sonos_favorites_for_music_picker(self):
+        states = [{
+            "entity_id": "media_player.sala",
+            "state": "idle",
+            "attributes": {"friendly_name": "Sonos Sala"},
+        }, {
+            "entity_id": "sensor.sonos_favorites",
+            "state": "2",
+            "attributes": {
+                "friendly_name": "Sonos Favorites",
+                "items": {"FV:2/31": "Radio Italia", "FV:2/4": "Cena Carellas"},
+            },
+        }]
+        with mock.patch.object(self.app.ha, "states", return_value=states):
+            status, payload = self.request("/api/state")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["sonos_favorites"], [
+            {"id": "FV:2/4", "name": "Cena Carellas"},
+            {"id": "FV:2/31", "name": "Radio Italia"},
+        ])
+
     def test_editor_preserves_unsaved_settings_and_shows_sequence_order(self):
         html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
         self.assertIn("if(dirty&&!force)return", html)
@@ -66,6 +87,9 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("api('api/music/start')", html)
         self.assertIn("api('api/music/stop')", html)
         self.assertNotIn("api('/api/music/start')", html)
+        self.assertIn('id="musicFavorite"', html)
+        self.assertIn("favorite_item_id", html)
+        self.assertIn("Aggiorna Preferiti", html)
 
     def test_audio_duration_is_automatic_in_the_interface(self):
         html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
