@@ -67,6 +67,31 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("api('api/music/stop')", html)
         self.assertNotIn("api('/api/music/start')", html)
 
+    def test_audio_duration_is_automatic_in_the_interface(self):
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        self.assertIn("Automatica: viene letta direttamente da ogni file audio", html)
+        self.assertIn("formatDuration(m.duration)", html)
+        self.assertNotIn('id="spotDuration" type="number"', html)
+
+    def test_repeated_spot_waits_for_real_audio_duration(self):
+        ad = "duration-test.mp3"
+        (self.app.MEDIA_DIR / ad).write_bytes(b"audio")
+        self.app.store.update({"audio": {
+            "players": ["media_player.sala"],
+            "ads": [ad],
+            "repeat_count": 2,
+            "repeat_gap_seconds": 7,
+        }})
+        self.calls.clear()
+        with mock.patch.object(self.app, "probe_media_duration", return_value=42.25) as probe, mock.patch.object(
+            self.app.time, "sleep"
+        ) as sleep:
+            self.app.play_audio(ad, manual=True)
+        probe.assert_called_once_with(self.app.MEDIA_DIR / ad)
+        sleep.assert_called_once_with(49.25)
+        self.assertEqual(len([call for call in self.calls if call[1] == "play_media"]), 2)
+        (self.app.MEDIA_DIR / ad).unlink()
+
     def test_music_start_endpoint_plays_on_selected_sonos(self):
         self.app.store.update({"music": {
             "players": ["media_player.sala"],
