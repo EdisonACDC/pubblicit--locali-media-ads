@@ -205,6 +205,7 @@ store = Store()
 ha = HomeAssistant()
 upload_lock = threading.Lock()
 audio_playback_lock = threading.Lock()
+audio_stop_event = threading.Event()
 
 
 def local_base_url():
@@ -296,7 +297,9 @@ def play_audio(filename=None, manual=False):
 
     if not audio_playback_lock.acquire(blocking=False):
         raise RuntimeError("Uno spot Sonos è già in riproduzione")
+    audio_stop_event.clear()
     snapshot_created = False
+    stopped = False
     try:
         # La funzione Sonos announce avvia un AudioClip indipendente su ogni
         # diffusore e non garantisce la sincronizzazione. Salviamo quindi lo
@@ -317,6 +320,9 @@ def play_audio(filename=None, manual=False):
         })
 
         for index in range(repetitions):
+            if audio_stop_event.is_set():
+                stopped = True
+                break
             ha.service("media_player", "play_media", {
                 "entity_id": coordinator,
                 "media_content_type": "music",
@@ -327,9 +333,12 @@ def play_audio(filename=None, manual=False):
                 f"Spot sincronizzato su {len(players)} Sonos selezionati: "
                 f"{filename} ({index + 1}/{repetitions})",
             )
-            time.sleep(duration)
-            if index + 1 < repetitions and gap:
-                time.sleep(gap)
+            if audio_stop_event.wait(duration):
+                stopped = True
+                break
+            if index + 1 < repetitions and gap and audio_stop_event.wait(gap):
+                stopped = True
+                break
     finally:
         if snapshot_created:
             try:
@@ -343,10 +352,22 @@ def play_audio(filename=None, manual=False):
             except Exception as error:
                 store.log("error", f"Ripristino Sonos non riuscito: {error}")
         audio_playback_lock.release()
+        if stopped:
+            store.log("info", "Spot fermato manualmente; riproduzione precedente ripristinata")
 
     if not manual:
         scheduler.daily_audio_count += repetitions
     return filename
+
+
+def stop_audio():
+    """Interrompe lo spot corrente; il thread di riproduzione ripristina lo snapshot Sonos."""
+    if not audio_playback_lock.locked():
+        store.log("info", "Nessuno spot Sonos attivo da fermare")
+        return False
+    audio_stop_event.set()
+    store.log("info", "Richiesto arresto immediato dello spot Sonos")
+    return True
 
 def start_music():
     cfg = store.config["music"]
@@ -902,7 +923,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4.12"
+    server_version = "CarellasMediaAds/0.4.13"
 
     def log_message(self, fmt, *args):
         return
@@ -1366,6 +1387,9 @@ class Handler(BaseHTTPRequestHandler):
                 body = self.json_body()
                 threading.Thread(target=play_audio, args=(body.get("name"), True), daemon=True).start()
                 self.send_json({"ok": True})
+                return
+            if path == "/api/audio/stop":
+                self.send_json({"ok": True, "active": stop_audio()})
                 return
             if path == "/api/test/tv":
                 play_tv_item(self.json_body())
