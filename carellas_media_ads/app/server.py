@@ -195,6 +195,10 @@ class HomeAssistant:
     def service(self, domain, service, payload):
         return self.request("POST", f"/services/{domain}/{service}", payload) or []
 
+    def service_response(self, domain, service, payload):
+        response = self.request("POST", f"/services/{domain}/{service}?return_response", payload) or {}
+        return response.get("service_response", {})
+
 
 store = Store()
 ha = HomeAssistant()
@@ -860,7 +864,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4.7"
+    server_version = "CarellasMediaAds/0.4.8"
 
     def log_message(self, fmt, *args):
         return
@@ -1322,6 +1326,24 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/music/start":
                 start_music()
                 self.send_json({"ok": True})
+                return
+            if path == "/api/music/browse":
+                body = self.json_body()
+                entity_id = str(body.get("entity_id", ""))
+                if not entity_id.startswith("media_player."):
+                    raise RuntimeError("Seleziona prima un altoparlante Sonos")
+                payload = {"entity_id": entity_id}
+                if body.get("media_content_type"):
+                    payload["media_content_type"] = str(body["media_content_type"])
+                if body.get("media_content_id"):
+                    payload["media_content_id"] = str(body["media_content_id"])
+                response = ha.service_response("media_player", "browse_media", payload)
+                browser = response.get(entity_id)
+                if browser is None and response:
+                    browser = next(iter(response.values()))
+                if not isinstance(browser, dict):
+                    raise RuntimeError("Il player selezionato non ha restituito contenuti multimediali")
+                self.send_json({"ok": True, "browser": browser})
                 return
             if path == "/api/music/stop":
                 stop_music()
