@@ -2,9 +2,9 @@
 
 Repository Home Assistant per gestire pubblicità audio su Sonos e playlist di immagini/video su Smart TV.
 
-> Versione stabile 0.4.7 con accesso dalla barra laterale anche per utenti non amministratori, selettore dei Preferiti Sonos senza URL, gruppi sincronizzati, durata automatica degli spot, sequenze/collage 16:9 e canali IPTV HLS indipendenti.
+> Versione stabile 0.4.8 con browser completo della libreria Sonos senza URL, accesso dalla barra laterale anche per utenti non amministratori, gruppi sincronizzati, durata automatica degli spot, sequenze/collage 16:9 e canali IPTV HLS indipendenti.
 
-Nel repository è disponibile anche **Carellas Media Ads Beta 0.5.0-beta.2** come applicazione separata sulla porta `8100`. La stabile 0.4.7 rimane Sonos-only e include selezione automatica dei Preferiti Sonos, durata automatica degli spot, sequenze IPTV ordinabili, video completi, adattamento 16:9, collage ed effetti. La Beta mantiene anche Alexa.
+Nel repository è disponibile anche **Carellas Media Ads Beta 0.5.0-beta.2** come applicazione separata sulla porta `8100`. La stabile 0.4.8 rimane Sonos-only e include lo stesso browser musicale visibile nel player Sonos di Home Assistant, durata automatica degli spot, sequenze IPTV ordinabili, video completi, adattamento 16:9, collage ed effetti. La Beta mantiene anche Alexa.
 
 ## Funzioni
 
@@ -13,6 +13,7 @@ Nel repository è disponibile anche **Carellas Media Ads Beta 0.5.0-beta.2** com
 - Scelta di più altoparlanti, limite giornaliero e fasce orarie settimanali.
 - Avvio/arresto programmato della musica del locale tramite URI, URL o sorgente supportata dal media player.
 - Menu automatico con radio, album e playlist salvati in “I miei Sonos”, senza copiare indirizzi o identificativi.
+- Browser completo della libreria del player Sonos, con navigazione nelle cartelle, tasto Indietro e selezione del contenuto per l'avvio programmato.
 - Libreria audio, immagini e video con caricamento da telefono, tablet e PC.
 - Caricamento remoto a blocchi tramite Home Assistant, senza esporre la porta `8099` su Internet.
 - Schermo Smart TV via browser e rete LAN: non richiede l'integrazione della TV in Home Assistant.
