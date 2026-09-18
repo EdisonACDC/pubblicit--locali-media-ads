@@ -122,7 +122,9 @@ class CarellasServerTest(unittest.TestCase):
         ) as sleep:
             self.app.play_audio(ad, manual=True)
         probe.assert_called_once_with(self.app.MEDIA_DIR / ad)
-        sleep.assert_called_once_with(49.25)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [
+            1.5, 42.25, 7, 42.25, 0.5,
+        ])
         self.assertEqual(len([call for call in self.calls if call[1] == "play_media"]), 2)
         (self.app.MEDIA_DIR / ad).unlink()
 
@@ -224,37 +226,86 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual((self.app.MEDIA_DIR / payload["name"]).read_bytes(), content)
         self.request("/api/media/" + payload["name"], "DELETE")
 
-    def test_sonos_announce(self):
+    def test_single_sonos_uses_synchronized_playback_and_restores_state(self):
         ad = "Carellas_Ristorante_Spot_DE_Maschile.mp3"
         self.app.store.update({"audio": {"players": ["media_player.sala"], "ads": [ad], "repeat_count": 1, "volume": 35}})
-        self.app.play_audio(ad, manual=True)
-        _, service, payload = self.calls[-1]
-        self.assertEqual(service, "play_media")
-        self.assertTrue(payload["announce"])
-        self.assertEqual(payload["entity_id"], ["media_player.sala"])
-        self.assertIn(ad, payload["media_content_id"])
+        self.calls.clear()
+        with mock.patch.object(self.app, "probe_media_duration", return_value=57), mock.patch.object(
+            self.app.time, "sleep"
+        ):
+            self.app.play_audio(ad, manual=True)
+        self.assertEqual(self.calls[0], ("sonos", "snapshot", {
+            "entity_id": ["media_player.sala"], "with_group": True,
+        }))
+        play_call = next(call for call in self.calls if call[1] == "play_media")
+        self.assertEqual(play_call[2]["entity_id"], "media_player.sala")
+        self.assertNotIn("announce", play_call[2])
+        self.assertIn(ad, play_call[2]["media_content_id"])
+        self.assertEqual(self.calls[-1], ("sonos", "restore", {
+            "entity_id": ["media_player.sala"], "with_group": True,
+        }))
 
-    def test_multiple_sonos_are_grouped_then_played_once_on_coordinator(self):
+    def test_only_selected_sonos_are_grouped_and_spot_uses_coordinator(self):
         ad = "Carellas_Ristorante_Spot_DE_Maschile.mp3"
         players = ["media_player.sala", "media_player.terrazza", "media_player.bar"]
         states = [{
             "entity_id": player,
             "state": "playing",
             "attributes": {"friendly_name": player, "group_members": [player]},
-        } for player in players]
+        } for player in players] + [{
+            "entity_id": "media_player.non_selezionato",
+            "state": "playing",
+            "attributes": {"friendly_name": "Non selezionato", "group_members": ["media_player.non_selezionato"]},
+        }]
         self.app.store.update({"audio": {"players": players, "ads": [ad], "repeat_count": 1}})
         self.calls.clear()
         with mock.patch.object(self.app.ha, "states", return_value=states), mock.patch.object(
-            self.app, "SONOS_GROUP_SETTLE_SECONDS", 0
-        ):
+            self.app, "probe_media_duration", return_value=57
+        ), mock.patch.object(self.app, "SONOS_GROUP_SETTLE_SECONDS", 0), mock.patch.object(
+            self.app, "SONOS_RESTORE_SETTLE_SECONDS", 0
+        ), mock.patch.object(self.app.time, "sleep"):
             self.app.play_audio(ad, manual=True)
-        self.assertEqual(self.calls[0][0:2], ("media_player", "join"))
-        self.assertEqual(self.calls[0][2]["entity_id"], players[0])
-        self.assertEqual(self.calls[0][2]["group_members"], players[1:])
+        snapshot = self.calls[0]
+        self.assertEqual(snapshot, ("sonos", "snapshot", {
+            "entity_id": players, "with_group": True,
+        }))
+        unjoin = next(call for call in self.calls if call[1] == "unjoin")
+        self.assertEqual(unjoin[2]["entity_id"], players)
+        join = next(call for call in self.calls if call[1] == "join")
+        self.assertEqual(join[2]["entity_id"], players[0])
+        self.assertEqual(join[2]["group_members"], players[1:])
         play_calls = [call for call in self.calls if call[1] == "play_media"]
         self.assertEqual(len(play_calls), 1)
-        self.assertEqual(play_calls[0][2]["entity_id"], players)
-        self.assertTrue(play_calls[0][2]["announce"])
+        self.assertEqual(play_calls[0][2]["entity_id"], players[0])
+        self.assertNotIn("announce", play_calls[0][2])
+        restore = self.calls[-1]
+        self.assertEqual(restore, ("sonos", "restore", {
+            "entity_id": players, "with_group": True,
+        }))
+        self.assertNotIn("media_player.non_selezionato", json.dumps(self.calls))
+
+    def test_sonos_state_is_restored_when_spot_playback_fails(self):
+        ad = "Carellas_Ristorante_Spot_DE_Maschile.mp3"
+        players = ["media_player.sala", "media_player.bar"]
+        self.app.store.update({"audio": {"players": players, "ads": [ad], "repeat_count": 1}})
+        self.calls.clear()
+
+        def service(domain, name, payload):
+            self.calls.append((domain, name, payload))
+            if name == "play_media":
+                raise RuntimeError("riproduzione non riuscita")
+            return []
+
+        with mock.patch.object(self.app.ha, "service", side_effect=service), mock.patch.object(
+            self.app, "probe_media_duration", return_value=57
+        ), mock.patch.object(self.app, "SONOS_GROUP_SETTLE_SECONDS", 0), mock.patch.object(
+            self.app, "SONOS_RESTORE_SETTLE_SECONDS", 0
+        ), self.assertRaisesRegex(RuntimeError, "riproduzione non riuscita"):
+            self.app.play_audio(ad, manual=True)
+        self.assertEqual(self.calls[-1], ("sonos", "restore", {
+            "entity_id": players, "with_group": True,
+        }))
+        self.assertFalse(self.app.audio_playback_lock.locked())
 
     def test_existing_sonos_group_is_not_regrouped(self):
         players = ["media_player.sala", "media_player.terrazza"]
