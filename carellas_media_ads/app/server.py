@@ -43,6 +43,7 @@ ALLOWED = {
     "image": {".jpg", ".jpeg", ".png", ".webp", ".gif"},
     "video": {".mp4", ".m4v", ".mov", ".webm", ".mkv"},
 }
+MEDIA_DURATION_CACHE = {}
 
 
 def now_iso():
@@ -53,6 +54,33 @@ def safe_name(value):
     value = Path(urllib.parse.unquote(value)).name
     value = re.sub(r"[^A-Za-z0-9À-ÿ._ -]+", "_", value).strip(" .")
     return value[:180] or f"media-{uuid.uuid4().hex[:8]}"
+
+
+def probe_media_duration(source):
+    """Legge la durata reale del file audio/video e la memorizza finché il file non cambia."""
+    source = Path(source)
+    try:
+        stat = source.stat()
+    except FileNotFoundError as error:
+        raise RuntimeError(f"File multimediale non trovato: {source.name}") from error
+    cache_key = (str(source), stat.st_mtime_ns, stat.st_size)
+    if cache_key in MEDIA_DURATION_CACHE:
+        return MEDIA_DURATION_CACHE[cache_key]
+    try:
+        probe = subprocess.run([
+            "ffprobe", "-v", "error", "-show_entries", "format=duration",
+            "-of", "default=nw=1:nk=1", str(source),
+        ], check=True, capture_output=True, text=True, timeout=30)
+        duration = float(probe.stdout.strip())
+    except (OSError, subprocess.SubprocessError, ValueError) as error:
+        raise RuntimeError(f"Durata non leggibile: {source.name}") from error
+    if not math.isfinite(duration) or duration <= 0:
+        raise RuntimeError(f"Durata non valida: {source.name}")
+    duration = min(duration, 6 * 60 * 60)
+    for key in [key for key in MEDIA_DURATION_CACHE if key[0] == str(source)]:
+        MEDIA_DURATION_CACHE.pop(key, None)
+    MEDIA_DURATION_CACHE[cache_key] = duration
+    return duration
 
 
 def deep_merge(base, override):
@@ -87,6 +115,7 @@ class Store:
         # Alexa rimaste da configurazioni beta precedenti.
         self.config.setdefault("audio", {}).pop("driver", None)
         self.config["audio"].pop("resume_music_after_ad", None)
+        self.config["audio"].pop("spot_duration_seconds", None)
         self.save()
         self.install_bundled_media()
 
@@ -128,13 +157,19 @@ class Store:
             if kind == "other":
                 continue
             stat = path.stat()
-            result.append({
+            item = {
                 "name": path.name,
                 "kind": kind,
                 "size": stat.st_size,
                 "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
                 "url": f"/media/{urllib.parse.quote(path.name)}",
-            })
+            }
+            if kind == "audio":
+                try:
+                    item["duration"] = round(probe_media_duration(path), 3)
+                except RuntimeError:
+                    item["duration"] = None
+            result.append(item)
         return result
 
 
@@ -249,7 +284,7 @@ def play_audio(filename=None, manual=False):
 
     repetitions = max(1, min(int(cfg.get("repeat_count", 1)), 10))
     gap = max(0, min(int(cfg.get("repeat_gap_seconds", 5)), 600))
-    duration = max(5, min(int(cfg.get("spot_duration_seconds", 65)), 600))
+    duration = probe_media_duration(MEDIA_DIR / safe_name(filename)) if repetitions > 1 else 0
     volume = max(1, min(int(cfg.get("volume", 35)), 100))
     coordinator = prepare_sonos_group(players)
     for index in range(repetitions):
@@ -410,17 +445,7 @@ class IPTVEngine:
 
     @staticmethod
     def _probe_duration(source):
-        probe = subprocess.run([
-            "ffprobe", "-v", "error", "-show_entries", "format=duration",
-            "-of", "default=nw=1:nk=1", str(source),
-        ], check=True, capture_output=True, text=True, timeout=30)
-        try:
-            duration = float(probe.stdout.strip())
-        except ValueError as error:
-            raise RuntimeError(f"Durata video non leggibile: {source.name}") from error
-        if not math.isfinite(duration) or duration <= 0:
-            raise RuntimeError(f"Durata video non valida: {source.name}")
-        return min(duration, 6 * 60 * 60)
+        return probe_media_duration(source)
 
     @staticmethod
     def _collage_cells(count, layout):
@@ -835,7 +860,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4.5"
+    server_version = "CarellasMediaAds/0.4.6"
 
     def log_message(self, fmt, *args):
         return
