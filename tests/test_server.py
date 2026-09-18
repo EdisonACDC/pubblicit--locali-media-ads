@@ -50,6 +50,21 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(payload["entities"][0]["entity_id"], "media_player.sala")
         self.assertEqual(payload["runtime"]["media_base_url"], "http://192.168.1.10:8099")
 
+    def test_editor_preserves_unsaved_settings_and_shows_sequence_order(self):
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        self.assertIn("if(dirty&&!force)return", html)
+        self.assertIn("Ordine di riproduzione, da sinistra a destra", html)
+        self.assertIn("images:[]", html)
+        self.assertIn("foto selezionate su 6", html)
+        self.assertNotIn('id="audioDriver"', html)
+
+    def test_config_is_merged_and_saved_atomically(self):
+        original_tv = self.app.store.config["tv"]["mode"]
+        self.app.store.update({"audio": {"interval_minutes": 47}})
+        saved = json.loads(self.app.CONFIG_FILE.read_text(encoding="utf-8"))
+        self.assertEqual(saved["audio"]["interval_minutes"], 47)
+        self.assertEqual(saved["tv"]["mode"], original_tv)
+
     def test_config_upload_range_and_delete(self):
         self.request("/api/config", "POST", {"audio": {"players": ["media_player.sala"], "repeat_count": 1}})
         self.request("/api/upload?filename=test.mp3&kind=audio", "POST", b"ID3test-audio", "audio/mpeg")
@@ -102,6 +117,57 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(service, "play_media")
         self.assertTrue(payload["announce"])
         self.assertIn(ad, payload["media_content_id"])
+
+    def test_multiple_sonos_are_grouped_then_played_once_on_coordinator(self):
+        ad = "Carellas_Ristorante_Spot_DE_Maschile.mp3"
+        players = ["media_player.sala", "media_player.terrazza", "media_player.bar"]
+        states = [{
+            "entity_id": player,
+            "state": "playing",
+            "attributes": {"friendly_name": player, "group_members": [player]},
+        } for player in players]
+        self.app.store.update({"audio": {"players": players, "ads": [ad], "repeat_count": 1}})
+        self.calls.clear()
+        with mock.patch.object(self.app.ha, "states", return_value=states), mock.patch.object(
+            self.app, "SONOS_GROUP_SETTLE_SECONDS", 0
+        ):
+            self.app.play_audio(ad, manual=True)
+        self.assertEqual(self.calls[0][0:2], ("media_player", "join"))
+        self.assertEqual(self.calls[0][2]["entity_id"], players[0])
+        self.assertEqual(self.calls[0][2]["group_members"], players[1:])
+        play_calls = [call for call in self.calls if call[1] == "play_media"]
+        self.assertEqual(len(play_calls), 1)
+        self.assertEqual(play_calls[0][2]["entity_id"], players[0])
+
+    def test_existing_sonos_group_is_not_regrouped(self):
+        players = ["media_player.sala", "media_player.terrazza"]
+        states = [{
+            "entity_id": player,
+            "state": "playing",
+            "attributes": {"group_members": players},
+        } for player in players]
+        self.calls.clear()
+        with mock.patch.object(self.app.ha, "states", return_value=states):
+            coordinator = self.app.prepare_sonos_group(players)
+        self.assertEqual(coordinator, players[0])
+        self.assertFalse(any(call[1] == "join" for call in self.calls))
+
+    def test_collage_layout_uses_selected_photos_and_16_9_output(self):
+        names = ["one.jpg", "two.jpg", "three.jpg"]
+        for name in names:
+            (self.app.MEDIA_DIR / name).write_bytes(b"photo")
+        command = self.app.iptv._collage_command({
+            "kind": "collage",
+            "images": names,
+            "layout": "hero",
+            "effect": "zoom_in",
+        }, Path("part.mp4"), 12)
+        graph = command[command.index("-filter_complex") + 1]
+        self.assertEqual(command.count("-loop"), 3)
+        self.assertIn("xstack=inputs=3", graph)
+        self.assertIn("768_0", graph)
+        self.assertIn("zoompan", graph)
+        self.assertIn("s=1280x720", graph)
 
     def test_lan_screen_api(self):
         self.app.store.update({"tv": {
