@@ -188,6 +188,11 @@ class CarellasServerTest(unittest.TestCase):
         with urllib.request.urlopen(urllib.request.Request(self.base + "/media/test.mp3", headers={"Range": "bytes=0-2"})) as response:
             self.assertEqual(response.status, 206)
             self.assertEqual(response.read(), b"ID3")
+            self.assertEqual(response.headers["Content-Range"], "bytes 0-2/13")
+        with urllib.request.urlopen(urllib.request.Request(self.base + "/media/test.mp3", headers={"Range": "bytes=-5"})) as response:
+            self.assertEqual(response.status, 206)
+            self.assertEqual(response.read(), b"audio")
+            self.assertEqual(response.headers["Content-Range"], "bytes 8-12/13")
         status, payload = self.request("/api/media/test.mp3", "DELETE")
         self.assertEqual(status, 200)
         self.assertTrue(payload["ok"])
