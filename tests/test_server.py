@@ -89,7 +89,9 @@ class CarellasServerTest(unittest.TestCase):
         self.assertNotIn("api('/api/music/start')", html)
         self.assertIn('id="musicFavorite"', html)
         self.assertIn("favorite_item_id", html)
-        self.assertIn("Aggiorna Preferiti", html)
+        self.assertIn("Sfoglia la musica del Sonos", html)
+        self.assertIn("api/music/browse", html)
+        self.assertIn("browseSonosBack", html)
 
     def test_audio_duration_is_automatic_in_the_interface(self):
         html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
@@ -131,6 +133,37 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(len(play_calls), 1)
         self.assertEqual(play_calls[0][2]["entity_id"], "media_player.sala")
         self.assertEqual(play_calls[0][2]["media_content_id"], "https://example.test/radio.mp3")
+
+    def test_music_browser_uses_selected_sonos_media_library(self):
+        browser = {
+            "title": "Libreria Sonos",
+            "media_content_type": "library",
+            "media_content_id": "root",
+            "can_expand": True,
+            "can_play": False,
+            "children": [{
+                "title": "Playlist cena",
+                "media_content_type": "playlist",
+                "media_content_id": "S:/Playlist cena",
+                "can_expand": False,
+                "can_play": True,
+            }],
+        }
+        with mock.patch.object(
+            self.app.ha, "service_response", return_value={"media_player.sala": browser}
+        ) as service:
+            status, payload = self.request("/api/music/browse", "POST", {
+                "entity_id": "media_player.sala",
+                "media_content_type": "library",
+                "media_content_id": "root",
+            })
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["browser"]["children"][0]["title"], "Playlist cena")
+        service.assert_called_once_with("media_player", "browse_media", {
+            "entity_id": "media_player.sala",
+            "media_content_type": "library",
+            "media_content_id": "root",
+        })
 
     def test_config_is_merged_and_saved_atomically(self):
         original_tv = self.app.store.config["tv"]["mode"]
