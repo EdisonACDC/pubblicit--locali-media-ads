@@ -2,9 +2,9 @@
 
 Repository Home Assistant per gestire pubblicità audio su Sonos e playlist di immagini/video su Smart TV.
 
-> Versione stabile 0.4.10 con annunci inviati a ogni Sonos selezionato, interfaccia adattata a telefoni e tablet, browser completo della libreria Sonos senza URL, accesso dalla barra laterale anche per utenti non amministratori, durata automatica degli spot, sequenze/collage 16:9 e canali IPTV HLS indipendenti.
+> Versione stabile 0.4.11 con spot sincronizzati esclusivamente sui Sonos selezionati, ripristino automatico di musica/volume/gruppi, interfaccia adattata a telefoni e tablet, browser completo della libreria Sonos senza URL, accesso dalla barra laterale anche per utenti non amministratori, durata automatica degli spot, sequenze/collage 16:9 e canali IPTV HLS indipendenti.
 
-Nel repository è disponibile anche **Carellas Media Ads Beta 0.5.0-beta.2** come applicazione separata sulla porta `8100`. La stabile 0.4.10 rimane Sonos-only e include annunci indirizzati a tutti i diffusori scelti, un'interfaccia responsive, lo stesso browser musicale visibile nel player Sonos di Home Assistant, durata automatica degli spot, sequenze IPTV ordinabili, video completi, adattamento 16:9, collage ed effetti. La Beta mantiene anche Alexa.
+Nel repository è disponibile anche **Carellas Media Ads Beta 0.5.0-beta.2** come applicazione separata sulla porta `8100`. La stabile 0.4.11 rimane Sonos-only e include spot sincronizzati soltanto sui diffusori scelti, un'interfaccia responsive, lo stesso browser musicale visibile nel player Sonos di Home Assistant, durata automatica degli spot, sequenze IPTV ordinabili, video completi, adattamento 16:9, collage ed effetti. La Beta mantiene anche Alexa.
 
 ## Funzioni
 
@@ -39,9 +39,9 @@ La porta `8099` deve essere disponibile soltanto nella rete locale. Non aprirla 
 2. Verificare che ogni diffusore compaia come entità `media_player`.
 3. In **Pubblicità audio Sonos**, selezionare uno o più diffusori.
 4. Caricare o selezionare lo spot MP3. Per la prima prova disattivare **solo se la musica è già attiva**.
-5. Impostare durata, volume e ripetizioni, quindi premere **Prova spot**.
+5. Impostare volume e ripetizioni, quindi premere **Prova spot**. La durata viene letta automaticamente dal file.
 
-Lo spot viene inviato come annuncio Sonos: la sorgente musicale in riproduzione riprende automaticamente al termine.
+Lo spot viene riprodotto come unico flusso dal coordinatore del gruppo temporaneo formato esclusivamente dai Sonos selezionati. Prima dello spot vengono salvati musica, volume e gruppi; al termine tutto viene ripristinato automaticamente.
 
 ## Prova Smart TV via LAN
 
