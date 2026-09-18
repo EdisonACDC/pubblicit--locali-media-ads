@@ -50,6 +50,13 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(payload["entities"][0]["entity_id"], "media_player.sala")
         self.assertEqual(payload["runtime"]["media_base_url"], "http://192.168.1.10:8100")
 
+    def test_iptv_editor_keeps_unsaved_collage_and_shows_order(self):
+        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        self.assertIn("if(dirty&&!force)return", html)
+        self.assertIn("Ordine di riproduzione, da sinistra a destra", html)
+        self.assertIn("images:[]", html)
+        self.assertIn("foto selezionate su 6", html)
+
     def test_config_upload_range_and_delete(self):
         self.request("/api/config", "POST", {"audio": {"players": ["media_player.sala"], "repeat_count": 1}})
         self.request("/api/upload?filename=test.mp3&kind=audio", "POST", b"ID3test-audio", "audio/mpeg")
