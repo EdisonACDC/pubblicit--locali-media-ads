@@ -902,7 +902,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4.11"
+    server_version = "CarellasMediaAds/0.4.12"
 
     def log_message(self, fmt, *args):
         return
@@ -996,32 +996,48 @@ class Handler(BaseHTTPRequestHandler):
         start, end, status = 0, size - 1, HTTPStatus.OK
         range_header = self.headers.get("Range")
         if range_header:
-            match = re.match(r"bytes=(\d*)-(\d*)", range_header)
-            if match:
-                start = int(match.group(1) or 0)
-                end = min(int(match.group(2) or size - 1), size - 1)
+            match = re.fullmatch(r"bytes=(\d*)-(\d*)", range_header.strip())
+            if match and (match.group(1) or match.group(2)):
+                if match.group(1):
+                    start = int(match.group(1))
+                    end = min(int(match.group(2) or size - 1), size - 1)
+                else:
+                    suffix_length = int(match.group(2))
+                    start = max(0, size - suffix_length)
+                    end = size - 1
+                if size <= 0 or start >= size or start > end:
+                    self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+                    self.send_header("Content-Range", f"bytes */{size}")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
                 status = HTTPStatus.PARTIAL_CONTENT
         length = max(0, end - start + 1)
-        self.send_response(status)
-        self.send_header("Content-Type", mimetypes.guess_type(path.name)[0] or "application/octet-stream")
-        self.send_header("Accept-Ranges", "bytes")
-        self.send_header("Content-Length", str(length))
-        self.send_header("Cache-Control", "public, max-age=3600" if cache else "no-store")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        if status == HTTPStatus.PARTIAL_CONTENT:
-            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
-        self.end_headers()
-        if self.command == "HEAD":
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", mimetypes.guess_type(path.name)[0] or "application/octet-stream")
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Content-Length", str(length))
+            self.send_header("Cache-Control", "public, max-age=3600" if cache else "no-store")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            if status == HTTPStatus.PARTIAL_CONTENT:
+                self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+            self.end_headers()
+            if self.command == "HEAD":
+                return
+            with path.open("rb") as handle:
+                handle.seek(start)
+                remaining = length
+                while remaining:
+                    chunk = handle.read(min(1024 * 128, remaining))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    remaining -= len(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            # Sonos chiude normalmente alcune richieste di sondaggio appena
+            # ha letto intestazioni o metadati del file.
             return
-        with path.open("rb") as handle:
-            handle.seek(start)
-            remaining = length
-            while remaining:
-                chunk = handle.read(min(1024 * 128, remaining))
-                if not chunk:
-                    break
-                self.wfile.write(chunk)
-                remaining -= len(chunk)
 
     def do_HEAD(self):
         self.do_GET()
@@ -1149,6 +1165,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_file(APP_DIR / "screen.html")
                 return
             self.send_file(APP_DIR / "index.html")
+        except (BrokenPipeError, ConnectionResetError):
+            return
         except Exception as error:
             store.log("error", f"GET {path}: {error}")
             self.send_json({"error": str(error)}, 500)
