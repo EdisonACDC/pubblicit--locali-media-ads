@@ -58,6 +58,31 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("foto selezionate su 6", html)
         self.assertNotIn('id="audioDriver"', html)
 
+    def test_desktop_sonos_picker_and_ingress_music_controls(self):
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        self.assertIn('id="audioPlayers" class="speaker-picker"', html)
+        self.assertIn('id="musicPlayers" class="speaker-picker"', html)
+        self.assertIn("speakerValues('musicPlayers')", html)
+        self.assertIn("api('api/music/start')", html)
+        self.assertIn("api('api/music/stop')", html)
+        self.assertNotIn("api('/api/music/start')", html)
+
+    def test_music_start_endpoint_plays_on_selected_sonos(self):
+        self.app.store.update({"music": {
+            "players": ["media_player.sala"],
+            "content_id": "https://example.test/radio.mp3",
+            "content_type": "music",
+            "volume": 25,
+        }})
+        self.calls.clear()
+        status, payload = self.request("/api/music/start", "POST", {})
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["ok"])
+        play_calls = [call for call in self.calls if call[1] == "play_media"]
+        self.assertEqual(len(play_calls), 1)
+        self.assertEqual(play_calls[0][2]["entity_id"], "media_player.sala")
+        self.assertEqual(play_calls[0][2]["media_content_id"], "https://example.test/radio.mp3")
+
     def test_config_is_merged_and_saved_atomically(self):
         original_tv = self.app.store.config["tv"]["mode"]
         self.app.store.update({"audio": {"interval_minutes": 47}})
