@@ -231,6 +231,7 @@ class CarellasServerTest(unittest.TestCase):
         _, service, payload = self.calls[-1]
         self.assertEqual(service, "play_media")
         self.assertTrue(payload["announce"])
+        self.assertEqual(payload["entity_id"], ["media_player.sala"])
         self.assertIn(ad, payload["media_content_id"])
 
     def test_multiple_sonos_are_grouped_then_played_once_on_coordinator(self):
@@ -252,7 +253,8 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(self.calls[0][2]["group_members"], players[1:])
         play_calls = [call for call in self.calls if call[1] == "play_media"]
         self.assertEqual(len(play_calls), 1)
-        self.assertEqual(play_calls[0][2]["entity_id"], players[0])
+        self.assertEqual(play_calls[0][2]["entity_id"], players)
+        self.assertTrue(play_calls[0][2]["announce"])
 
     def test_existing_sonos_group_is_not_regrouped(self):
         players = ["media_player.sala", "media_player.terrazza"]
