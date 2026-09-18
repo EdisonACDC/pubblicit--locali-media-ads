@@ -835,7 +835,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4.3"
+    server_version = "CarellasMediaAds/0.4.5"
 
     def log_message(self, fmt, *args):
         return
