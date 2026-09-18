@@ -35,6 +35,7 @@ TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 HA_API = os.environ.get("CARELLAS_HA_API", "http://supervisor/core/api")
 PORT = 8099
 SONOS_GROUP_SETTLE_SECONDS = float(os.environ.get("CARELLAS_SONOS_GROUP_SETTLE_SECONDS", "1.5"))
+SONOS_RESTORE_SETTLE_SECONDS = float(os.environ.get("CARELLAS_SONOS_RESTORE_SETTLE_SECONDS", "0.5"))
 MAX_UPLOAD = 1024 * 1024 * 1024 * 4
 UPLOAD_CHUNK_SIZE = 4 * 1024 * 1024
 MIN_FREE_AFTER_UPLOAD = 1024 * 1024 * 512
@@ -203,6 +204,7 @@ class HomeAssistant:
 store = Store()
 ha = HomeAssistant()
 upload_lock = threading.Lock()
+audio_playback_lock = threading.Lock()
 
 
 def local_base_url():
@@ -247,7 +249,7 @@ def is_schedule_active(schedule, moment=None):
     return False
 
 
-def prepare_sonos_group(players):
+def prepare_sonos_group(players, force=False):
     """Raggruppa gli altoparlanti e restituisce il coordinatore Sonos."""
     players = list(dict.fromkeys(player for player in players if player))
     if not players:
@@ -264,7 +266,7 @@ def prepare_sonos_group(players):
     except Exception as error:
         store.log("warning", f"Stato gruppo Sonos non leggibile: {error}")
 
-    if not already_grouped:
+    if force or not already_grouped:
         ha.service("media_player", "join", {
             "entity_id": coordinator,
             "group_members": players[1:],
@@ -286,30 +288,61 @@ def play_audio(filename=None, manual=False):
     if not filename:
         raise RuntimeError("Nessuno spot audio configurato")
 
+    players = list(dict.fromkeys(player for player in players if player))
     repetitions = max(1, min(int(cfg.get("repeat_count", 1)), 10))
     gap = max(0, min(int(cfg.get("repeat_gap_seconds", 5)), 600))
-    duration = probe_media_duration(MEDIA_DIR / safe_name(filename)) if repetitions > 1 else 0
+    duration = probe_media_duration(MEDIA_DIR / safe_name(filename))
     volume = max(1, min(int(cfg.get("volume", 35)), 100))
-    prepare_sonos_group(players)
-    for index in range(repetitions):
-        payload = {
-            # Gli annunci Sonos usano AudioClip via websocket sul singolo
-            # diffusore: il coordinatore non li inoltra automaticamente agli
-            # altri membri del gruppo. Home Assistant riceve l'intera lista e
-            # avvia quindi lo stesso clip su ogni altoparlante selezionato.
+
+    if not audio_playback_lock.acquire(blocking=False):
+        raise RuntimeError("Uno spot Sonos è già in riproduzione")
+    snapshot_created = False
+    try:
+        # La funzione Sonos announce avvia un AudioClip indipendente su ogni
+        # diffusore e non garantisce la sincronizzazione. Salviamo quindi lo
+        # stato dei soli Sonos scelti, li isoliamo e riproduciamo un unico
+        # normale flusso sul coordinatore del gruppo temporaneo.
+        ha.service("sonos", "snapshot", {
             "entity_id": players,
-            "announce": True,
-            "media_content_type": "music",
-            "media_content_id": media_url(filename),
-            "extra": {"volume": volume},
-        }
-        ha.service("media_player", "play_media", payload)
-        store.log(
-            "success",
-            f"Spot audio inviato a {len(players)} Sonos: {filename} ({index + 1}/{repetitions})",
-        )
-        if index + 1 < repetitions:
-            time.sleep(duration + gap)
+            "with_group": True,
+        })
+        snapshot_created = True
+        ha.service("media_player", "unjoin", {"entity_id": players})
+        if SONOS_GROUP_SETTLE_SECONDS > 0:
+            time.sleep(SONOS_GROUP_SETTLE_SECONDS)
+        coordinator = prepare_sonos_group(players, force=True)
+        ha.service("media_player", "volume_set", {
+            "entity_id": players,
+            "volume_level": volume / 100,
+        })
+
+        for index in range(repetitions):
+            ha.service("media_player", "play_media", {
+                "entity_id": coordinator,
+                "media_content_type": "music",
+                "media_content_id": media_url(filename),
+            })
+            store.log(
+                "success",
+                f"Spot sincronizzato su {len(players)} Sonos selezionati: "
+                f"{filename} ({index + 1}/{repetitions})",
+            )
+            time.sleep(duration)
+            if index + 1 < repetitions and gap:
+                time.sleep(gap)
+    finally:
+        if snapshot_created:
+            try:
+                ha.service("sonos", "restore", {
+                    "entity_id": players,
+                    "with_group": True,
+                })
+                if SONOS_RESTORE_SETTLE_SECONDS > 0:
+                    time.sleep(SONOS_RESTORE_SETTLE_SECONDS)
+                store.log("info", f"Musica e gruppi ripristinati su {len(players)} Sonos selezionati")
+            except Exception as error:
+                store.log("error", f"Ripristino Sonos non riuscito: {error}")
+        audio_playback_lock.release()
 
     if not manual:
         scheduler.daily_audio_count += repetitions
@@ -869,7 +902,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4.10"
+    server_version = "CarellasMediaAds/0.4.11"
 
     def log_message(self, fmt, *args):
         return
