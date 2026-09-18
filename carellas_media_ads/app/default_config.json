@@ -8,7 +8,7 @@
     "mode": "rotate",
     "interval_minutes": 30,
     "repeat_count": 1,
-    "repeat_gap_seconds": 5,
+    "repeat_gap_seconds": 0,
     "daily_limit": 20,
     "volume": 35,
     "only_when_playing": true,

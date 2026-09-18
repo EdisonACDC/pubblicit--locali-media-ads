@@ -291,6 +291,11 @@ def play_audio(filename=None, manual=False):
 
     players = list(dict.fromkeys(player for player in players if player))
     repetitions = max(1, min(int(cfg.get("repeat_count", 1)), 10))
+    if not manual:
+        remaining_today = max(0, int(cfg.get("daily_limit", 20)) - scheduler.audio_today())
+        repetitions = min(repetitions, remaining_today)
+        if repetitions < 1:
+            raise RuntimeError("Limite giornaliero degli spot raggiunto")
     gap = max(0, min(int(cfg.get("repeat_gap_seconds", 5)), 600))
     duration = probe_media_duration(MEDIA_DIR / safe_name(filename))
     volume = max(1, min(int(cfg.get("volume", 35)), 100))
@@ -328,6 +333,7 @@ def play_audio(filename=None, manual=False):
                 "media_content_type": "music",
                 "media_content_id": media_url(filename),
             })
+            scheduler.record_audio_play()
             store.log(
                 "success",
                 f"Spot sincronizzato su {len(players)} Sonos selezionati: "
@@ -355,8 +361,6 @@ def play_audio(filename=None, manual=False):
         if stopped:
             store.log("info", "Spot fermato manualmente; riproduzione precedente ripristinata")
 
-    if not manual:
-        scheduler.daily_audio_count += repetitions
     return filename
 
 
@@ -772,8 +776,23 @@ class Scheduler(threading.Thread):
         self.tv_ready_at = 0.0
         self.iptv_active = {}
         self.daily_audio_count = 0
+        self.audio_count_lock = threading.Lock()
         self.day = datetime.now().date()
         self.busy = threading.Lock()
+
+    def audio_today(self):
+        with self.audio_count_lock:
+            return self.daily_audio_count
+
+    def record_audio_play(self):
+        """Conta ogni spot che Home Assistant ha effettivamente avviato, anche nelle prove manuali."""
+        today = datetime.now().date()
+        with self.audio_count_lock:
+            if today != self.day:
+                self.day = today
+                self.daily_audio_count = 0
+            self.daily_audio_count += 1
+            return self.daily_audio_count
 
     def pick_audio(self, ads, mode):
         if not ads:
@@ -805,7 +824,7 @@ class Scheduler(threading.Thread):
         interval = max(1, int(cfg.get("interval_minutes", 30))) * 60
         if time.monotonic() - self.last_audio < interval:
             return
-        if self.daily_audio_count >= max(1, int(cfg.get("daily_limit", 20))):
+        if self.audio_today() >= max(1, int(cfg.get("daily_limit", 20))):
             return
         if cfg.get("only_when_playing", True) and not self.selected_playing():
             return
@@ -908,8 +927,9 @@ class Scheduler(threading.Thread):
             try:
                 today = datetime.now().date()
                 if today != self.day:
-                    self.day = today
-                    self.daily_audio_count = 0
+                    with self.audio_count_lock:
+                        self.day = today
+                        self.daily_audio_count = 0
                 self.music_tick()
                 self.audio_tick()
                 self.tv_tick()
@@ -923,7 +943,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4.13"
+    server_version = "CarellasMediaAds/0.4.14"
 
     def log_message(self, fmt, *args):
         return
@@ -1165,7 +1185,7 @@ class Handler(BaseHTTPRequestHandler):
                     ),
                     "logs": store.logs,
                     "runtime": {
-                        "audio_today": scheduler.daily_audio_count,
+                        "audio_today": scheduler.audio_today(),
                         "music_active": scheduler.music_active,
                         "tv_active": scheduler.tv_active,
                         "media_base_url": local_base_url(),
