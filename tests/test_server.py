@@ -107,6 +107,11 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("formatDuration(m.duration)", html)
         self.assertNotIn('id="spotDuration" type="number"', html)
 
+    def test_stop_spot_button_is_available_on_dashboard_and_audio_page(self):
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        self.assertEqual(html.count('onclick="stopAudio()"'), 2)
+        self.assertIn("api/audio/stop", html)
+
     def test_repeated_spot_waits_for_real_audio_duration(self):
         ad = "duration-test.mp3"
         (self.app.MEDIA_DIR / ad).write_bytes(b"audio")
@@ -119,12 +124,11 @@ class CarellasServerTest(unittest.TestCase):
         self.calls.clear()
         with mock.patch.object(self.app, "probe_media_duration", return_value=42.25) as probe, mock.patch.object(
             self.app.time, "sleep"
-        ) as sleep:
+        ) as sleep, mock.patch.object(self.app.audio_stop_event, "wait", return_value=False) as wait:
             self.app.play_audio(ad, manual=True)
         probe.assert_called_once_with(self.app.MEDIA_DIR / ad)
-        self.assertEqual([call.args[0] for call in sleep.call_args_list], [
-            1.5, 42.25, 7, 42.25, 0.5,
-        ])
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1.5, 0.5])
+        self.assertEqual([call.args[0] for call in wait.call_args_list], [42.25, 7, 42.25])
         self.assertEqual(len([call for call in self.calls if call[1] == "play_media"]), 2)
         (self.app.MEDIA_DIR / ad).unlink()
 
@@ -237,7 +241,7 @@ class CarellasServerTest(unittest.TestCase):
         self.calls.clear()
         with mock.patch.object(self.app, "probe_media_duration", return_value=57), mock.patch.object(
             self.app.time, "sleep"
-        ):
+        ), mock.patch.object(self.app.audio_stop_event, "wait", return_value=False):
             self.app.play_audio(ad, manual=True)
         self.assertEqual(self.calls[0], ("sonos", "snapshot", {
             "entity_id": ["media_player.sala"], "with_group": True,
@@ -268,7 +272,9 @@ class CarellasServerTest(unittest.TestCase):
             self.app, "probe_media_duration", return_value=57
         ), mock.patch.object(self.app, "SONOS_GROUP_SETTLE_SECONDS", 0), mock.patch.object(
             self.app, "SONOS_RESTORE_SETTLE_SECONDS", 0
-        ), mock.patch.object(self.app.time, "sleep"):
+        ), mock.patch.object(self.app.time, "sleep"), mock.patch.object(
+            self.app.audio_stop_event, "wait", return_value=False
+        ):
             self.app.play_audio(ad, manual=True)
         snapshot = self.calls[0]
         self.assertEqual(snapshot, ("sonos", "snapshot", {
@@ -288,6 +294,37 @@ class CarellasServerTest(unittest.TestCase):
             "entity_id": players, "with_group": True,
         }))
         self.assertNotIn("media_player.non_selezionato", json.dumps(self.calls))
+
+    def test_stop_audio_endpoint_interrupts_spot_and_restores_snapshot(self):
+        ad = "Carellas_Ristorante_Spot_DE_Maschile.mp3"
+        players = ["media_player.sala", "media_player.bar"]
+        self.app.store.update({"audio": {"players": players, "ads": [ad], "repeat_count": 1}})
+        self.calls.clear()
+        waiting = threading.Event()
+        real_wait = self.app.audio_stop_event.wait
+
+        def interruptible_wait(timeout):
+            waiting.set()
+            return real_wait(timeout)
+
+        with mock.patch.object(self.app, "probe_media_duration", return_value=600), mock.patch.object(
+            self.app, "SONOS_GROUP_SETTLE_SECONDS", 0
+        ), mock.patch.object(self.app, "SONOS_RESTORE_SETTLE_SECONDS", 0), mock.patch.object(
+            self.app.audio_stop_event, "wait", side_effect=interruptible_wait
+        ):
+            playback = threading.Thread(target=self.app.play_audio, args=(ad, True))
+            playback.start()
+            self.assertTrue(waiting.wait(1), "Lo spot non è entrato nella fase di riproduzione")
+            status, payload = self.request("/api/audio/stop", "POST", {})
+            playback.join(1)
+
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["active"])
+        self.assertFalse(playback.is_alive())
+        self.assertEqual(self.calls[-1], ("sonos", "restore", {
+            "entity_id": players, "with_group": True,
+        }))
+        self.assertFalse(self.app.audio_playback_lock.locked())
 
     def test_sonos_state_is_restored_when_spot_playback_fails(self):
         ad = "Carellas_Ristorante_Spot_DE_Maschile.mp3"
