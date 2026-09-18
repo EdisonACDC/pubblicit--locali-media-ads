@@ -112,6 +112,13 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(html.count('onclick="stopAudio()"'), 2)
         self.assertIn("api/audio/stop", html)
 
+    def test_audio_frequency_and_repeat_controls_are_unambiguous(self):
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        self.assertIn("Riproduci ogni (minuti)", html)
+        self.assertIn("Quante volte consecutive", html)
+        self.assertIn("updateAudioRepeatControls()", html)
+        self.assertIn("input.disabled=!repeated", html)
+
     def test_repeated_spot_waits_for_real_audio_duration(self):
         ad = "duration-test.mp3"
         (self.app.MEDIA_DIR / ad).write_bytes(b"audio")
@@ -122,6 +129,7 @@ class CarellasServerTest(unittest.TestCase):
             "repeat_gap_seconds": 7,
         }})
         self.calls.clear()
+        count_before = self.app.scheduler.audio_today()
         with mock.patch.object(self.app, "probe_media_duration", return_value=42.25) as probe, mock.patch.object(
             self.app.time, "sleep"
         ) as sleep, mock.patch.object(self.app.audio_stop_event, "wait", return_value=False) as wait:
@@ -130,6 +138,7 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [1.5, 0.5])
         self.assertEqual([call.args[0] for call in wait.call_args_list], [42.25, 7, 42.25])
         self.assertEqual(len([call for call in self.calls if call[1] == "play_media"]), 2)
+        self.assertEqual(self.app.scheduler.audio_today(), count_before + 2)
         (self.app.MEDIA_DIR / ad).unlink()
 
     def test_music_start_endpoint_plays_on_selected_sonos(self):
@@ -331,6 +340,7 @@ class CarellasServerTest(unittest.TestCase):
         players = ["media_player.sala", "media_player.bar"]
         self.app.store.update({"audio": {"players": players, "ads": [ad], "repeat_count": 1}})
         self.calls.clear()
+        count_before = self.app.scheduler.audio_today()
 
         def service(domain, name, payload):
             self.calls.append((domain, name, payload))
@@ -347,6 +357,7 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(self.calls[-1], ("sonos", "restore", {
             "entity_id": players, "with_group": True,
         }))
+        self.assertEqual(self.app.scheduler.audio_today(), count_before)
         self.assertFalse(self.app.audio_playback_lock.locked())
 
     def test_existing_sonos_group_is_not_regrouped(self):
