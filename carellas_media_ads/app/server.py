@@ -34,6 +34,7 @@ DEFAULT_FILE = APP_DIR / "default_config.json"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 HA_API = os.environ.get("CARELLAS_HA_API", "http://supervisor/core/api")
 PORT = 8099
+SONOS_GROUP_SETTLE_SECONDS = float(os.environ.get("CARELLAS_SONOS_GROUP_SETTLE_SECONDS", "1.5"))
 MAX_UPLOAD = 1024 * 1024 * 1024 * 4
 UPLOAD_CHUNK_SIZE = 4 * 1024 * 1024
 MIN_FREE_AFTER_UPLOAD = 1024 * 1024 * 512
@@ -82,8 +83,8 @@ class Store:
         except (FileNotFoundError, json.JSONDecodeError):
             saved = {}
         self.config = deep_merge(defaults, saved)
-        # Stable releases support Sonos only. Remove obsolete audio-driver
-        # settings from configurations created by earlier test versions.
+        # La versione stabile supporta solo Sonos. Elimina eventuali opzioni
+        # Alexa rimaste da configurazioni beta precedenti.
         self.config.setdefault("audio", {}).pop("driver", None)
         self.config["audio"].pop("resume_music_after_ad", None)
         self.save()
@@ -207,6 +208,34 @@ def is_schedule_active(schedule, moment=None):
     return False
 
 
+def prepare_sonos_group(players):
+    """Raggruppa gli altoparlanti e restituisce il coordinatore Sonos."""
+    players = list(dict.fromkeys(player for player in players if player))
+    if not players:
+        raise RuntimeError("Nessun altoparlante selezionato")
+    coordinator = players[0]
+    if len(players) == 1:
+        return coordinator
+
+    already_grouped = False
+    try:
+        states = {item.get("entity_id"): item for item in ha.states()}
+        members = states.get(coordinator, {}).get("attributes", {}).get("group_members") or []
+        already_grouped = members and members[0] == coordinator and set(players).issubset(set(members))
+    except Exception as error:
+        store.log("warning", f"Stato gruppo Sonos non leggibile: {error}")
+
+    if not already_grouped:
+        ha.service("media_player", "join", {
+            "entity_id": coordinator,
+            "group_members": players[1:],
+        })
+        if SONOS_GROUP_SETTLE_SECONDS > 0:
+            time.sleep(SONOS_GROUP_SETTLE_SECONDS)
+        store.log("info", f"Gruppo Sonos sincronizzato: {len(players)} altoparlanti")
+    return coordinator
+
+
 def play_audio(filename=None, manual=False):
     cfg = store.config["audio"]
     players = cfg.get("players", [])
@@ -222,16 +251,19 @@ def play_audio(filename=None, manual=False):
     gap = max(0, min(int(cfg.get("repeat_gap_seconds", 5)), 600))
     duration = max(5, min(int(cfg.get("spot_duration_seconds", 65)), 600))
     volume = max(1, min(int(cfg.get("volume", 35)), 100))
+    coordinator = prepare_sonos_group(players)
     for index in range(repetitions):
         payload = {
-            "entity_id": players,
+            # Un solo comando al coordinatore: Sonos distribuisce l'annuncio
+            # in modo sincronizzato a tutti i membri del gruppo.
+            "entity_id": coordinator,
             "announce": True,
             "media_content_type": "music",
             "media_content_id": media_url(filename),
             "extra": {"volume": volume},
         }
         ha.service("media_player", "play_media", payload)
-        store.log("success", f"Spot audio Sonos avviato: {filename} ({index + 1}/{repetitions})")
+        store.log("success", f"Spot audio Sonos sincronizzato: {filename} ({index + 1}/{repetitions})")
         if index + 1 < repetitions:
             time.sleep(duration + gap)
 
@@ -243,16 +275,17 @@ def start_music():
     cfg = store.config["music"]
     if not cfg.get("players") or not cfg.get("content_id"):
         raise RuntimeError("Configurazione musica incompleta")
+    coordinator = prepare_sonos_group(cfg["players"])
     ha.service("media_player", "volume_set", {
         "entity_id": cfg["players"], "volume_level": max(0, min(int(cfg.get("volume", 25)), 100)) / 100
     })
     payload = {
-        "entity_id": cfg["players"],
+        "entity_id": coordinator,
         "media_content_type": cfg.get("content_type", "music"),
         "media_content_id": cfg["content_id"],
     }
     ha.service("media_player", "play_media", payload)
-    store.log("success", "Musica del locale avviata dalla programmazione")
+    store.log("success", "Musica del locale avviata sul gruppo Sonos sincronizzato")
 
 
 def stop_music():
@@ -325,6 +358,141 @@ class IPTVEngine:
                 "time": now_iso(),
             }
 
+    @staticmethod
+    def _fit_filter(width=1280, height=720, fit="smart"):
+        if fit == "contain":
+            return (
+                f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black"
+            )
+        if fit == "smart":
+            return (
+                "split=2[background][foreground];"
+                f"[background]scale={width}:{height}:force_original_aspect_ratio=increase,"
+                f"crop={width}:{height},boxblur=20:2[blurred];"
+                f"[foreground]scale={width}:{height}:force_original_aspect_ratio=decrease[clear];"
+                "[blurred][clear]overlay=(W-w)/2:(H-h)/2"
+            )
+        return (
+            f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{height}"
+        )
+
+    @staticmethod
+    def _effect_filter(effect, duration):
+        frames = max(1, math.ceil(duration * 25))
+        if effect == "zoom_in":
+            return (
+                "zoompan=z='min(zoom+0.0012,1.12)':"
+                "x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+                "d=1:s=1280x720:fps=25"
+            )
+        if effect == "zoom_out":
+            return (
+                "zoompan=z='if(eq(on,1),1.12,max(1.0,zoom-0.0012))':"
+                "x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+                "d=1:s=1280x720:fps=25"
+            )
+        if effect == "pan":
+            return (
+                "zoompan=z=1.12:"
+                f"x='(iw-iw/zoom)*on/{frames}':"
+                "y='ih/2-(ih/zoom/2)':d=1:s=1280x720:fps=25"
+            )
+        if effect == "black_white":
+            return "hue=s=0,fps=25"
+        return "fps=25"
+
+    @staticmethod
+    def _fade_filter(duration):
+        fade_out = max(0.0, duration - min(0.6, duration / 3))
+        return f"fade=t=in:st=0:d=0.5,fade=t=out:st={fade_out:.3f}:d=0.5"
+
+    @staticmethod
+    def _probe_duration(source):
+        probe = subprocess.run([
+            "ffprobe", "-v", "error", "-show_entries", "format=duration",
+            "-of", "default=nw=1:nk=1", str(source),
+        ], check=True, capture_output=True, text=True, timeout=30)
+        try:
+            duration = float(probe.stdout.strip())
+        except ValueError as error:
+            raise RuntimeError(f"Durata video non leggibile: {source.name}") from error
+        if not math.isfinite(duration) or duration <= 0:
+            raise RuntimeError(f"Durata video non valida: {source.name}")
+        return min(duration, 6 * 60 * 60)
+
+    @staticmethod
+    def _collage_cells(count, layout):
+        count = max(1, min(count, 6))
+        if layout == "hero" and count >= 2:
+            cells = [(0, 0, 768, 720)]
+            heights = [720 // (count - 1)] * (count - 1)
+            heights[-1] += 720 - sum(heights)
+            y = 0
+            for height in heights:
+                cells.append((768, y, 512, height))
+                y += height
+            return cells
+        if layout == "strip":
+            widths = [1280 // count] * count
+            widths[-1] += 1280 - sum(widths)
+            cells, x = [], 0
+            for width in widths:
+                cells.append((x, 0, width, 720))
+                x += width
+            return cells
+        if count == 1:
+            return [(0, 0, 1280, 720)]
+        if count == 2:
+            return [(0, 0, 640, 720), (640, 0, 640, 720)]
+        if count == 3:
+            return [(0, 0, 640, 720), (640, 0, 640, 360), (640, 360, 640, 360)]
+        columns = 2 if count == 4 else 3
+        rows = math.ceil(count / columns)
+        widths = [1280 // columns] * columns
+        widths[-1] += 1280 - sum(widths)
+        heights = [720 // rows] * rows
+        heights[-1] += 720 - sum(heights)
+        return [
+            (sum(widths[:column]), sum(heights[:row]), widths[column], heights[row])
+            for row in range(rows)
+            for column in range(columns)
+        ][:count]
+
+    def _collage_command(self, item, part, duration):
+        names = [safe_name(name) for name in item.get("images", [])][:6]
+        sources = [MEDIA_DIR / name for name in names if name]
+        if len(sources) < 2:
+            raise RuntimeError("Un collage deve contenere almeno due foto")
+        for source in sources:
+            if not source.is_file() or source.suffix.lower() not in ALLOWED["image"]:
+                raise RuntimeError(f"Foto del collage non trovata: {source.name}")
+        command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
+        for source in sources:
+            command += ["-loop", "1", "-i", str(source)]
+        command += ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"]
+        cells = self._collage_cells(len(sources), item.get("layout", "grid"))
+        filters = []
+        inputs = []
+        layout = []
+        for index, (x, y, width, height) in enumerate(cells):
+            filters.append(
+                f"[{index}:v]{self._fit_filter(width, height, 'cover')},setsar=1[cell{index}]"
+            )
+            inputs.append(f"[cell{index}]")
+            layout.append(f"{x}_{y}")
+        effect = self._effect_filter(item.get("effect", "fade"), duration)
+        filters.append(
+            f"{''.join(inputs)}xstack=inputs={len(inputs)}:layout={'|'.join(layout)}:fill=black,"
+            f"{effect},{self._fade_filter(duration)},format=yuv420p[vout]"
+        )
+        command += [
+            "-filter_complex", ";".join(filters),
+            "-map", "[vout]", "-map", f"{len(sources)}:a:0",
+        ]
+        return command
+
     def build(self, channel_id):
         channel = self.channel(channel_id)
         if not channel:
@@ -339,46 +507,61 @@ class IPTVEngine:
         if not playlist:
             raise RuntimeError("La playlist del canale è vuota")
         concat_lines = []
-        video_filter = "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=25,format=yuv420p"
         try:
             total_items = len(playlist)
             for index, item in enumerate(playlist):
+                kind = item.get("kind", "video")
                 name = safe_name(item.get("name", ""))
-                source = MEDIA_DIR / name
-                if not source.is_file():
+                source = MEDIA_DIR / name if name else None
+                if kind != "collage" and (not source or not source.is_file()):
                     raise RuntimeError(f"File non trovato: {name}")
                 self.set_status(
                     channel_id,
                     "building",
-                    f"Conversione file {index + 1}/{total_items}: {name}",
+                    f"Conversione elemento {index + 1}/{total_items}: {name or 'Collage'}",
                 )
-                duration = max(2, min(int(item.get("duration", 15)), 3600))
                 part = parts / f"{index:04d}.mp4"
-                kind = item.get("kind") or next(
-                    (key for key, values in ALLOWED.items() if source.suffix.lower() in values),
-                    "video",
-                )
-                command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
-                if kind == "image":
-                    command += ["-loop", "1", "-i", str(source)]
+                if kind not in {"image", "video", "collage"}:
+                    kind = next(
+                        (key for key, values in ALLOWED.items() if source.suffix.lower() in values),
+                        "video",
+                    )
+                if kind == "video":
+                    duration = self._probe_duration(source)
+                    command = [
+                        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                        "-i", str(source),
+                        "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+                        "-map", "0:v:0", "-map", "1:a:0",
+                        "-vf", f"{self._fit_filter(fit=item.get('fit', 'smart'))},setsar=1,fps=25,format=yuv420p",
+                    ]
+                elif kind == "collage":
+                    duration = max(2, min(float(item.get("duration", 12)), 3600))
+                    command = self._collage_command(item, part, duration)
                 else:
-                    # Repeat short clips so every item lasts for the configured time.
-                    command += ["-stream_loop", "-1", "-i", str(source)]
-                # A silent AAC track makes the transport stream compatible with
-                # IPTV players that reject video-only MPEG-TS channels.
+                    duration = max(2, min(float(item.get("duration", 12)), 3600))
+                    effect = self._effect_filter(item.get("effect", "fade"), duration)
+                    video_filter = (
+                        f"{self._fit_filter(fit=item.get('fit', 'smart'))},setsar=1,"
+                        f"{effect},{self._fade_filter(duration)},format=yuv420p"
+                    )
+                    command = [
+                        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                        "-loop", "1", "-i", str(source),
+                        "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+                        "-map", "0:v:0", "-map", "1:a:0", "-vf", video_filter,
+                    ]
+                # A silent AAC track keeps video-only advertising compatible
+                # with IPTV players that require both video and audio streams.
                 command += [
-                    "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
-                ]
-                command += [
-                    "-map", "0:v:0", "-map", "1:a:0", "-vf", video_filter,
                     "-c:v", "libx264", "-preset", "superfast",
                     "-crf", "22", "-profile:v", "high", "-level", "4.0",
                     "-g", "50", "-keyint_min", "50", "-sc_threshold", "0",
                     "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "96k",
-                    "-ar", "48000", "-ac", "2", "-t", str(duration), "-shortest",
+                    "-ar", "48000", "-ac", "2", "-t", f"{duration:.3f}", "-shortest",
                     "-movflags", "+faststart", str(part),
                 ]
-                subprocess.run(command, check=True, timeout=max(120, duration * 4))
+                subprocess.run(command, check=True, timeout=max(120, duration * 4 + 60))
                 concat_lines.append(f"file '{part.as_posix()}'")
             concat_file = parts / "concat.txt"
             concat_file.write_text("\n".join(concat_lines) + "\n", encoding="utf-8")
@@ -652,7 +835,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4.2"
+    server_version = "CarellasMediaAds/0.4.3"
 
     def log_message(self, fmt, *args):
         return
