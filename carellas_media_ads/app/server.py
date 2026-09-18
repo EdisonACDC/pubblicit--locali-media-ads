@@ -290,19 +290,24 @@ def play_audio(filename=None, manual=False):
     gap = max(0, min(int(cfg.get("repeat_gap_seconds", 5)), 600))
     duration = probe_media_duration(MEDIA_DIR / safe_name(filename)) if repetitions > 1 else 0
     volume = max(1, min(int(cfg.get("volume", 35)), 100))
-    coordinator = prepare_sonos_group(players)
+    prepare_sonos_group(players)
     for index in range(repetitions):
         payload = {
-            # Un solo comando al coordinatore: Sonos distribuisce l'annuncio
-            # in modo sincronizzato a tutti i membri del gruppo.
-            "entity_id": coordinator,
+            # Gli annunci Sonos usano AudioClip via websocket sul singolo
+            # diffusore: il coordinatore non li inoltra automaticamente agli
+            # altri membri del gruppo. Home Assistant riceve l'intera lista e
+            # avvia quindi lo stesso clip su ogni altoparlante selezionato.
+            "entity_id": players,
             "announce": True,
             "media_content_type": "music",
             "media_content_id": media_url(filename),
             "extra": {"volume": volume},
         }
         ha.service("media_player", "play_media", payload)
-        store.log("success", f"Spot audio Sonos sincronizzato: {filename} ({index + 1}/{repetitions})")
+        store.log(
+            "success",
+            f"Spot audio inviato a {len(players)} Sonos: {filename} ({index + 1}/{repetitions})",
+        )
         if index + 1 < repetitions:
             time.sleep(duration + gap)
 
@@ -864,7 +869,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4.9"
+    server_version = "CarellasMediaAds/0.4.10"
 
     def log_message(self, fmt, *args):
         return
