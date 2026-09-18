@@ -860,7 +860,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4.6"
+    server_version = "CarellasMediaAds/0.4.7"
 
     def log_message(self, fmt, *args):
         return
@@ -1052,6 +1052,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/state":
                 entities = []
                 power_entities = []
+                favorites_by_id = {}
                 error = None
                 try:
                     for state in ha.states():
@@ -1067,6 +1068,11 @@ class Handler(BaseHTTPRequestHandler):
                             entities.append(item)
                         if entity_id.startswith(("media_player.", "switch.", "button.", "script.")):
                             power_entities.append(item)
+                        favorites = attrs.get("items")
+                        if isinstance(favorites, dict):
+                            for media_id, name in favorites.items():
+                                if str(media_id).startswith("FV:"):
+                                    favorites_by_id[str(media_id)] = str(name)
                 except Exception as exc:
                     error = str(exc)
                 self.send_json({
@@ -1074,6 +1080,10 @@ class Handler(BaseHTTPRequestHandler):
                     "media": store.media(),
                     "entities": sorted(entities, key=lambda x: x["name"].lower()),
                     "power_entities": sorted(power_entities, key=lambda x: x["name"].lower()),
+                    "sonos_favorites": sorted(
+                        ({"id": media_id, "name": name} for media_id, name in favorites_by_id.items()),
+                        key=lambda x: x["name"].lower(),
+                    ),
                     "logs": store.logs,
                     "runtime": {
                         "audio_today": scheduler.daily_audio_count,
