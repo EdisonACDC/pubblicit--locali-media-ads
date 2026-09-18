@@ -2,9 +2,9 @@
 
 Repository Home Assistant per gestire pubblicità audio su Sonos e playlist di immagini/video su Smart TV.
 
-> Versione stabile 0.4.8 con browser completo della libreria Sonos senza URL, accesso dalla barra laterale anche per utenti non amministratori, gruppi sincronizzati, durata automatica degli spot, sequenze/collage 16:9 e canali IPTV HLS indipendenti.
+> Versione stabile 0.4.9 con interfaccia adattata a telefoni e tablet, browser completo della libreria Sonos senza URL, accesso dalla barra laterale anche per utenti non amministratori, gruppi sincronizzati, durata automatica degli spot, sequenze/collage 16:9 e canali IPTV HLS indipendenti.
 
-Nel repository è disponibile anche **Carellas Media Ads Beta 0.5.0-beta.2** come applicazione separata sulla porta `8100`. La stabile 0.4.8 rimane Sonos-only e include lo stesso browser musicale visibile nel player Sonos di Home Assistant, durata automatica degli spot, sequenze IPTV ordinabili, video completi, adattamento 16:9, collage ed effetti. La Beta mantiene anche Alexa.
+Nel repository è disponibile anche **Carellas Media Ads Beta 0.5.0-beta.2** come applicazione separata sulla porta `8100`. La stabile 0.4.9 rimane Sonos-only e include un'interfaccia responsive, lo stesso browser musicale visibile nel player Sonos di Home Assistant, durata automatica degli spot, sequenze IPTV ordinabili, video completi, adattamento 16:9, collage ed effetti. La Beta mantiene anche Alexa.
 
 ## Funzioni
 
