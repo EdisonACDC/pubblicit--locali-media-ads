@@ -119,22 +119,6 @@ class Store:
         self.config["audio"].pop("spot_duration_seconds", None)
         music = self.config.setdefault("music", {})
         music.setdefault("slots", [])
-        # Converte automaticamente la vecchia programmazione, che usava una
-        # sola sorgente per tutte le fasce, nel nuovo formato multi-sorgente.
-        if not music["slots"] and music.get("content_id") and music.get("schedule"):
-            music["slots"] = [{
-                "id": f"legacy-{index + 1}",
-                "name": music.get("content_id"),
-                "enabled": row.get("enabled", True),
-                "days": row.get("days", []),
-                "start": row.get("start", "10:00"),
-                "end": row.get("end", "23:00"),
-                "players": music.get("players", []),
-                "content_id": music.get("content_id", ""),
-                "content_type": music.get("content_type", "music"),
-                "volume": music.get("volume", 25),
-            } for index, row in enumerate(music["schedule"])]
-            music["schedule"] = []
         self.save()
         self.install_bundled_media()
 
@@ -271,12 +255,14 @@ def is_schedule_active(schedule, moment=None):
 
 
 def active_music_slot(music, moment=None):
-    """Restituisce la prima fascia musicale attiva, mantenendo l'ordine scelto."""
+    """Restituisce la prima sorgente attiva dentro un orario generale musica."""
+    if not is_schedule_active(music.get("schedule", []), moment):
+        return None
     slots = music.get("slots") or []
     for index, slot in enumerate(slots):
         if slot.get("enabled", True) is False:
             continue
-        if is_schedule_active([slot], moment):
+        if is_music_slot_active(slot, moment):
             result = copy.deepcopy(slot)
             result["_index"] = index
             result["players"] = result.get("players") or music.get("players", [])
@@ -284,14 +270,32 @@ def active_music_slot(music, moment=None):
     return None
 
 
+def is_music_slot_active(slot, moment=None):
+    """Verifica una sorgente con ora di partenza e durata, anche oltre mezzanotte."""
+    moment = moment or datetime.now().astimezone()
+    weekday = moment.weekday()
+    current = moment.hour * 60 + moment.minute
+    return any(
+        day == weekday and start <= current < end
+        for day, start, end in _slot_intervals(slot)
+    )
+
+
 def _slot_intervals(slot):
     """Espande una fascia nei sette giorni, dividendo quelle oltre mezzanotte."""
     try:
         sh, sm = map(int, str(slot.get("start", "")).split(":"))
-        eh, em = map(int, str(slot.get("end", "")).split(":"))
+        start = sh * 60 + sm
+        duration = int(slot.get("duration_minutes", 0) or 0)
+        if duration:
+            if not 1 <= duration < 1440:
+                return []
+            end = (start + duration) % 1440
+        else:
+            eh, em = map(int, str(slot.get("end", "")).split(":"))
+            end = eh * 60 + em
     except (TypeError, ValueError):
         return []
-    start, end = sh * 60 + sm, eh * 60 + em
     if not (0 <= start < 1440 and 0 <= end < 1440) or start == end:
         return []
     intervals = []
