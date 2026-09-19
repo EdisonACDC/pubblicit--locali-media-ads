@@ -1,5 +1,12 @@
 # Carellas Media Ads
 
+## Novità stabile 0.4.16
+
+- Orari generali di accensione della musica separati dalle sorgenti.
+- Più fasce giornaliere, per esempio 10:00–14:00 e 17:00–22:00.
+- Ora di partenza e durata indipendenti per ogni playlist o radio Sonos.
+- Calcolo automatico dell'ora di fine e passaggio alla sorgente successiva.
+
 Repository Home Assistant per gestire pubblicità audio su Sonos e playlist di immagini/video su Smart TV.
 
 > Versione stabile 0.4.15 con programmazione musicale multi-fascia: ogni orario può avviare una playlist, radio o preferito Sonos differente, con giorni, volume e altoparlanti propri. Include inoltre conteggio degli spot, arresto immediato, sincronizzazione Sonos, interfaccia responsive, browser musicale, sequenze/collage 16:9 e canali IPTV HLS indipendenti.
