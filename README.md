@@ -2,16 +2,16 @@
 
 Repository Home Assistant per gestire pubblicità audio su Sonos e playlist di immagini/video su Smart TV.
 
-> Versione stabile 0.4.14 con conteggio di ogni spot realmente avviato (incluse le prove manuali), impostazioni di intervallo e ripetizione più chiare, pulsante per fermare immediatamente lo spot e ripristinare la musica, streaming MP3 compatibile con le richieste parziali Sonos, spot sincronizzati esclusivamente sui Sonos selezionati, interfaccia adattata a telefoni e tablet, browser completo della libreria Sonos senza URL, accesso dalla barra laterale anche per utenti non amministratori, durata automatica degli spot, sequenze/collage 16:9 e canali IPTV HLS indipendenti.
+> Versione stabile 0.4.15 con programmazione musicale multi-fascia: ogni orario può avviare una playlist, radio o preferito Sonos differente, con giorni, volume e altoparlanti propri. Include inoltre conteggio degli spot, arresto immediato, sincronizzazione Sonos, interfaccia responsive, browser musicale, sequenze/collage 16:9 e canali IPTV HLS indipendenti.
 
-Nel repository è disponibile anche **Carellas Media Ads Beta 0.5.0-beta.2** come applicazione separata sulla porta `8100`. La stabile 0.4.14 rimane Sonos-only e include conteggio corretto degli spot, arresto manuale, riproduzione sincronizzata soltanto sui diffusori scelti, streaming MP3 con richieste parziali, un'interfaccia responsive, lo stesso browser musicale visibile nel player Sonos di Home Assistant, durata automatica degli spot, sequenze IPTV ordinabili, video completi, adattamento 16:9, collage ed effetti. La Beta mantiene anche Alexa.
+Nel repository è disponibile anche **Carellas Media Ads Beta 0.5.0-beta.2** come applicazione separata sulla porta `8100`. La stabile 0.4.15 rimane Sonos-only e include fasce musicali con sorgenti indipendenti, conteggio corretto degli spot, arresto manuale, riproduzione sincronizzata soltanto sui diffusori scelti, streaming MP3 con richieste parziali, un'interfaccia responsive, browser musicale, durata automatica degli spot, sequenze IPTV ordinabili, video completi, adattamento 16:9, collage ed effetti. La Beta mantiene anche Alexa.
 
 ## Funzioni
 
 - Annunci Sonos sopra la sorgente in riproduzione, con ripristino automatico della musica.
 - Durata di ogni spot audio rilevata automaticamente dal file: non occorre inserire manualmente i secondi.
 - Scelta di più altoparlanti, limite giornaliero e fasce orarie settimanali.
-- Avvio/arresto programmato della musica del locale tramite URI, URL o sorgente supportata dal media player.
+- Fasce musicali indipendenti: per ciascun orario si scelgono playlist/radio, giorni, volume e altoparlanti Sonos, con passaggio automatico alla sorgente successiva.
 - Menu automatico con radio, album e playlist salvati in “I miei Sonos”, senza copiare indirizzi o identificativi.
 - Browser completo della libreria del player Sonos, con navigazione nelle cartelle, tasto Indietro e selezione del contenuto per l'avvio programmato.
 - Libreria audio, immagini e video con caricamento da telefono, tablet e PC.
