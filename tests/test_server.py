@@ -206,6 +206,30 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(first["content_id"], "S:/Pranzo")
         self.assertEqual(second["content_id"], "FV:2/31")
 
+    def test_music_source_duration_and_global_opening_hours(self):
+        music = {
+            "schedule": [{"days": [0], "start": "10:00", "end": "14:00"}],
+            "players": ["media_player.sala"],
+            "slots": [{
+                "id": "playlist-pranzo", "name": "Playlist pranzo",
+                "days": [0], "start": "10:00", "duration_minutes": 120,
+                "content_id": "S:/Pranzo", "content_type": "playlist", "volume": 25,
+            }, {
+                "id": "radio-pranzo", "name": "Radio pranzo",
+                "days": [0], "start": "12:00", "duration_minutes": 120,
+                "content_id": "FV:2/31", "content_type": "favorite_item_id", "volume": 30,
+            }],
+        }
+        self.assertEqual(
+            self.app.active_music_slot(music, datetime(2026, 9, 21, 11, 0))["id"],
+            "playlist-pranzo",
+        )
+        self.assertEqual(
+            self.app.active_music_slot(music, datetime(2026, 9, 21, 13, 0))["id"],
+            "radio-pranzo",
+        )
+        self.assertIsNone(self.app.active_music_slot(music, datetime(2026, 9, 21, 15, 0)))
+
     def test_music_slots_reject_overlap_only_on_shared_sonos(self):
         base = {
             "players": [],
@@ -253,7 +277,9 @@ class CarellasServerTest(unittest.TestCase):
 
     def test_music_slot_editor_is_available_on_phone(self):
         html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
-        self.assertIn("Aggiungi fascia musicale", html)
+        self.assertIn("Orari di accensione musica", html)
+        self.assertIn("Aggiungi playlist o radio", html)
+        self.assertIn("Durata (minuti)", html)
         self.assertIn("function renderMusicSlots()", html)
         self.assertIn("function replaceMusicSlotSource", html)
         self.assertIn("function duplicateMusicSlot", html)
