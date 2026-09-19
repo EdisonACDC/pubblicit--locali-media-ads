@@ -188,6 +188,77 @@ class CarellasServerTest(unittest.TestCase):
             "media_content_id": "root",
         })
 
+    def test_music_slots_select_different_sources_at_adjacent_times(self):
+        music = {
+            "players": ["media_player.sala"],
+            "slots": [{
+                "id": "playlist-pranzo", "name": "Playlist pranzo",
+                "days": [0], "start": "10:00", "end": "12:00",
+                "content_id": "S:/Pranzo", "content_type": "playlist", "volume": 25,
+            }, {
+                "id": "radio-pomeriggio", "name": "Radio pomeriggio",
+                "days": [0], "start": "12:00", "end": "14:00",
+                "content_id": "FV:2/31", "content_type": "favorite_item_id", "volume": 30,
+            }],
+        }
+        first = self.app.active_music_slot(music, datetime(2026, 9, 21, 11, 0))
+        second = self.app.active_music_slot(music, datetime(2026, 9, 21, 13, 0))
+        self.assertEqual(first["content_id"], "S:/Pranzo")
+        self.assertEqual(second["content_id"], "FV:2/31")
+
+    def test_music_slots_reject_overlap_only_on_shared_sonos(self):
+        base = {
+            "players": [],
+            "slots": [{
+                "name": "Playlist", "days": [0], "start": "10:00", "end": "12:00",
+                "players": ["media_player.sala"], "content_id": "S:/Pranzo",
+            }, {
+                "name": "Radio", "days": [0], "start": "11:30", "end": "13:00",
+                "players": ["media_player.sala"], "content_id": "FV:2/31",
+            }],
+        }
+        with self.assertRaisesRegex(RuntimeError, "si sovrappongono"):
+            self.app.validate_music_slots(base)
+        base["slots"][1]["players"] = ["media_player.terrazza"]
+        self.app.validate_music_slots(base)
+
+    def test_scheduler_switches_source_when_music_slot_changes(self):
+        original = json.loads(json.dumps(self.app.store.config["music"]))
+        first = {
+            "id": "one", "name": "Playlist", "players": ["media_player.sala"],
+            "content_id": "S:/Pranzo", "content_type": "playlist", "volume": 20,
+        }
+        second = {
+            "id": "two", "name": "Radio", "players": ["media_player.terrazza"],
+            "content_id": "FV:2/31", "content_type": "favorite_item_id", "volume": 30,
+        }
+        engine = self.app.Scheduler()
+        self.app.store.config["music"] = {
+            "enabled": True, "players": ["media_player.sala"], "slots": [first, second],
+            "schedule": [], "stop_at_end": True, "volume": 25,
+        }
+        self.calls.clear()
+        try:
+            with mock.patch.object(self.app, "active_music_slot", side_effect=[first, second]), mock.patch.object(
+                self.app.time, "sleep"
+            ):
+                engine.music_tick()
+                engine.music_tick()
+        finally:
+            self.app.store.config["music"] = original
+        played = [call[2]["media_content_id"] for call in self.calls if call[1] == "play_media"]
+        self.assertEqual(played, ["S:/Pranzo", "FV:2/31"])
+        unjoin = [call for call in self.calls if call[1] == "unjoin"]
+        self.assertEqual(unjoin[-1][2]["entity_id"], ["media_player.sala", "media_player.terrazza"])
+
+    def test_music_slot_editor_is_available_on_phone(self):
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        self.assertIn("Aggiungi fascia musicale", html)
+        self.assertIn("function renderMusicSlots()", html)
+        self.assertIn("function replaceMusicSlotSource", html)
+        self.assertIn("function duplicateMusicSlot", html)
+        self.assertIn(".music-slot-grid{grid-template-columns:1fr}", html)
+
     def test_config_is_merged_and_saved_atomically(self):
         original_tv = self.app.store.config["tv"]["mode"]
         self.app.store.update({"audio": {"interval_minutes": 47}})
