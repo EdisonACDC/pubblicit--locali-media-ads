@@ -117,6 +117,24 @@ class Store:
         self.config.setdefault("audio", {}).pop("driver", None)
         self.config["audio"].pop("resume_music_after_ad", None)
         self.config["audio"].pop("spot_duration_seconds", None)
+        music = self.config.setdefault("music", {})
+        music.setdefault("slots", [])
+        # Converte automaticamente la vecchia programmazione, che usava una
+        # sola sorgente per tutte le fasce, nel nuovo formato multi-sorgente.
+        if not music["slots"] and music.get("content_id") and music.get("schedule"):
+            music["slots"] = [{
+                "id": f"legacy-{index + 1}",
+                "name": music.get("content_id"),
+                "enabled": row.get("enabled", True),
+                "days": row.get("days", []),
+                "start": row.get("start", "10:00"),
+                "end": row.get("end", "23:00"),
+                "players": music.get("players", []),
+                "content_id": music.get("content_id", ""),
+                "content_type": music.get("content_type", "music"),
+                "volume": music.get("volume", 25),
+            } for index, row in enumerate(music["schedule"])]
+            music["schedule"] = []
         self.save()
         self.install_bundled_media()
 
@@ -137,7 +155,9 @@ class Store:
 
     def update(self, payload):
         with self.lock:
-            self.config = deep_merge(self.config, payload)
+            candidate = deep_merge(self.config, payload)
+            validate_music_slots(candidate.get("music", {}))
+            self.config = candidate
             self.save()
             return copy.deepcopy(self.config)
 
@@ -248,6 +268,77 @@ def is_schedule_active(schedule, moment=None):
         if start > end and ((weekday in days and current >= start) or ((weekday - 1) % 7 in days and current < end)):
             return True
     return False
+
+
+def active_music_slot(music, moment=None):
+    """Restituisce la prima fascia musicale attiva, mantenendo l'ordine scelto."""
+    slots = music.get("slots") or []
+    for index, slot in enumerate(slots):
+        if slot.get("enabled", True) is False:
+            continue
+        if is_schedule_active([slot], moment):
+            result = copy.deepcopy(slot)
+            result["_index"] = index
+            result["players"] = result.get("players") or music.get("players", [])
+            return result
+    return None
+
+
+def _slot_intervals(slot):
+    """Espande una fascia nei sette giorni, dividendo quelle oltre mezzanotte."""
+    try:
+        sh, sm = map(int, str(slot.get("start", "")).split(":"))
+        eh, em = map(int, str(slot.get("end", "")).split(":"))
+    except (TypeError, ValueError):
+        return []
+    start, end = sh * 60 + sm, eh * 60 + em
+    if not (0 <= start < 1440 and 0 <= end < 1440) or start == end:
+        return []
+    intervals = []
+    for day in slot.get("days", []):
+        if not isinstance(day, int) or not 0 <= day <= 6:
+            continue
+        if start < end:
+            intervals.append((day, start, end))
+        else:
+            intervals.append((day, start, 1440))
+            intervals.append(((day + 1) % 7, 0, end))
+    return intervals
+
+
+def validate_music_slots(music):
+    """Rifiuta fasce incomplete o sovrapposte sugli stessi Sonos."""
+    slots = [slot for slot in (music.get("slots") or []) if slot.get("enabled", True)]
+    global_players = set(music.get("players") or [])
+    for index, slot in enumerate(slots):
+        label = slot.get("name") or f"Fascia {index + 1}"
+        if not slot.get("content_id"):
+            raise RuntimeError(f"{label}: scegli una playlist o una radio")
+        if not slot.get("days"):
+            raise RuntimeError(f"{label}: seleziona almeno un giorno")
+        if not _slot_intervals(slot):
+            raise RuntimeError(f"{label}: orario non valido o inizio uguale alla fine")
+        players = set(slot.get("players") or global_players)
+        if not players:
+            raise RuntimeError(f"{label}: seleziona almeno un altoparlante Sonos")
+    for left_index, left in enumerate(slots):
+        left_players = set(left.get("players") or global_players)
+        left_intervals = _slot_intervals(left)
+        for right in slots[left_index + 1:]:
+            right_players = set(right.get("players") or global_players)
+            if not left_players.intersection(right_players):
+                continue
+            overlap = any(
+                lday == rday and max(lstart, rstart) < min(lend, rend)
+                for lday, lstart, lend in left_intervals
+                for rday, rstart, rend in _slot_intervals(right)
+            )
+            if overlap:
+                left_name = left.get("name") or f"Fascia {left_index + 1}"
+                right_name = right.get("name") or "Fascia successiva"
+                raise RuntimeError(
+                    f"Le fasce ‘{left_name}’ e ‘{right_name}’ si sovrappongono sugli stessi Sonos"
+                )
 
 
 def prepare_sonos_group(players, force=False):
@@ -373,25 +464,31 @@ def stop_audio():
     store.log("info", "Richiesto arresto immediato dello spot Sonos")
     return True
 
-def start_music():
+def start_music(selection=None):
     cfg = store.config["music"]
-    if not cfg.get("players") or not cfg.get("content_id"):
+    selection = selection or cfg
+    players = list(dict.fromkeys(selection.get("players") or cfg.get("players") or []))
+    content_id = selection.get("content_id")
+    if not players or not content_id:
         raise RuntimeError("Configurazione musica incompleta")
-    coordinator = prepare_sonos_group(cfg["players"])
+    coordinator = prepare_sonos_group(players)
     ha.service("media_player", "volume_set", {
-        "entity_id": cfg["players"], "volume_level": max(0, min(int(cfg.get("volume", 25)), 100)) / 100
+        "entity_id": players,
+        "volume_level": max(0, min(int(selection.get("volume", cfg.get("volume", 25))), 100)) / 100,
     })
     payload = {
         "entity_id": coordinator,
-        "media_content_type": cfg.get("content_type", "music"),
-        "media_content_id": cfg["content_id"],
+        "media_content_type": selection.get("content_type", "music"),
+        "media_content_id": content_id,
     }
     ha.service("media_player", "play_media", payload)
-    store.log("success", "Musica del locale avviata sul gruppo Sonos sincronizzato")
+    title = selection.get("name") or selection.get("title") or content_id
+    store.log("success", f"Musica del locale avviata sul gruppo Sonos sincronizzato: {title}")
+    return players
 
 
-def stop_music():
-    players = store.config["music"].get("players", [])
+def stop_music(players=None):
+    players = list(dict.fromkeys(players or store.config["music"].get("players", [])))
     if players:
         ha.service("media_player", "media_stop", {"entity_id": players})
         store.log("info", "Musica del locale arrestata dalla programmazione")
@@ -772,6 +869,9 @@ class Scheduler(threading.Thread):
         self.tv_index = 0
         self.tv_next = 0.0
         self.music_active = False
+        self.music_slot_key = None
+        self.music_slot_id = None
+        self.music_players = []
         self.tv_active = False
         self.tv_ready_at = 0.0
         self.iptv_active = {}
@@ -840,17 +940,50 @@ class Scheduler(threading.Thread):
 
     def music_tick(self):
         cfg = store.config["music"]
-        active = bool(cfg.get("enabled") and is_schedule_active(cfg.get("schedule", [])))
-        if active and not self.music_active:
+        if audio_playback_lock.locked():
+            return
+        slot = active_music_slot(cfg) if cfg.get("enabled") and cfg.get("slots") else None
+        if cfg.get("enabled") and not cfg.get("slots") and is_schedule_active(cfg.get("schedule", [])):
+            slot = cfg
+        active = bool(slot)
+        slot_key = None
+        if slot:
+            slot_key = json.dumps([
+                slot.get("id") or "legacy",
+                slot.get("content_type", "music"),
+                slot.get("content_id", ""),
+                slot.get("players", []),
+                slot.get("volume", cfg.get("volume", 25)),
+            ], ensure_ascii=False, sort_keys=True)
+        changed = active and slot_key != self.music_slot_key
+        if changed:
             try:
-                start_music()
+                previous = list(self.music_players)
+                target_players = list(dict.fromkeys(slot.get("players") or cfg.get("players") or []))
+                if previous and set(previous) != set(target_players):
+                    # Scioglie il vecchio gruppo prima di crearne uno diverso:
+                    # un Sonos rimosso dalla fascia non deve continuare a suonare.
+                    ha.service("media_player", "media_stop", {"entity_id": previous})
+                    ha.service("media_player", "unjoin", {
+                        "entity_id": list(dict.fromkeys(previous + target_players)),
+                    })
+                    if SONOS_GROUP_SETTLE_SECONDS > 0:
+                        time.sleep(SONOS_GROUP_SETTLE_SECONDS)
+                players = start_music(slot)
+                self.music_players = players
+                self.music_slot_key = slot_key
+                self.music_slot_id = slot.get("id")
             except Exception as error:
                 store.log("error", f"Avvio musica non riuscito: {error}")
+                active = False
         elif not active and self.music_active and cfg.get("stop_at_end", True):
             try:
-                stop_music()
+                stop_music(self.music_players)
             except Exception as error:
                 store.log("error", f"Arresto musica non riuscito: {error}")
+            self.music_players = []
+            self.music_slot_key = None
+            self.music_slot_id = None
         self.music_active = active
 
     def tv_tick(self):
@@ -943,7 +1076,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4.14"
+    server_version = "CarellasMediaAds/0.4.15"
 
     def log_message(self, fmt, *args):
         return
@@ -1187,6 +1320,7 @@ class Handler(BaseHTTPRequestHandler):
                     "runtime": {
                         "audio_today": scheduler.audio_today(),
                         "music_active": scheduler.music_active,
+                        "music_slot_id": scheduler.music_slot_id,
                         "tv_active": scheduler.tv_active,
                         "media_base_url": local_base_url(),
                         "iptv_status": iptv.runtime_status(),

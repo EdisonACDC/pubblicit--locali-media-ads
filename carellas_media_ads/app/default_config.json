@@ -21,7 +21,8 @@
     "content_type": "music",
     "volume": 25,
     "stop_at_end": true,
-    "schedule": []
+    "schedule": [],
+    "slots": []
   },
   "tv": {
     "enabled": false,
