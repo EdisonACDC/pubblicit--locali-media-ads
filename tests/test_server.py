@@ -135,9 +135,10 @@ class CarellasServerTest(unittest.TestCase):
         ) as sleep, mock.patch.object(self.app.audio_stop_event, "wait", return_value=False) as wait:
             self.app.play_audio(ad, manual=True)
         probe.assert_called_once_with(self.app.MEDIA_DIR / ad)
-        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1.5, 0.5])
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1.5, 1.5])
         self.assertEqual([call.args[0] for call in wait.call_args_list], [42.25, 7, 42.25])
         self.assertEqual(len([call for call in self.calls if call[1] == "play_media"]), 2)
+        self.assertTrue(any(call[1] == "media_play" for call in self.calls))
         self.assertEqual(self.app.scheduler.audio_today(), count_before + 2)
         (self.app.MEDIA_DIR / ad).unlink()
 
@@ -280,6 +281,9 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("Orari di accensione musica", html)
         self.assertIn("Aggiungi playlist o radio", html)
         self.assertIn("Durata (minuti)", html)
+        self.assertIn("Scegli playlist o radio Sonos", html)
+        self.assertIn('class="musicSlotSource"', html)
+        self.assertIn('id="musicNewSlotSource"', html)
         self.assertIn("function renderMusicSlots()", html)
         self.assertIn("function replaceMusicSlotSource", html)
         self.assertIn("function duplicateMusicSlot", html)
@@ -356,8 +360,11 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(play_call[2]["entity_id"], "media_player.sala")
         self.assertNotIn("announce", play_call[2])
         self.assertIn(ad, play_call[2]["media_content_id"])
-        self.assertEqual(self.calls[-1], ("sonos", "restore", {
+        self.assertIn(("sonos", "restore", {
             "entity_id": ["media_player.sala"], "with_group": True,
+        }), self.calls)
+        self.assertEqual(self.calls[-1], ("media_player", "media_play", {
+            "entity_id": ["media_player.sala"],
         }))
 
     def test_only_selected_sonos_are_grouped_and_spot_uses_coordinator(self):
@@ -395,9 +402,11 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(len(play_calls), 1)
         self.assertEqual(play_calls[0][2]["entity_id"], players[0])
         self.assertNotIn("announce", play_calls[0][2])
-        restore = self.calls[-1]
-        self.assertEqual(restore, ("sonos", "restore", {
+        self.assertIn(("sonos", "restore", {
             "entity_id": players, "with_group": True,
+        }), self.calls)
+        self.assertEqual(self.calls[-1], ("media_player", "media_play", {
+            "entity_id": players,
         }))
         self.assertNotIn("media_player.non_selezionato", json.dumps(self.calls))
 
@@ -427,8 +436,11 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(payload["active"])
         self.assertFalse(playback.is_alive())
-        self.assertEqual(self.calls[-1], ("sonos", "restore", {
+        self.assertIn(("sonos", "restore", {
             "entity_id": players, "with_group": True,
+        }), self.calls)
+        self.assertEqual(self.calls[-1], ("media_player", "media_play", {
+            "entity_id": ["media_player.sala"],
         }))
         self.assertFalse(self.app.audio_playback_lock.locked())
 
@@ -451,11 +463,58 @@ class CarellasServerTest(unittest.TestCase):
             self.app, "SONOS_RESTORE_SETTLE_SECONDS", 0
         ), self.assertRaisesRegex(RuntimeError, "riproduzione non riuscita"):
             self.app.play_audio(ad, manual=True)
-        self.assertEqual(self.calls[-1], ("sonos", "restore", {
+        self.assertIn(("sonos", "restore", {
             "entity_id": players, "with_group": True,
-        }))
+        }), self.calls)
         self.assertEqual(self.app.scheduler.audio_today(), count_before)
         self.assertFalse(self.app.audio_playback_lock.locked())
+
+    def test_spot_restores_one_snapshot_per_original_sonos_group(self):
+        ad = "Carellas_Ristorante_Spot_DE_Maschile.mp3"
+        players = ["media_player.sala", "media_player.bar", "media_player.terrazza"]
+        original_group = ["media_player.sala", "media_player.bar", "media_player.terrazza"]
+        states = [{
+            "entity_id": player,
+            "state": "playing",
+            "attributes": {"group_members": original_group},
+        } for player in players]
+        self.app.store.update({"audio": {"players": players, "ads": [ad], "repeat_count": 1}})
+        self.calls.clear()
+        with mock.patch.object(self.app.ha, "states", return_value=states), mock.patch.object(
+            self.app, "probe_media_duration", return_value=57
+        ), mock.patch.object(self.app, "SONOS_GROUP_SETTLE_SECONDS", 0), mock.patch.object(
+            self.app, "SONOS_RESTORE_SETTLE_SECONDS", 0
+        ), mock.patch.object(self.app.audio_stop_event, "wait", return_value=False):
+            self.app.play_audio(ad, manual=True)
+        self.assertEqual(self.calls[0], ("sonos", "snapshot", {
+            "entity_id": ["media_player.sala"], "with_group": True,
+        }))
+        self.assertIn(("sonos", "restore", {
+            "entity_id": ["media_player.sala"], "with_group": True,
+        }), self.calls)
+        self.assertEqual(self.calls[-1], ("media_player", "media_play", {
+            "entity_id": ["media_player.sala"],
+        }))
+
+    def test_sonos_restore_is_retried_after_temporary_failure(self):
+        calls = []
+        failures = {"remaining": 1}
+
+        def service(domain, name, payload):
+            calls.append((domain, name, payload))
+            if domain == "sonos" and name == "restore" and failures["remaining"]:
+                failures["remaining"] -= 1
+                raise RuntimeError("Sonos occupato")
+            return []
+
+        with mock.patch.object(self.app.ha, "service", side_effect=service), mock.patch.object(
+            self.app, "SONOS_RESTORE_SETTLE_SECONDS", 0
+        ), mock.patch.object(self.app.time, "sleep"):
+            self.app.restore_sonos_playback(["media_player.sala"], ["media_player.sala"])
+        self.assertEqual(len([call for call in calls if call[1] == "restore"]), 2)
+        self.assertEqual(calls[-1], ("media_player", "media_play", {
+            "entity_id": ["media_player.sala"],
+        }))
 
     def test_existing_sonos_group_is_not_regrouped(self):
         players = ["media_player.sala", "media_player.terrazza"]
