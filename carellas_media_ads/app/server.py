@@ -35,7 +35,8 @@ TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 HA_API = os.environ.get("CARELLAS_HA_API", "http://supervisor/core/api")
 PORT = 8099
 SONOS_GROUP_SETTLE_SECONDS = float(os.environ.get("CARELLAS_SONOS_GROUP_SETTLE_SECONDS", "1.5"))
-SONOS_RESTORE_SETTLE_SECONDS = float(os.environ.get("CARELLAS_SONOS_RESTORE_SETTLE_SECONDS", "0.5"))
+SONOS_RESTORE_SETTLE_SECONDS = float(os.environ.get("CARELLAS_SONOS_RESTORE_SETTLE_SECONDS", "1.5"))
+SONOS_RESTORE_RETRIES = max(1, int(os.environ.get("CARELLAS_SONOS_RESTORE_RETRIES", "3")))
 MAX_UPLOAD = 1024 * 1024 * 1024 * 4
 UPLOAD_CHUNK_SIZE = 4 * 1024 * 1024
 MIN_FREE_AFTER_UPLOAD = 1024 * 1024 * 512
@@ -373,6 +374,56 @@ def prepare_sonos_group(players, force=False):
     return coordinator
 
 
+def sonos_playback_context(players):
+    """Trova una sola destinazione per gruppo e ricorda quali gruppi stavano suonando."""
+    try:
+        states = {item.get("entity_id"): item for item in ha.states()}
+    except Exception as error:
+        store.log("warning", f"Stato Sonos precedente non leggibile: {error}")
+        return list(players), []
+
+    snapshot_targets = []
+    resume_targets = []
+    for player in players:
+        item = states.get(player, {})
+        members = item.get("attributes", {}).get("group_members") or [player]
+        coordinator = members[0] if members else player
+        if coordinator not in snapshot_targets:
+            snapshot_targets.append(coordinator)
+        group_playing = any(
+            states.get(member, {}).get("state") in ("playing", "buffering")
+            for member in members
+        )
+        if (item.get("state") in ("playing", "buffering") or group_playing) and coordinator not in resume_targets:
+            resume_targets.append(coordinator)
+    return snapshot_targets, resume_targets
+
+
+def restore_sonos_playback(snapshot_targets, resume_targets):
+    """Ripristina gruppi/coda e riavvia la musica che proveniva direttamente da Sonos."""
+    last_error = None
+    for attempt in range(SONOS_RESTORE_RETRIES):
+        try:
+            ha.service("sonos", "restore", {
+                "entity_id": snapshot_targets,
+                "with_group": True,
+            })
+            last_error = None
+            break
+        except Exception as error:
+            last_error = error
+            store.log("warning", f"Ripristino Sonos, tentativo {attempt + 1}/{SONOS_RESTORE_RETRIES}: {error}")
+            if attempt + 1 < SONOS_RESTORE_RETRIES:
+                time.sleep(0.75)
+    if last_error:
+        raise last_error
+    if SONOS_RESTORE_SETTLE_SECONDS > 0:
+        time.sleep(SONOS_RESTORE_SETTLE_SECONDS)
+    if resume_targets:
+        ha.service("media_player", "media_play", {"entity_id": resume_targets})
+        store.log("info", f"Ripresa forzata della musica Sonos su {len(resume_targets)} gruppo/i")
+
+
 def play_audio(filename=None, manual=False):
     cfg = store.config["audio"]
     players = cfg.get("players", [])
@@ -399,14 +450,17 @@ def play_audio(filename=None, manual=False):
         raise RuntimeError("Uno spot Sonos è già in riproduzione")
     audio_stop_event.clear()
     snapshot_created = False
+    snapshot_targets = list(players)
+    resume_targets = []
     stopped = False
     try:
         # La funzione Sonos announce avvia un AudioClip indipendente su ogni
         # diffusore e non garantisce la sincronizzazione. Salviamo quindi lo
         # stato dei soli Sonos scelti, li isoliamo e riproduciamo un unico
         # normale flusso sul coordinatore del gruppo temporaneo.
+        snapshot_targets, resume_targets = sonos_playback_context(players)
         ha.service("sonos", "snapshot", {
-            "entity_id": players,
+            "entity_id": snapshot_targets,
             "with_group": True,
         })
         snapshot_created = True
@@ -443,12 +497,7 @@ def play_audio(filename=None, manual=False):
     finally:
         if snapshot_created:
             try:
-                ha.service("sonos", "restore", {
-                    "entity_id": players,
-                    "with_group": True,
-                })
-                if SONOS_RESTORE_SETTLE_SECONDS > 0:
-                    time.sleep(SONOS_RESTORE_SETTLE_SECONDS)
+                restore_sonos_playback(snapshot_targets, resume_targets)
                 store.log("info", f"Musica e gruppi ripristinati su {len(players)} Sonos selezionati")
             except Exception as error:
                 store.log("error", f"Ripristino Sonos non riuscito: {error}")
