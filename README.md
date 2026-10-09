@@ -1,5 +1,10 @@
 # Carellas Media Ads
 
+## Novità stabile 0.4.23
+
+- Aggiunto il pulsante con l'occhio per mostrare o nascondere le password nella configurazione degli utenti TV e nella pagina di accesso del Player TV.
+- Le password già salvate restano protette e non sono recuperabili: il pulsante mostra soltanto la password digitata nel campo.
+
 ## Novità stabile 0.4.22
 
 - Nuovo **Player TV via browser** sulla porta dedicata `8101`, protetto da nome utente e password.
