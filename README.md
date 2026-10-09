@@ -1,5 +1,11 @@
 # Carellas Media Ads
 
+## Novità stabile 0.4.32
+
+- Il pulsante **Apri** della Libreria usa ora il collegamento protetto Home Assistant Ingress, quindi funziona anche da un PC fuori dalla rete del ristorante.
+- Gli spot audio dispongono di un lettore integrato direttamente nella Libreria, con riproduzione, pausa e avanzamento.
+- Gli indirizzi locali destinati a Sonos, IPTV e Smart TV rimangono invariati.
+
 ## Novità stabile 0.4.31
 
 - Nuova raccolta di effetti professionali applicabili a fotografie e collage: **Ken Burns diagonale**, **Ken Burns inverso**, panoramiche verso destra, sinistra, alto e basso, zoom cinematografici, dissolvenza morbida e bianco e nero.
