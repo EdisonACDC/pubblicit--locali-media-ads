@@ -1,5 +1,13 @@
 # Carellas Media Ads
 
+## Novità stabile 0.4.22
+
+- Nuovo **Player TV via browser** sulla porta dedicata `8101`, protetto da nome utente e password.
+- Ogni account TV viene associato a uno dei canali già preparati in **IPTV multi-TV**.
+- Riproduzione continua di video e audio a schermo intero; formato 16:9 adattato senza deformazioni (`contain`) oppure con ritaglio automatico (`cover`).
+- L'audio originale dei video viene conservato durante la creazione del canale; ai video senza audio viene aggiunta una traccia silenziosa compatibile.
+- La porta del Player non espone configurazione, libreria o comandi amministrativi dell'add-on.
+
 ## Novità stabile 0.4.21
 
 - Il conteggio giornaliero degli spot resta corretto anche dopo un riavvio dell'add-on.
@@ -122,3 +130,15 @@ Procedura:
 5. Per importare tutti i canali in una sola volta usare `http://IP-HOME-ASSISTANT:8099/iptv/channels.m3u`.
 
 I contenuti vengono normalizzati a H.264/AAC 1280×720 e distribuiti come canali HLS in ciclo continuo. La conversione avviene solo quando si crea o aggiorna il canale; ogni TV riceve poi un flusso indipendente.
+
+
+## Player TV diretto nel browser
+
+Non è necessaria un'app IPTV a pagamento. In **IPTV multi-TV → Player TV via browser**:
+
+1. Creare o aggiornare il canale con i video e le foto desiderati.
+2. Aggiungere un utente, impostare una password di almeno 6 caratteri e assegnargli il canale.
+3. Salvare la configurazione.
+4. Aprire nel browser della TV `http://IP-HOME-ASSISTANT:8101`, accedere e premere una volta **Avvia video e audio** se il browser blocca l'avvio automatico con suono.
+
+Per l'accesso da Internet, il sottodominio pubblico deve inoltrare esclusivamente al Player sulla porta `8101`. La porta amministrativa `8099` deve rimanere accessibile soltanto dalla LAN o tramite l'accesso protetto di Home Assistant.
