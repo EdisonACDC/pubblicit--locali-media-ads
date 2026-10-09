@@ -60,7 +60,10 @@ class CarellasServerTest(unittest.TestCase):
 
     def test_browser_player_requires_login_and_only_serves_assigned_channel(self):
         self.app.store.update({
-            "iptv": {"channels": [{"id": "sala-tv", "name": "Sala TV", "enabled": True, "playlist": []}]},
+            "iptv": {"channels": [{
+                "id": "sala-tv", "name": "Sala TV", "enabled": True,
+                "playlist": [{"name": "spot.mp4", "kind": "video"}],
+            }]},
             "browser_player": {"enabled": True, "users": [{
                 "username": "sala", "password": "segreta1", "channel_id": "sala-tv", "fit": "cover",
             }]},
@@ -113,6 +116,7 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn('onclick="togglePassword(\'password\',this)"', html)
         self.assertIn("Visualizza password", html)
         self.assertIn("Passwort anzeigen", html)
+        self.assertIn("$('language').style.display=name?'flex':'none'", html)
         dashboard = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
         self.assertIn('id="playerUsers"', dashboard)
         self.assertIn('id="playerUserSelect"', dashboard)
@@ -121,7 +125,10 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("c.browser_player=", dashboard)
         self.assertIn('onclick="togglePasswordField(this)"', dashboard)
         self.assertIn('onclick="savePlayerUser(${i},this)"', dashboard)
-        self.assertIn('Password salvata.', dashboard)
+        self.assertIn('Reimposta password', dashboard)
+        self.assertIn('playerPasswordConfirm', dashboard)
+        self.assertIn('function showPasswordReset(button)', dashboard)
+        self.assertIn('Le due password non coincidono', dashboard)
 
     def test_browser_player_prepares_missing_assigned_channel_automatically(self):
         self.app.store.update({
@@ -524,6 +531,37 @@ class CarellasServerTest(unittest.TestCase):
         saved = json.loads(self.app.CONFIG_FILE.read_text(encoding="utf-8"))
         self.assertEqual(saved["audio"]["interval_minutes"], 47)
         self.assertEqual(saved["tv"]["mode"], original_tv)
+
+    def test_saving_changed_iptv_order_rebuilds_channel_automatically(self):
+        first = {"name": "uno.mp4", "kind": "video", "fit": "contain"}
+        second = {"name": "due.mp4", "kind": "video", "fit": "contain"}
+        self.app.store.update({"iptv": {"channels": [{
+            "id": "ordine-auto", "name": "Ordine automatico", "enabled": True,
+            "playlist": [first, second], "schedule": [],
+        }]}})
+        with mock.patch.object(self.app.iptv, "build_async", return_value=True) as rebuild:
+            status, payload = self.request("/api/config", "POST", {"iptv": {"channels": [{
+                "id": "ordine-auto", "name": "Ordine automatico", "enabled": True,
+                "playlist": [second, first], "schedule": [],
+            }]}})
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["rebuilt_channels"], ["ordine-auto"])
+        rebuild.assert_called_once_with("ordine-auto")
+
+    def test_saving_unchanged_iptv_order_does_not_rebuild_channel(self):
+        playlist = [{"name": "stesso.mp4", "kind": "video", "fit": "contain"}]
+        self.app.store.update({"iptv": {"channels": [{
+            "id": "ordine-stesso", "name": "Ordine invariato", "enabled": True,
+            "playlist": playlist, "schedule": [],
+        }]}})
+        with mock.patch.object(self.app.iptv, "build_async", return_value=True) as rebuild:
+            status, payload = self.request("/api/config", "POST", {"iptv": {"channels": [{
+                "id": "ordine-stesso", "name": "Ordine invariato", "enabled": True,
+                "playlist": playlist, "schedule": [],
+            }]}})
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["rebuilt_channels"], [])
+        rebuild.assert_not_called()
 
     def test_stable_config_removes_legacy_audio_options_on_every_save(self):
         saved = self.app.store.update({
