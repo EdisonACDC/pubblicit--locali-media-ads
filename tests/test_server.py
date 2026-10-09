@@ -691,9 +691,19 @@ class CarellasServerTest(unittest.TestCase):
             self.assertEqual(response.status, 206)
             self.assertEqual(response.read(), b"audio")
             self.assertEqual(response.headers["Content-Range"], "bytes 8-12/13")
+        with urllib.request.urlopen(urllib.request.Request(self.base + "/api/hassio_ingress/example/media/test.mp3", headers={"Range": "bytes=3-6"})) as response:
+            self.assertEqual(response.status, 206)
+            self.assertEqual(response.read(), b"test")
+            self.assertEqual(response.headers["Content-Range"], "bytes 3-6/13")
         status, payload = self.request("/api/media/test.mp3", "DELETE")
         self.assertEqual(status, 200)
         self.assertTrue(payload["ok"])
+
+    def test_library_audio_uses_ingress_relative_player(self):
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        self.assertIn("function libraryMediaUrl(name)", html)
+        self.assertIn('<audio class="library-audio" controls', html)
+        self.assertNotIn("state.runtime.media_base_url+'/media/'", html)
 
     def test_remote_chunk_upload_through_ingress(self):
         content = b"remote-photo-content"
