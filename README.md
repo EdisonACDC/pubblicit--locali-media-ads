@@ -1,5 +1,14 @@
 # Carellas Media Ads
 
+## Novità stabile 0.4.29
+
+- La sequenza generata conserva in modo verificabile l’ordine esatto di video, foto e collage impostato nell’editor.
+- Il pannello mostra la **sequenza realmente generata**, con posizione, durata ed effetto di ogni elemento.
+- Zoom avanti, zoom indietro e movimento laterale sono stati resi molto più visibili; anche la dissolvenza è più lunga e riconoscibile.
+- Durante la generazione lo stato si aggiorna automaticamente e il Player riceve la nuova revisione appena pronta.
+- Un errore di conversione non viene più nascosto dalla presenza del vecchio video: il pannello e il Player mostrano l’errore reale.
+- Eliminata la doppia generazione che poteva essere avviata dal pulsante **Crea/Aggiorna canale**.
+
 ## Novità stabile 0.4.28
 
 - Ogni canale salva ora un'impronta della sequenza realmente convertita.
