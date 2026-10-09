@@ -103,7 +103,7 @@ class CarellasServerTest(unittest.TestCase):
 
     def test_audio_duration_is_automatic_in_the_interface(self):
         html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
-        self.assertIn("Automatica: viene letta direttamente da ogni file audio", html)
+        self.assertIn("Automatica: viene letta direttamente dal file audio", html)
         self.assertIn("formatDuration(m.duration)", html)
         self.assertNotIn('id="spotDuration" type="number"', html)
 
@@ -114,10 +114,50 @@ class CarellasServerTest(unittest.TestCase):
 
     def test_audio_frequency_and_repeat_controls_are_unambiguous(self):
         html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
-        self.assertIn("Riproduci ogni (minuti)", html)
-        self.assertIn("Quante volte consecutive", html)
-        self.assertIn("updateAudioRepeatControls()", html)
-        self.assertIn("input.disabled=!repeated", html)
+        self.assertIn("Riproduci uno spot ogni (minuti)", html)
+        self.assertIn("A ogni intervallo viene riprodotto un solo spot", html)
+        self.assertIn("Uno alla volta, nell’ordine della lista", html)
+        self.assertNotIn("Quante volte consecutive", html)
+
+    def test_complete_german_ui_and_audio_rotation_summary_are_available(self):
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        self.assertIn("Sonos-Audiowerbung", html)
+        self.assertIn("Geplante Playlists und Radios", html)
+        self.assertIn("IPTV-Kanäle für mehrere Fernseher", html)
+        self.assertIn("Aktivitätsprotokoll", html)
+        self.assertIn('id="audioRotationSummary"', html)
+        self.assertIn("updateAudioRotationSummary()", html)
+        self.assertIn("e.target.id==='language'", html)
+
+    def test_audio_rotation_plays_one_different_spot_per_interval(self):
+        ads = ["spot-1.mp3", "spot-2.mp3", "spot-3.mp3"]
+        self.app.scheduler.audio_index = 0
+        self.assertEqual(
+            [self.app.scheduler.pick_audio(ads, "rotate") for _ in range(5)],
+            ["spot-1.mp3", "spot-2.mp3", "spot-3.mp3", "spot-1.mp3", "spot-2.mp3"],
+        )
+
+    def test_automatic_rotation_ignores_legacy_consecutive_repetitions(self):
+        ad = "single-per-interval.mp3"
+        (self.app.MEDIA_DIR / ad).write_bytes(b"audio")
+        self.app.store.update({"audio": {
+            "players": ["media_player.sala"],
+            "ads": [ad, "next-interval.mp3"],
+            "mode": "rotate",
+            "repeat_count": 5,
+            "repeat_gap_seconds": 10,
+            "daily_limit": 20,
+        }})
+        self.app.scheduler.audio_index = 0
+        self.calls.clear()
+        with mock.patch.object(self.app, "probe_media_duration", return_value=1), mock.patch.object(
+            self.app.time, "sleep"
+        ), mock.patch.object(self.app.audio_stop_event, "wait", return_value=False):
+            self.app.play_audio()
+        play_calls = [call for call in self.calls if call[1] == "play_media"]
+        self.assertEqual(len(play_calls), 1)
+        self.assertTrue(play_calls[0][2]["media_content_id"].endswith("/media/single-per-interval.mp3"))
+        (self.app.MEDIA_DIR / ad).unlink()
 
     def test_repeated_spot_waits_for_real_audio_duration(self):
         ad = "duration-test.mp3"
