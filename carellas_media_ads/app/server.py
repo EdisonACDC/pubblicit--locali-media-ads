@@ -661,6 +661,8 @@ def play_tv_item(item):
 
 
 class IPTVEngine:
+    BUILD_FORMAT_VERSION = 2
+
     def __init__(self):
         self.lock = threading.RLock()
         self.status = {}
@@ -683,18 +685,52 @@ class IPTVEngine:
     def hls_manifest(self, channel_id):
         return self.hls_dir(channel_id) / "channel.m3u8"
 
+    def build_metadata(self, channel_id):
+        return IPTV_DIR / safe_channel_id(channel_id) / "build.json"
+
+    def channel_signature(self, channel):
+        payload = {
+            "format_version": self.BUILD_FORMAT_VERSION,
+            "playlist": channel.get("playlist") or [],
+        }
+        encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    def built_signature(self, channel_id):
+        try:
+            data = json.loads(self.build_metadata(channel_id).read_text(encoding="utf-8"))
+            return str(data.get("signature", ""))
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return ""
+
+    def is_current(self, channel):
+        channel_id = safe_channel_id(channel.get("id", ""))
+        return bool(
+            self.output(channel_id).is_file()
+            and self.hls_manifest(channel_id).is_file()
+            and hmac.compare_digest(self.built_signature(channel_id), self.channel_signature(channel))
+        )
+
     def runtime_status(self):
         with self.lock:
             result = copy.deepcopy(self.status)
         for channel in self.channels():
             channel_id = safe_channel_id(channel.get("id", ""))
             complete = self.output(channel_id).is_file() and self.hls_manifest(channel_id).is_file()
-            if channel_id not in result or (result[channel_id].get("state") == "ready" and not complete):
+            current = complete and self.is_current(channel)
+            previous = result.get(channel_id, {})
+            if channel_id in self.building:
+                continue
+            if current:
+                result[channel_id] = {"state": "ready", "message": "Canale HLS aggiornato", "time": ""}
+            elif complete:
                 result[channel_id] = {
-                    "state": "ready" if complete else "not_built",
-                    "message": "Canale HLS pronto" if complete else "Canale da preparare",
+                    "state": "outdated",
+                    "message": "Sequenza modificata: aggiornamento automatico necessario",
                     "time": "",
                 }
+            elif previous.get("state") != "error":
+                result[channel_id] = {"state": "not_built", "message": "Canale da preparare", "time": ""}
         return result
 
     def set_status(self, channel_id, state, message=""):
@@ -855,6 +891,7 @@ class IPTVEngine:
         playlist = channel.get("playlist", [])
         if not playlist:
             raise RuntimeError("La playlist del canale è vuota")
+        build_signature = self.channel_signature(channel)
         concat_lines = []
         try:
             total_items = len(playlist)
@@ -967,6 +1004,12 @@ class IPTVEngine:
             shutil.rmtree(final_hls, ignore_errors=True)
             os.replace(hls_temporary, final_hls)
             os.replace(temporary, self.output(channel_id))
+            metadata_temporary = self.build_metadata(channel_id).with_suffix(".tmp")
+            metadata_temporary.write_text(json.dumps({
+                "signature": build_signature,
+                "built_at": now_iso(),
+            }, ensure_ascii=False, indent=2), encoding="utf-8")
+            os.replace(metadata_temporary, self.build_metadata(channel_id))
             self.set_status(channel_id, "ready", "Canale HLS pronto (foto e video)")
             store.log("success", f"Canale IPTV creato: {channel.get('name', channel_id)}")
         except Exception as error:
@@ -1282,7 +1325,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4.27"
+    server_version = "CarellasMediaAds/0.4.28"
 
     def log_message(self, fmt, *args):
         return
@@ -1911,7 +1954,7 @@ def player_session_username(token):
 class PlayerHandler(Handler):
     """Porta pubblica limitata al player TV: nessun accesso alla configurazione dell'add-on."""
 
-    server_version = "CarellasTVPlayer/0.4.27"
+    server_version = "CarellasTVPlayer/0.4.28"
 
     def player_username(self):
         cookie = SimpleCookie(self.headers.get("Cookie", ""))
@@ -1984,7 +2027,7 @@ class PlayerHandler(Handler):
             output = iptv.output(channel_id)
             if path == "/api/state":
                 status = iptv.runtime_status().get(channel_id, {})
-                if channel and channel.get("playlist") and not output.is_file() and status.get("state") == "not_built":
+                if channel and channel.get("playlist") and status.get("state") in {"not_built", "outdated"}:
                     iptv.build_async(channel_id)
                     status = iptv.runtime_status().get(channel_id, {})
                 if not channel:
@@ -2005,7 +2048,10 @@ class PlayerHandler(Handler):
                     "status": player_state,
                     "message": message,
                     "fit": user.get("fit", "contain"),
-                    "video_url": f"/channel.mp4?v={output.stat().st_mtime_ns}" if output.is_file() else "",
+                    "video_url": (
+                        f"/channel.mp4?v={iptv.built_signature(channel_id)[:16]}-{output.stat().st_mtime_ns}"
+                        if output.is_file() else ""
+                    ),
                 })
                 return
             if path == "/channel.mp4":
