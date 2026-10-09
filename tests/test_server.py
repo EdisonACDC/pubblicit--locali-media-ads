@@ -269,8 +269,13 @@ class CarellasServerTest(unittest.TestCase):
         zoom_out = self.app.IPTVEngine._effect_filter("zoom_out", 10)
         pan = self.app.IPTVEngine._effect_filter("pan", 10)
         fade = self.app.IPTVEngine._fade_filter(10)
+        self.assertIn("scale=3840:2160:flags=lanczos", zoom_in)
+        self.assertIn("cos(PI", zoom_in)
         self.assertIn("0.30", zoom_in)
+        self.assertIn("scale=3840:2160:flags=lanczos", zoom_out)
         self.assertIn("1.30", zoom_out)
+        self.assertIn("scale=3840:2160:flags=lanczos", pan)
+        self.assertIn("cos(PI", pan)
         self.assertIn("z=1.25", pan)
         self.assertIn("d=1.200", fade)
 
