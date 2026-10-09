@@ -1,5 +1,10 @@
 # Carellas Media Ads
 
+## Novità stabile 0.4.20
+
+- Selettore Italiano/Deutsch sempre visibile nell'intestazione su telefono, tablet e PC.
+- Cambio lingua applicato immediatamente e salvato automaticamente.
+
 ## Novità stabile 0.4.19
 
 - Navigazione mobile disposta su due colonne, senza sezioni nascoste fuori schermo.
