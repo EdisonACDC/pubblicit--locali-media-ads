@@ -1,5 +1,12 @@
 # Carellas Media Ads
 
+## Novità stabile 0.4.24
+
+- Aggiunto un pulsante **Salva utente** direttamente nella scheda di ogni Player TV.
+- Dopo il salvataggio compare una conferma chiara che la password è stata registrata.
+- La password resta vuota nei salvataggi successivi per sicurezza e viene cambiata solo quando se ne digita una nuova.
+- Aggiunto un test completo che salva le credenziali dal pannello e verifica il login reale sulla porta 8101.
+
 ## Novità stabile 0.4.23
 
 - Aggiunto il pulsante con l'occhio per mostrare o nascondere le password nella configurazione degli utenti TV e nella pagina di accesso del Player TV.
