@@ -4,12 +4,16 @@
 from __future__ import annotations
 
 import copy
+import base64
+import hashlib
+import hmac
 import json
 import math
 import mimetypes
 import os
 import re
 import shutil
+import secrets
 import subprocess
 import threading
 import time
@@ -20,6 +24,7 @@ import urllib.request
 import uuid
 from datetime import datetime
 from http import HTTPStatus
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -35,6 +40,7 @@ DEFAULT_FILE = APP_DIR / "default_config.json"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 HA_API = os.environ.get("CARELLAS_HA_API", "http://supervisor/core/api")
 PORT = 8099
+PLAYER_PORT = 8101
 SONOS_GROUP_SETTLE_SECONDS = float(os.environ.get("CARELLAS_SONOS_GROUP_SETTLE_SECONDS", "1.5"))
 SONOS_RESTORE_SETTLE_SECONDS = float(os.environ.get("CARELLAS_SONOS_RESTORE_SETTLE_SECONDS", "1.5"))
 SONOS_RESTORE_RETRIES = max(1, int(os.environ.get("CARELLAS_SONOS_RESTORE_RETRIES", "3")))
@@ -57,6 +63,11 @@ def safe_name(value):
     value = Path(urllib.parse.unquote(value)).name
     value = re.sub(r"[^A-Za-z0-9À-ÿ._ -]+", "_", value).strip(" .")
     return value[:180] or f"media-{uuid.uuid4().hex[:8]}"
+
+
+def safe_channel_id(value):
+    value = re.sub(r"[^a-z0-9-]+", "-", str(value).lower()).strip("-")
+    return value[:48] or f"canale-{uuid.uuid4().hex[:6]}"
 
 
 def probe_media_duration(source):
@@ -96,6 +107,29 @@ def deep_merge(base, override):
     return result
 
 
+def password_hash(password, iterations=210000):
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+    return "pbkdf2_sha256${}${}${}".format(
+        iterations,
+        base64.urlsafe_b64encode(salt).decode().rstrip("="),
+        base64.urlsafe_b64encode(digest).decode().rstrip("="),
+    )
+
+
+def password_matches(password, encoded):
+    try:
+        algorithm, iterations, salt_text, digest_text = encoded.split("$", 3)
+        if algorithm != "pbkdf2_sha256":
+            return False
+        salt = base64.urlsafe_b64decode(salt_text + "=" * (-len(salt_text) % 4))
+        expected = base64.urlsafe_b64decode(digest_text + "=" * (-len(digest_text) % 4))
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, int(iterations))
+        return hmac.compare_digest(actual, expected)
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
 class Store:
     def __init__(self):
         DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -131,6 +165,40 @@ class Store:
         audio["repeat_gap_seconds"] = 0
         if self.config.get("language") not in {"it", "de"}:
             self.config["language"] = "it"
+        player = self.config.setdefault("browser_player", {})
+        player.setdefault("enabled", True)
+        player.setdefault("public_url", "")
+        if not player.get("session_secret"):
+            player["session_secret"] = secrets.token_urlsafe(48)
+        normalized_users = []
+        seen = set()
+        for raw in player.get("users") or []:
+            username = str(raw.get("username", "")).strip().lower()
+            if not re.fullmatch(r"[a-z0-9_.-]{3,40}", username):
+                raise RuntimeError("Nome utente Player TV non valido: usa 3–40 lettere, numeri, punto, trattino o underscore")
+            if username in seen:
+                raise RuntimeError(f"Nome utente Player TV duplicato: {username}")
+            seen.add(username)
+            raw_channel_id = str(raw.get("channel_id", "")).strip()
+            if not raw_channel_id:
+                raise RuntimeError(f"Seleziona un canale IPTV per l'utente Player TV {username}")
+            item = {
+                "username": username,
+                "channel_id": safe_channel_id(raw_channel_id),
+                "fit": raw.get("fit") if raw.get("fit") in {"contain", "cover"} else "contain",
+                "enabled": raw.get("enabled", True) is not False,
+            }
+            password = str(raw.get("password", ""))
+            encoded = str(raw.get("password_hash", ""))
+            if password:
+                if len(password) < 6:
+                    raise RuntimeError(f"La password di {username} deve contenere almeno 6 caratteri")
+                encoded = password_hash(password)
+            if not encoded.startswith("pbkdf2_sha256$"):
+                raise RuntimeError(f"Imposta una password per l'utente Player TV {username}")
+            item["password_hash"] = encoded
+            normalized_users.append(item)
+        player["users"] = normalized_users
 
     def install_bundled_media(self):
         source = APP_DIR / "bundled_media"
@@ -236,6 +304,19 @@ def local_base_url():
     except Exception:
         pass
     return f"http://homeassistant.local:{PORT}"
+
+
+def player_local_url():
+    """Restituisce l'indirizzo LAN del player senza esporre la porta amministrativa."""
+    parsed = urllib.parse.urlsplit(local_base_url())
+    hostname = parsed.hostname or "homeassistant.local"
+    host = f"[{hostname}]" if ":" in hostname else hostname
+    return f"{parsed.scheme or 'http'}://{host}:{PLAYER_PORT}"
+
+
+def player_public_url():
+    configured = store.config.get("browser_player", {}).get("public_url", "").strip().rstrip("/")
+    return configured or player_local_url()
 
 
 def media_url(filename):
@@ -579,11 +660,6 @@ def play_tv_item(item):
     store.log("success", f"Pubblicità TV avviata: {filename}")
 
 
-def safe_channel_id(value):
-    value = re.sub(r"[^a-z0-9-]+", "-", str(value).lower()).strip("-")
-    return value[:48] or f"canale-{uuid.uuid4().hex[:6]}"
-
-
 class IPTVEngine:
     def __init__(self):
         self.lock = threading.RLock()
@@ -679,6 +755,18 @@ class IPTVEngine:
     @staticmethod
     def _probe_duration(source):
         return probe_media_duration(source)
+
+    @staticmethod
+    def _has_audio(source):
+        try:
+            probe = subprocess.run([
+                "ffprobe", "-v", "error", "-select_streams", "a:0",
+                "-show_entries", "stream=codec_type", "-of", "default=nw=1:nk=1",
+                str(source),
+            ], check=True, capture_output=True, text=True, timeout=30)
+            return probe.stdout.strip() == "audio"
+        except (OSError, subprocess.SubprocessError):
+            return False
 
     @staticmethod
     def _collage_cells(count, layout):
@@ -786,11 +874,15 @@ class IPTVEngine:
                     )
                 if kind == "video":
                     duration = self._probe_duration(source)
-                    command = [
-                        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-                        "-i", str(source),
-                        "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
-                        "-map", "0:v:0", "-map", "1:a:0",
+                    command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(source)]
+                    if self._has_audio(source):
+                        command += ["-map", "0:v:0", "-map", "0:a:0"]
+                    else:
+                        command += [
+                            "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+                            "-map", "0:v:0", "-map", "1:a:0",
+                        ]
+                    command += [
                         "-vf", f"{self._fit_filter(fit=item.get('fit', 'smart'))},setsar=1,fps=25,format=yuv420p",
                     ]
                 elif kind == "collage":
@@ -1168,7 +1260,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4.21"
+    server_version = "CarellasMediaAds/0.4.22"
 
     def log_message(self, fmt, *args):
         return
@@ -1415,6 +1507,8 @@ class Handler(BaseHTTPRequestHandler):
                         "music_slot_id": scheduler.music_slot_id,
                         "tv_active": scheduler.tv_active,
                         "media_base_url": local_base_url(),
+                        "player_url": player_public_url(),
+                        "player_local_url": player_local_url(),
                         "iptv_status": iptv.runtime_status(),
                     },
                     "ha_error": error,
@@ -1726,8 +1820,185 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"error": "File non trovato"}, 404)
 
 
+PLAYER_LOGIN_LOCK = threading.Lock()
+PLAYER_LOGIN_ATTEMPTS = {}
+DUMMY_PASSWORD_HASH = password_hash("carellas-invalid-login")
+
+
+def player_account(username):
+    username = str(username or "").strip().lower()
+    return next((item for item in store.config.get("browser_player", {}).get("users", [])
+                 if item.get("username") == username and item.get("enabled", True)), None)
+
+
+def player_session_token(username, lifetime=30 * 24 * 60 * 60):
+    account = player_account(username)
+    if not account:
+        raise ValueError("Account Player TV non disponibile")
+    payload = json.dumps({
+        "username": username,
+        "expires": int(time.time()) + lifetime,
+        "version": hashlib.sha256(account["password_hash"].encode()).hexdigest()[:16],
+    }, separators=(",", ":")).encode()
+    encoded = base64.urlsafe_b64encode(payload).decode().rstrip("=")
+    secret = store.config["browser_player"]["session_secret"].encode()
+    signature = hmac.new(secret, encoded.encode(), hashlib.sha256).hexdigest()
+    return f"{encoded}.{signature}"
+
+
+def player_session_username(token):
+    try:
+        encoded, signature = token.split(".", 1)
+        secret = store.config["browser_player"]["session_secret"].encode()
+        expected = hmac.new(secret, encoded.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(signature, expected):
+            return None
+        payload = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
+        if int(payload.get("expires", 0)) < int(time.time()):
+            return None
+        username = str(payload.get("username", ""))
+        account = player_account(username)
+        expected_version = hashlib.sha256(account["password_hash"].encode()).hexdigest()[:16] if account else ""
+        return username if account and hmac.compare_digest(str(payload.get("version", "")), expected_version) else None
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return None
+
+
+class PlayerHandler(Handler):
+    """Porta pubblica limitata al player TV: nessun accesso alla configurazione dell'add-on."""
+
+    server_version = "CarellasTVPlayer/0.4.22"
+
+    def player_username(self):
+        cookie = SimpleCookie(self.headers.get("Cookie", ""))
+        morsel = cookie.get("carellas_player")
+        return player_session_username(morsel.value) if morsel else None
+
+    def player_user(self):
+        return player_account(self.player_username())
+
+    def send_player_json(self, payload, status=200, cookie=None):
+        data = json.dumps(payload, ensure_ascii=False).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        if cookie is not None:
+            secure = self.headers.get("X-Forwarded-Proto", "").lower() == "https"
+            attributes = "; Path=/; HttpOnly; SameSite=Lax"
+            if secure:
+                attributes += "; Secure"
+            self.send_header("Set-Cookie", f"carellas_player={cookie}{attributes}")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(data)
+
+    def client_key(self):
+        forwarded = self.headers.get("CF-Connecting-IP") or self.headers.get("X-Forwarded-For", "")
+        return forwarded.split(",", 1)[0].strip() or self.client_address[0]
+
+    def login_allowed(self):
+        key, now = self.client_key(), time.monotonic()
+        with PLAYER_LOGIN_LOCK:
+            attempts = [stamp for stamp in PLAYER_LOGIN_ATTEMPTS.get(key, []) if now - stamp < 300]
+            PLAYER_LOGIN_ATTEMPTS[key] = attempts
+            return len(attempts) < 10
+
+    def login_failed(self):
+        key = self.client_key()
+        with PLAYER_LOGIN_LOCK:
+            PLAYER_LOGIN_ATTEMPTS.setdefault(key, []).append(time.monotonic())
+
+    def login_succeeded(self):
+        with PLAYER_LOGIN_LOCK:
+            PLAYER_LOGIN_ATTEMPTS.pop(self.client_key(), None)
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Allow", "GET, HEAD, POST, OPTIONS")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def do_HEAD(self):
+        self.do_GET()
+
+    def do_GET(self):
+        path = urllib.parse.urlsplit(self.path).path.rstrip("/") or "/"
+        try:
+            if path in ("/", "/player"):
+                self.send_file(APP_DIR / "player.html")
+                return
+            if path == "/health":
+                self.send_player_json({"ok": True})
+                return
+            user = self.player_user()
+            if not user or not store.config.get("browser_player", {}).get("enabled", True):
+                self.send_player_json({"error": "Accesso richiesto"}, 401)
+                return
+            channel_id = safe_channel_id(user.get("channel_id", ""))
+            channel = iptv.channel(channel_id)
+            output = iptv.output(channel_id)
+            if path == "/api/state":
+                self.send_player_json({
+                    "ok": True,
+                    "username": user["username"],
+                    "channel_id": channel_id,
+                    "channel_name": channel.get("name", channel_id) if channel else channel_id,
+                    "ready": bool(channel and output.is_file()),
+                    "fit": user.get("fit", "contain"),
+                    "video_url": f"/channel.mp4?v={output.stat().st_mtime_ns}" if output.is_file() else "",
+                })
+                return
+            if path == "/channel.mp4":
+                if not channel or not output.is_file():
+                    self.send_player_json({"error": "Canale non ancora creato"}, 404)
+                    return
+                self.send_file(output, cache=False)
+                return
+            self.send_player_json({"error": "Pagina non trovata"}, 404)
+        except (BrokenPipeError, ConnectionResetError):
+            return
+        except Exception as error:
+            store.log("error", f"Player TV GET {path}: {error}")
+            self.send_player_json({"error": "Errore del Player TV"}, 500)
+
+    def do_POST(self):
+        path = urllib.parse.urlsplit(self.path).path.rstrip("/") or "/"
+        try:
+            if path == "/api/logout":
+                self.send_player_json({"ok": True}, cookie="; Max-Age=0")
+                return
+            if path != "/api/login":
+                self.send_player_json({"error": "Operazione sconosciuta"}, 404)
+                return
+            if not store.config.get("browser_player", {}).get("enabled", True):
+                self.send_player_json({"error": "Player TV disattivato"}, 403)
+                return
+            if not self.login_allowed():
+                self.send_player_json({"error": "Troppi tentativi. Attendi cinque minuti."}, 429)
+                return
+            body = self.json_body()
+            username = str(body.get("username", "")).strip().lower()
+            password = str(body.get("password", ""))
+            account = player_account(username)
+            encoded = account.get("password_hash") if account else DUMMY_PASSWORD_HASH
+            if not password_matches(password, encoded):
+                self.login_failed()
+                self.send_player_json({"error": "Nome utente o password errati"}, 401)
+                return
+            self.login_succeeded()
+            token = player_session_token(username)
+            self.send_player_json({"ok": True}, cookie=f"{token}; Max-Age={30 * 24 * 60 * 60}")
+        except Exception as error:
+            store.log("error", f"Player TV POST {path}: {error}")
+            self.send_player_json({"error": "Errore del Player TV"}, 500)
+
+
 if __name__ == "__main__":
     scheduler.start()
+    player_server = ThreadingHTTPServer(("0.0.0.0", PLAYER_PORT), PlayerHandler)
+    threading.Thread(target=player_server.serve_forever, name="carellas-tv-player", daemon=True).start()
+    store.log("info", f"Player TV protetto pronto sulla porta {PLAYER_PORT}")
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     store.log("info", f"Interfaccia pronta sulla porta {PORT}")
     server.serve_forever()

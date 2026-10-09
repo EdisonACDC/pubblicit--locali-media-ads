@@ -67,5 +67,10 @@
         "power_off_entity": ""
       }
     ]
+  },
+  "browser_player": {
+    "enabled": true,
+    "public_url": "",
+    "users": []
   }
 }
