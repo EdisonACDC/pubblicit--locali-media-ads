@@ -99,7 +99,9 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("overflow-x:hidden", html)
         self.assertIn(".speaker-option span{min-width:0;max-width:100%;flex:1;overflow:hidden}", html)
         self.assertIn("padding:8px 8px calc(88px + env(safe-area-inset-bottom))", html)
-        self.assertIn("position:fixed;z-index:20", html)
+        self.assertIn("grid-template-columns:repeat(2,minmax(0,1fr))", html)
+        self.assertIn(".speaker-option strong,.speaker-option small{white-space:normal", html)
+        self.assertIn(".savebar{position:static", html)
 
     def test_audio_duration_is_automatic_in_the_interface(self):
         html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
