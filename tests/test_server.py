@@ -454,6 +454,15 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("function duplicateMusicSlot", html)
         self.assertIn(".music-slot-grid{grid-template-columns:1fr}", html)
 
+    def test_upload_refreshes_library_without_discarding_unsaved_settings(self):
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        self.assertIn("async function refreshMediaLibrary()", html)
+        self.assertIn("preserveMediaChoices()", html)
+        self.assertIn("api/state?media_refresh=", html)
+        self.assertIn("{cache:'no-store'}", html)
+        self.assertIn("await refreshMediaLibrary()", html)
+        self.assertIn("['uploadFile','uploadKind'].includes(e.target.id)", html)
+
     def test_config_is_merged_and_saved_atomically(self):
         original_tv = self.app.store.config["tv"]["mode"]
         self.app.store.update({"audio": {"interval_minutes": 47}})
