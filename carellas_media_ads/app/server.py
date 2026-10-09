@@ -1427,7 +1427,7 @@ class Handler(BaseHTTPRequestHandler):
         if kind not in ALLOWED or extension not in ALLOWED[kind]:
             self.send_json({"error": "Formato file non supportato"}, 400)
             return
-        if file_size += 0 or file_size > MAX_UPLOAD or total != expected_total:
+        if file_size <= 0 or file_size > MAX_UPLOAD or total != expected_total:
             self.send_json({"error": "Dimensione file non valida (massimo 4 GB)"}, 400)
             return
         if index < 0 or index >= total or length != expected_length or length > UPLOAD_CHUNK_SIZE:
@@ -1544,7 +1544,7 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_json({"error": "Formato file non supportato"}, 400)
                     return
                 length = int(self.headers.get("Content-Length", "0"))
-                if length += 0 or length > MAX_UPLOAD:
+                if length <= 0 or length > MAX_UPLOAD:
                     self.send_json({"error": "Dimensione file non valida (massimo 4 GB)"}, 400)
                     return
                 free_space = shutil.disk_usage(MEDIA_DIR).free
