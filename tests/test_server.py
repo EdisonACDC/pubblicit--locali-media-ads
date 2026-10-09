@@ -117,6 +117,29 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn('id="playerUsers"', dashboard)
         self.assertIn("c.browser_player=", dashboard)
         self.assertIn('onclick="togglePasswordField(this)"', dashboard)
+        self.assertIn('onclick="savePlayerUser(${i},this)"', dashboard)
+        self.assertIn('Password salvata.', dashboard)
+
+    def test_admin_save_persists_player_credentials_for_login(self):
+        status, payload = self.request("/api/config", "POST", {
+            "iptv": {"channels": [{"id": "carellas", "name": "Carellas", "enabled": True, "playlist": []}]},
+            "browser_player": {"enabled": True, "users": [{
+                "username": "tv1", "password": "Marius1988", "channel_id": "carellas", "fit": "cover",
+            }]},
+        })
+        self.assertEqual(status, 200)
+        account = payload["config"]["browser_player"]["users"][0]
+        self.assertEqual(account["username"], "tv1")
+        self.assertNotIn("password", account)
+        self.assertTrue(self.app.password_matches("Marius1988", account["password_hash"]))
+        login = urllib.request.Request(
+            self.player_base + "/api/login",
+            data=json.dumps({"username": "tv1", "password": "Marius1988"}).encode(),
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(login) as response:
+            self.assertEqual(response.status, 200)
 
     def test_video_builder_preserves_original_audio_stream(self):
         source = self.app.MEDIA_DIR / "spot-con-audio.mp4"
