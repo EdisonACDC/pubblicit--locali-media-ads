@@ -661,7 +661,7 @@ def play_tv_item(item):
 
 
 class IPTVEngine:
-    BUILD_FORMAT_VERSION = 2
+    BUILD_FORMAT_VERSION = 3
 
     def __init__(self):
         self.lock = threading.RLock()
@@ -688,6 +688,13 @@ class IPTVEngine:
     def build_metadata(self, channel_id):
         return IPTV_DIR / safe_channel_id(channel_id) / "build.json"
 
+    def build_info(self, channel_id):
+        try:
+            data = json.loads(self.build_metadata(channel_id).read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return {}
+
     def channel_signature(self, channel):
         payload = {
             "format_version": self.BUILD_FORMAT_VERSION,
@@ -697,11 +704,7 @@ class IPTVEngine:
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
     def built_signature(self, channel_id):
-        try:
-            data = json.loads(self.build_metadata(channel_id).read_text(encoding="utf-8"))
-            return str(data.get("signature", ""))
-        except (FileNotFoundError, json.JSONDecodeError, OSError):
-            return ""
+        return str(self.build_info(channel_id).get("signature", ""))
 
     def is_current(self, channel):
         channel_id = safe_channel_id(channel.get("id", ""))
@@ -719,15 +722,29 @@ class IPTVEngine:
             complete = self.output(channel_id).is_file() and self.hls_manifest(channel_id).is_file()
             current = complete and self.is_current(channel)
             previous = result.get(channel_id, {})
+            build_info = self.build_info(channel_id)
+            generated = {
+                "built_at": build_info.get("built_at", ""),
+                "sequence": build_info.get("sequence", []),
+            }
             if channel_id in self.building:
+                result[channel_id] = {**previous, **generated}
                 continue
-            if current:
-                result[channel_id] = {"state": "ready", "message": "Canale HLS aggiornato", "time": ""}
+            # A failed rebuild must remain visible even when an older output is
+            # still present. Otherwise the browser player reports "ready" and
+            # keeps showing the previous sequence indefinitely.
+            if previous.get("state") == "error":
+                result[channel_id] = {**previous, **generated}
+            elif current:
+                result[channel_id] = {
+                    "state": "ready", "message": "Canale HLS aggiornato", "time": "", **generated,
+                }
             elif complete:
                 result[channel_id] = {
                     "state": "outdated",
                     "message": "Sequenza modificata: aggiornamento automatico necessario",
                     "time": "",
+                    **generated,
                 }
             elif previous.get("state") != "error":
                 result[channel_id] = {"state": "not_built", "message": "Canale da preparare", "time": ""}
@@ -764,22 +781,23 @@ class IPTVEngine:
     @staticmethod
     def _effect_filter(effect, duration):
         frames = max(1, math.ceil(duration * 25))
+        last_frame = max(1, frames - 1)
         if effect == "zoom_in":
             return (
-                "zoompan=z='min(zoom+0.0012,1.12)':"
+                f"zoompan=z='1.0+0.30*min(on/{last_frame},1)':"
                 "x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
                 "d=1:s=1280x720:fps=25"
             )
         if effect == "zoom_out":
             return (
-                "zoompan=z='if(eq(on,1),1.12,max(1.0,zoom-0.0012))':"
+                f"zoompan=z='1.30-0.30*min(on/{last_frame},1)':"
                 "x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
                 "d=1:s=1280x720:fps=25"
             )
         if effect == "pan":
             return (
-                "zoompan=z=1.12:"
-                f"x='(iw-iw/zoom)*on/{frames}':"
+                "zoompan=z=1.25:"
+                f"x='(iw-iw/zoom)*min(on/{last_frame},1)':"
                 "y='ih/2-(ih/zoom/2)':d=1:s=1280x720:fps=25"
             )
         if effect == "black_white":
@@ -788,8 +806,12 @@ class IPTVEngine:
 
     @staticmethod
     def _fade_filter(duration):
-        fade_out = max(0.0, duration - min(0.6, duration / 3))
-        return f"fade=t=in:st=0:d=0.5,fade=t=out:st={fade_out:.3f}:d=0.5"
+        fade_duration = min(1.2, max(0.6, duration * 0.12))
+        fade_out = max(0.0, duration - fade_duration)
+        return (
+            f"fade=t=in:st=0:d={fade_duration:.3f},"
+            f"fade=t=out:st={fade_out:.3f}:d={fade_duration:.3f}"
+        )
 
     @staticmethod
     def _probe_duration(source):
@@ -893,6 +915,7 @@ class IPTVEngine:
             raise RuntimeError("La playlist del canale è vuota")
         build_signature = self.channel_signature(channel)
         concat_lines = []
+        generated_sequence = []
         try:
             total_items = len(playlist)
             for index, item in enumerate(playlist):
@@ -953,13 +976,22 @@ class IPTVEngine:
                 ]
                 subprocess.run(command, check=True, timeout=max(120, duration * 4 + 60))
                 concat_lines.append(f"file '{part.as_posix()}'")
+                generated_sequence.append({
+                    "position": index + 1,
+                    "kind": kind,
+                    "name": name if kind != "collage" else "Collage",
+                    "duration": round(duration, 3),
+                    "effect": item.get("effect", "none") if kind in {"image", "collage"} else "none",
+                    "fit": item.get("fit", "smart") if kind != "collage" else "cover",
+                })
             concat_file = parts / "concat.txt"
             concat_file.write_text("\n".join(concat_lines) + "\n", encoding="utf-8")
             temporary = work / "channel.tmp.mp4"
             subprocess.run([
                 "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-                "-f", "concat", "-safe", "0", "-i", str(concat_file),
-                "-c", "copy", "-movflags", "+faststart", str(temporary),
+                "-fflags", "+genpts", "-f", "concat", "-safe", "0", "-i", str(concat_file),
+                "-map", "0:v:0", "-map", "0:a:0?", "-c", "copy",
+                "-avoid_negative_ts", "make_zero", "-movflags", "+faststart", str(temporary),
             ], check=True, timeout=600)
             probe = subprocess.run([
                 "ffprobe", "-v", "error", "-select_streams", "v:0",
@@ -1008,6 +1040,8 @@ class IPTVEngine:
             metadata_temporary.write_text(json.dumps({
                 "signature": build_signature,
                 "built_at": now_iso(),
+                "sequence": generated_sequence,
+                "cycle_duration": round(cycle_duration, 3),
             }, ensure_ascii=False, indent=2), encoding="utf-8")
             os.replace(metadata_temporary, self.build_metadata(channel_id))
             self.set_status(channel_id, "ready", "Canale HLS pronto (foto e video)")
@@ -1325,7 +1359,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4.28"
+    server_version = "CarellasMediaAds/0.4.29"
 
     def log_message(self, fmt, *args):
         return
@@ -1954,7 +1988,7 @@ def player_session_username(token):
 class PlayerHandler(Handler):
     """Porta pubblica limitata al player TV: nessun accesso alla configurazione dell'add-on."""
 
-    server_version = "CarellasTVPlayer/0.4.28"
+    server_version = "CarellasTVPlayer/0.4.29"
 
     def player_username(self):
         cookie = SimpleCookie(self.headers.get("Cookie", ""))
@@ -2028,13 +2062,18 @@ class PlayerHandler(Handler):
             if path == "/api/state":
                 status = iptv.runtime_status().get(channel_id, {})
                 if channel and channel.get("playlist") and status.get("state") in {"not_built", "outdated"}:
-                    iptv.build_async(channel_id)
+                    started = iptv.build_async(channel_id)
                     status = iptv.runtime_status().get(channel_id, {})
+                    # Also makes the state deterministic for mocked/slow build
+                    # starters: an existing old file remains playable only while
+                    # the replacement is genuinely being prepared.
+                    if started and status.get("state") in {"not_built", "outdated"}:
+                        status = {"state": "building", "message": "Aggiornamento del canale in corso"}
                 if not channel:
                     player_state, message = "missing_channel", "Il canale assegnato non esiste più"
                 elif not channel.get("playlist"):
                     player_state, message = "empty_channel", "Il canale non contiene ancora video o foto"
-                elif output.is_file():
+                elif output.is_file() and status.get("state") != "error":
                     player_state, message = "ready", "Canale pronto"
                 else:
                     player_state = status.get("state", "not_built")
@@ -2044,7 +2083,10 @@ class PlayerHandler(Handler):
                     "username": user["username"],
                     "channel_id": channel_id,
                     "channel_name": channel.get("name", channel_id) if channel else channel_id,
-                    "ready": bool(channel and channel.get("playlist") and output.is_file()),
+                    "ready": bool(
+                        channel and channel.get("playlist") and output.is_file()
+                        and player_state in {"ready", "building"}
+                    ),
                     "status": player_state,
                     "message": message,
                     "fit": user.get("fit", "contain"),
