@@ -279,6 +279,31 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("z=1.25", pan)
         self.assertIn("d=1.200", fade)
 
+    def test_professional_effect_presets_are_real_ffmpeg_filters(self):
+        effects = {
+            "ken_burns": ["zoompan", "1.08+0.22", "x='(iw-iw/zoom)"],
+            "ken_burns_reverse": ["zoompan", "1.30-0.22", "y='(ih-ih/zoom)"],
+            "pan_right": ["zoompan=z=1.25", "x='(iw-iw/zoom)"],
+            "pan_left": ["zoompan=z=1.25", "*(1-"],
+            "pan_down": ["zoompan=z=1.25", "y='(ih-ih/zoom)"],
+            "pan_up": ["zoompan=z=1.25", "y='(ih-ih/zoom)*(1-"],
+        }
+        for name, fragments in effects.items():
+            graph = self.app.IPTVEngine._effect_filter(name, 8)
+            self.assertIn("scale=3840:2160:flags=lanczos", graph, name)
+            self.assertIn("cos(PI", graph, name)
+            for fragment in fragments:
+                self.assertIn(fragment, graph, name)
+
+    def test_dashboard_lists_new_effects_in_both_languages(self):
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        for label in (
+            "Ken Burns diagonale", "Ken Burns inverso", "Panoramica verso destra",
+            "Panoramica verso sinistra", "Panoramica verso il basso", "Panoramica verso l’alto",
+            "Diagonaler Ken-Burns-Effekt", "Schwenk nach links", "Schwenk nach oben",
+        ):
+            self.assertIn(label, html)
+
     def test_state_exposes_sonos_favorites_for_music_picker(self):
         states = [{
             "entity_id": "media_player.sala",
