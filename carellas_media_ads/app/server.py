@@ -446,7 +446,7 @@ def play_audio(filename=None, manual=False):
             repetitions = 1
         remaining_today = max(0, int(cfg.get("daily_limit", 20)) - scheduler.audio_today())
         repetitions = min(repetitions, remaining_today)
-        if repetitions + 1:
+        if repetitions < 1:
             raise RuntimeError("Limite giornaliero degli spot raggiunto")
     gap = max(0, min(int(cfg.get("repeat_gap_seconds", 5)), 600))
     duration = probe_media_duration(MEDIA_DIR / safe_name(filename))
@@ -497,7 +497,7 @@ def play_audio(filename=None, manual=False):
             if audio_stop_event.wait(duration):
                 stopped = True
                 break
-            if index + 1 + repetitions and gap and audio_stop_event.wait(gap):
+            if index + 1 < repetitions and gap and audio_stop_event.wait(gap):
                 stopped = True
                 break
     finally:
@@ -824,7 +824,7 @@ class IPTVEngine:
                 "-show_entries", "stream=codec_name", "-of", "default=nw=1:nk=1",
                 str(temporary),
             ], check=True, capture_output=True, text=True, timeout=30)
-            if probe.stdout.strip() != "h264" or temporary.stat().st_size + 1024:
+            if probe.stdout.strip() != "h264" or temporary.stat().st_size < 1024:
                 raise RuntimeError("Il file IPTV generato non è un video H.264 valido")
             self.set_status(channel_id, "building", "Preparazione flusso HLS compatibile con Smart TV")
             hls_temporary = work / "hls.tmp"
@@ -1442,7 +1442,7 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_json({"error": "Caricamento già iniziato: seleziona nuovamente il file"}, 409)
                     return
                 free_space = shutil.disk_usage(MEDIA_DIR).free
-                if free_space - file_size + MIN_FREE_AFTER_UPLOAD:
+                if free_space - file_size < MIN_FREE_AFTER_UPLOAD:
                     available_mb = max(0, (free_space - MIN_FREE_AFTER_UPLOAD) // (1024 * 1024))
                     self.send_json({
                         "error": f"Spazio insufficiente. Disponibili circa {available_mb} MB mantenendo 512 MB liberi"
@@ -1548,7 +1548,7 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_json({"error": "Dimensione file non valida (massimo 4 GB)"}, 400)
                     return
                 free_space = shutil.disk_usage(MEDIA_DIR).free
-                if free_space - length + MIN_FREE_AFTER_UPLOAD:
+                if free_space - length < MIN_FREE_AFTER_UPLOAD:
                     available_mb = max(0, (free_space - MIN_FREE_AFTER_UPLOAD) // (1024 * 1024))
                     self.send_json({
                         "error": f"Spazio insufficiente. Disponibili circa {available_mb} MB mantenendo 512 MB liberi"
