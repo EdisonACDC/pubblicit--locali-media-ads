@@ -1,5 +1,12 @@
 # Carellas Media Ads
 
+## Novità stabile 0.4.31
+
+- Nuova raccolta di effetti professionali applicabili a fotografie e collage: **Ken Burns diagonale**, **Ken Burns inverso**, panoramiche verso destra, sinistra, alto e basso, zoom cinematografici, dissolvenza morbida e bianco e nero.
+- Tutti i movimenti vengono renderizzati realmente da FFmpeg a 3840×2160 con accelerazione progressiva e uscita 16:9 a 1280×720.
+- Le vecchie impostazioni “Movimento laterale” vengono convertite automaticamente nella nuova panoramica verso destra.
+- La nuova versione del formato rigenera automaticamente i canali già creati.
+
 ## Novità stabile 0.4.30
 
 - Eliminato il tremolio di **Zoom avanti**, **Zoom indietro** e **Movimento laterale**.
