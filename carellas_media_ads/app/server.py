@@ -1238,7 +1238,7 @@ class Handler(BaseHTTPRequestHandler):
                     suffix_length = int(match.group(2))
                     start = max(0, size - suffix_length)
                     end = size - 1
-                if size += 0 or start >= size or start > end:
+                if size <= 0 or start >= size or start > end:
                     self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
                     self.send_header("Content-Range", f"bytes */{size}")
                     self.send_header("Content-Length", "0")
