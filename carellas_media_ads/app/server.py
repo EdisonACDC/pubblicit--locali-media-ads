@@ -1400,13 +1400,18 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4.31"
+    server_version = "CarellasMediaAds/0.4.32"
 
     def log_message(self, fmt, *args):
         return
 
     def route_path(self):
         path = urllib.parse.urlsplit(self.path).path
+        if path.startswith("/api/hassio_ingress/"):
+            positions = [path.rfind(marker) for marker in ("/media/", "/assets/", "/iptv/")]
+            media_position = max(positions)
+            if media_position >= 0:
+                return path[media_position:]
         api_position = path.rfind("/api/")
         if api_position >= 0:
             return path[api_position:]
@@ -2029,7 +2034,7 @@ def player_session_username(token):
 class PlayerHandler(Handler):
     """Porta pubblica limitata al player TV: nessun accesso alla configurazione dell'add-on."""
 
-    server_version = "CarellasTVPlayer/0.4.31"
+    server_version = "CarellasTVPlayer/0.4.32"
 
     def player_username(self):
         cookie = SimpleCookie(self.headers.get("Cookie", ""))
