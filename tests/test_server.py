@@ -138,6 +138,7 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn('id="audioRotationSummary"', html)
         self.assertIn("updateAudioRotationSummary()", html)
         self.assertIn("e.target.id==='language'", html)
+        self.assertIn(". Es können beliebig viele Zeiträume erstellt werden.", html)
 
     def test_audio_rotation_plays_one_different_spot_per_interval(self):
         ads = ["spot-1.mp3", "spot-2.mp3", "spot-3.mp3"]
@@ -169,7 +170,7 @@ class CarellasServerTest(unittest.TestCase):
         self.assertTrue(play_calls[0][2]["media_content_id"].endswith("/media/single-per-interval.mp3"))
         (self.app.MEDIA_DIR / ad).unlink()
 
-    def test_repeated_spot_waits_for_real_audio_duration(self):
+    def test_manual_spot_waits_for_real_audio_duration_once(self):
         ad = "duration-test.mp3"
         (self.app.MEDIA_DIR / ad).write_bytes(b"audio")
         self.app.store.update({"audio": {
@@ -186,10 +187,10 @@ class CarellasServerTest(unittest.TestCase):
             self.app.play_audio(ad, manual=True)
         probe.assert_called_once_with(self.app.MEDIA_DIR / ad)
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [1.5, 1.5])
-        self.assertEqual([call.args[0] for call in wait.call_args_list], [42.25, 7, 42.25])
-        self.assertEqual(len([call for call in self.calls if call[1] == "play_media"]), 2)
+        self.assertEqual([call.args[0] for call in wait.call_args_list], [42.25])
+        self.assertEqual(len([call for call in self.calls if call[1] == "play_media"]), 1)
         self.assertTrue(any(call[1] == "media_play" for call in self.calls))
-        self.assertEqual(self.app.scheduler.audio_today(), count_before + 2)
+        self.assertEqual(self.app.scheduler.audio_today(), count_before + 1)
         (self.app.MEDIA_DIR / ad).unlink()
 
     def test_music_start_endpoint_plays_on_selected_sonos(self):
@@ -346,6 +347,42 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(saved["audio"]["interval_minutes"], 47)
         self.assertEqual(saved["tv"]["mode"], original_tv)
 
+    def test_stable_config_removes_legacy_audio_options_on_every_save(self):
+        saved = self.app.store.update({
+            "language": "unsupported",
+            "audio": {
+                "driver": "alexa",
+                "resume_music_after_ad": False,
+                "spot_duration_seconds": 999,
+                "repeat_count": 7,
+                "repeat_gap_seconds": 1800,
+            },
+        })
+        self.assertEqual(saved["language"], "it")
+        self.assertEqual(saved["audio"]["repeat_count"], 1)
+        self.assertEqual(saved["audio"]["repeat_gap_seconds"], 0)
+        self.assertNotIn("driver", saved["audio"])
+        self.assertNotIn("resume_music_after_ad", saved["audio"])
+        self.assertNotIn("spot_duration_seconds", saved["audio"])
+
+    def test_daily_audio_counter_survives_scheduler_restart(self):
+        self.app.RUNTIME_FILE.write_text(json.dumps({
+            "day": datetime.now().date().isoformat(),
+            "audio_today": 7,
+        }), encoding="utf-8")
+        restarted = self.app.Scheduler()
+        self.assertEqual(restarted.audio_today(), 7)
+        restarted.record_audio_play()
+        persisted = json.loads(self.app.RUNTIME_FILE.read_text(encoding="utf-8"))
+        self.assertEqual(persisted["audio_today"], 8)
+
+    def test_daily_counter_disk_error_does_not_interrupt_playback(self):
+        restarted = self.app.Scheduler()
+        before = restarted.audio_today()
+        with mock.patch.object(Path, "write_text", side_effect=OSError("disk busy")):
+            count = restarted.record_audio_play()
+        self.assertEqual(count, before + 1)
+
     def test_config_upload_range_and_delete(self):
         self.request("/api/config", "POST", {"audio": {"players": ["media_player.sala"], "repeat_count": 1}})
         self.request("/api/upload?filename=test.mp3&kind=audio", "POST", b"ID3test-audio", "audio/mpeg")
@@ -394,6 +431,42 @@ class CarellasServerTest(unittest.TestCase):
         self.assertTrue(payload["complete"])
         self.assertEqual((self.app.MEDIA_DIR / payload["name"]).read_bytes(), content)
         self.request("/api/media/" + payload["name"], "DELETE")
+
+    def test_delete_media_cleans_iptv_references_and_invalidates_built_channel(self):
+        deleted = self.app.MEDIA_DIR / "deleted.jpg"
+        kept = self.app.MEDIA_DIR / "kept.jpg"
+        deleted.write_bytes(b"photo")
+        kept.write_bytes(b"photo")
+        self.app.store.update({"iptv": {"channels": [{
+            "id": "cleanup",
+            "name": "Cleanup",
+            "enabled": False,
+            "playlist": [
+                {"name": "deleted.jpg", "kind": "image", "duration": 10},
+                {"kind": "collage", "images": ["deleted.jpg", "kept.jpg"], "duration": 10},
+                {"name": "kept.jpg", "kind": "image", "duration": 10},
+            ],
+            "schedule": [],
+        }]}})
+        output = self.app.iptv.output("cleanup")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(b"built")
+        status, payload = self.request("/api/media/deleted.jpg", "DELETE")
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["ok"])
+        playlist = self.app.store.config["iptv"]["channels"][0]["playlist"]
+        self.assertEqual(playlist, [{"name": "kept.jpg", "kind": "image", "duration": 10}])
+        self.assertFalse(output.parent.exists())
+        self.assertEqual(self.app.iptv.runtime_status()["cleanup"]["state"], "not_built")
+
+    def test_iptv_status_endpoint_includes_unbuilt_channels(self):
+        self.app.store.update({"iptv": {"channels": [{
+            "id": "not-built-yet", "name": "Not built", "enabled": False,
+            "playlist": [], "schedule": [],
+        }]}})
+        status, payload = self.request("/api/iptv/status")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["channels"]["not-built-yet"]["state"], "not_built")
 
     def test_single_sonos_uses_synchronized_playback_and_restores_state(self):
         ad = "Carellas_Ristorante_Spot_DE_Maschile.mp3"
