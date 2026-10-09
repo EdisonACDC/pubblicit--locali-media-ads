@@ -11,5 +11,5 @@ RUN apk add --no-cache ffmpeg \
     && chmod a+x /run.sh \
     && mkdir -p /media/carellas_media_ads
 
-EXPOSE 8099
+EXPOSE 8099 8101
 CMD ["/run.sh"]
