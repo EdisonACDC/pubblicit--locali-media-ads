@@ -110,9 +110,13 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("100vw;height:100vh", html)
         self.assertIn("Avvia video e audio", html)
         self.assertIn("Video und Ton starten", html)
+        self.assertIn('onclick="togglePassword(\'password\',this)"', html)
+        self.assertIn("Visualizza password", html)
+        self.assertIn("Passwort anzeigen", html)
         dashboard = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
         self.assertIn('id="playerUsers"', dashboard)
         self.assertIn("c.browser_player=", dashboard)
+        self.assertIn('onclick="togglePasswordField(this)"', dashboard)
 
     def test_video_builder_preserves_original_audio_stream(self):
         source = self.app.MEDIA_DIR / "spot-con-audio.mp4"
