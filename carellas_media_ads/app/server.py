@@ -661,7 +661,7 @@ def play_tv_item(item):
 
 
 class IPTVEngine:
-    BUILD_FORMAT_VERSION = 4
+    BUILD_FORMAT_VERSION = 5
 
     def __init__(self):
         self.lock = threading.RLock()
@@ -803,11 +803,43 @@ class IPTVEngine:
                 "x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
                 "d=1:s=1280x720:fps=25"
             )
-        if effect == "pan":
+        if effect in {"pan", "pan_right"}:
             return (
                 high_resolution + "zoompan=z=1.25:"
                 f"x='(iw-iw/zoom)*{smooth}':"
                 "y='ih/2-(ih/zoom/2)':d=1:s=1280x720:fps=25"
+            )
+        if effect == "pan_left":
+            return (
+                high_resolution + "zoompan=z=1.25:"
+                f"x='(iw-iw/zoom)*(1-{smooth})':"
+                "y='ih/2-(ih/zoom/2)':d=1:s=1280x720:fps=25"
+            )
+        if effect == "pan_down":
+            return (
+                high_resolution + "zoompan=z=1.25:"
+                "x='iw/2-(iw/zoom/2)':"
+                f"y='(ih-ih/zoom)*{smooth}':d=1:s=1280x720:fps=25"
+            )
+        if effect == "pan_up":
+            return (
+                high_resolution + "zoompan=z=1.25:"
+                "x='iw/2-(iw/zoom/2)':"
+                f"y='(ih-ih/zoom)*(1-{smooth})':d=1:s=1280x720:fps=25"
+            )
+        if effect == "ken_burns":
+            return (
+                high_resolution +
+                f"zoompan=z='1.08+0.22*{smooth}':"
+                f"x='(iw-iw/zoom)*{smooth}':"
+                f"y='(ih-ih/zoom)*(1-{smooth})':d=1:s=1280x720:fps=25"
+            )
+        if effect == "ken_burns_reverse":
+            return (
+                high_resolution +
+                f"zoompan=z='1.30-0.22*{smooth}':"
+                f"x='(iw-iw/zoom)*(1-{smooth})':"
+                f"y='(ih-ih/zoom)*{smooth}':d=1:s=1280x720:fps=25"
             )
         if effect == "black_white":
             return "hue=s=0,fps=25"
@@ -1368,7 +1400,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4.30"
+    server_version = "CarellasMediaAds/0.4.31"
 
     def log_message(self, fmt, *args):
         return
@@ -1997,7 +2029,7 @@ def player_session_username(token):
 class PlayerHandler(Handler):
     """Porta pubblica limitata al player TV: nessun accesso alla configurazione dell'add-on."""
 
-    server_version = "CarellasTVPlayer/0.4.30"
+    server_version = "CarellasTVPlayer/0.4.31"
 
     def player_username(self):
         cookie = SimpleCookie(self.headers.get("Cookie", ""))
