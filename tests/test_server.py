@@ -5,6 +5,7 @@ import tempfile
 import threading
 import unittest
 import urllib.request
+import urllib.error
 from unittest import mock
 from datetime import datetime
 from pathlib import Path
@@ -32,10 +33,16 @@ class CarellasServerTest(unittest.TestCase):
         cls.httpd = ThreadingHTTPServer(("127.0.0.1", 0), cls.app.Handler)
         cls.base = f"http://127.0.0.1:{cls.httpd.server_address[1]}"
         threading.Thread(target=cls.httpd.serve_forever, daemon=True).start()
+        cls.player_httpd = ThreadingHTTPServer(("127.0.0.1", 0), cls.app.PlayerHandler)
+        cls.player_base = f"http://127.0.0.1:{cls.player_httpd.server_address[1]}"
+        threading.Thread(target=cls.player_httpd.serve_forever, daemon=True).start()
 
     @classmethod
     def tearDownClass(cls):
         cls.httpd.shutdown()
+        cls.httpd.server_close()
+        cls.player_httpd.shutdown()
+        cls.player_httpd.server_close()
         cls.temp.cleanup()
 
     def request(self, path, method="GET", body=None, content_type="application/json"):
@@ -49,6 +56,86 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(payload["entities"][0]["entity_id"], "media_player.sala")
         self.assertEqual(payload["runtime"]["media_base_url"], "http://192.168.1.10:8099")
+        self.assertEqual(payload["runtime"]["player_local_url"], "http://192.168.1.10:8101")
+
+    def test_browser_player_requires_login_and_only_serves_assigned_channel(self):
+        self.app.store.update({
+            "iptv": {"channels": [{"id": "sala-tv", "name": "Sala TV", "enabled": True, "playlist": []}]},
+            "browser_player": {"enabled": True, "users": [{
+                "username": "sala", "password": "segreta1", "channel_id": "sala-tv", "fit": "cover",
+            }]},
+        })
+        output = self.app.iptv.output("sala-tv")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(b"0123456789")
+        with self.assertRaises(urllib.error.HTTPError) as denied:
+            urllib.request.urlopen(self.player_base + "/api/state")
+        self.assertEqual(denied.exception.code, 401)
+        request = urllib.request.Request(
+            self.player_base + "/api/login",
+            data=json.dumps({"username": "sala", "password": "segreta1"}).encode(),
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(request) as response:
+            cookie = response.headers["Set-Cookie"].split(";", 1)[0]
+        state_request = urllib.request.Request(self.player_base + "/api/state", headers={"Cookie": cookie})
+        with urllib.request.urlopen(state_request) as response:
+            state = json.loads(response.read())
+        self.assertEqual(state["channel_id"], "sala-tv")
+        self.assertEqual(state["fit"], "cover")
+        self.assertTrue(state["ready"])
+        media_request = urllib.request.Request(
+            self.player_base + "/channel.mp4", headers={"Cookie": cookie, "Range": "bytes=2-5"}
+        )
+        with urllib.request.urlopen(media_request) as response:
+            self.assertEqual(response.status, 206)
+            self.assertEqual(response.read(), b"2345")
+        private_request = urllib.request.Request(self.player_base + "/api/config", headers={"Cookie": cookie})
+        with self.assertRaises(urllib.error.HTTPError) as private_api:
+            urllib.request.urlopen(private_request)
+        self.assertEqual(private_api.exception.code, 404)
+
+    def test_browser_player_hashes_password_and_has_fullscreen_audio_ui(self):
+        self.app.store.update({"browser_player": {"enabled": True, "users": [{
+            "username": "sala", "password": "segreta1", "channel_id": "carellas-demo", "fit": "contain",
+        }]}})
+        account = self.app.store.config["browser_player"]["users"][0]
+        self.assertNotIn("password", account)
+        self.assertTrue(account["password_hash"].startswith("pbkdf2_sha256$"))
+        self.assertTrue(self.app.password_matches("segreta1", account["password_hash"]))
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/player.html").read_text(encoding="utf-8")
+        self.assertIn('video.muted=false', html)
+        self.assertIn("objectFit=state.fit", html)
+        self.assertIn("100vw;height:100vh", html)
+        self.assertIn("Avvia video e audio", html)
+        self.assertIn("Video und Ton starten", html)
+        dashboard = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        self.assertIn('id="playerUsers"', dashboard)
+        self.assertIn("c.browser_player=", dashboard)
+
+    def test_video_builder_preserves_original_audio_stream(self):
+        source = self.app.MEDIA_DIR / "spot-con-audio.mp4"
+        source.write_bytes(b"video")
+        self.app.store.update({"iptv": {"channels": [{
+            "id": "audio-tv", "name": "Audio TV", "enabled": True,
+            "playlist": [{"name": source.name, "kind": "video", "fit": "contain"}], "schedule": [],
+        }]}})
+        commands = []
+        def fake_run(command, **kwargs):
+            commands.append(command)
+            if command[0] == "ffprobe":
+                return mock.Mock(stdout="h264\n" if "stream=codec_name" in command else "3.0\n")
+            Path(command[-1]).parent.mkdir(parents=True, exist_ok=True)
+            Path(command[-1]).write_bytes(b"built" * 300)
+            return mock.Mock(stdout="")
+        with mock.patch.object(self.app.IPTVEngine, "_probe_duration", return_value=3), mock.patch.object(
+            self.app.IPTVEngine, "_has_audio", return_value=True
+        ), mock.patch.object(self.app.subprocess, "run", side_effect=fake_run):
+            self.app.iptv.build("audio-tv")
+        first = commands[0]
+        self.assertIn("0:a:0", first)
+        self.assertNotIn("anullsrc=channel_layout=stereo:sample_rate=48000", first)
 
     def test_state_exposes_sonos_favorites_for_music_picker(self):
         states = [{
