@@ -103,6 +103,14 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn(".speaker-option strong,.speaker-option small{white-space:normal", html)
         self.assertIn(".savebar{position:static", html)
 
+    def test_language_switch_is_always_visible_and_persists_immediately(self):
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        self.assertIn('class="language-control"', html)
+        self.assertIn('id="language" aria-label="Lingua / Sprache"', html)
+        self.assertEqual(html.count('id="language"'), 1)
+        self.assertIn("async function saveLanguage(lang)", html)
+        self.assertIn("JSON.stringify({language:lang})", html)
+
     def test_audio_duration_is_automatic_in_the_interface(self):
         html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
         self.assertIn("Automatica: viene letta direttamente dal file audio", html)
