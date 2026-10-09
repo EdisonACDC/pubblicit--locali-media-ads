@@ -157,7 +157,7 @@ class CarellasServerTest(unittest.TestCase):
                 state = json.loads(response.read())
         build.assert_called_once_with("automatico")
         self.assertFalse(state["ready"])
-        self.assertEqual(state["status"], "not_built")
+        self.assertEqual(state["status"], "building")
         self.assertIn("message", state)
 
     def test_browser_player_reports_empty_channel_without_endless_build(self):
@@ -226,6 +226,54 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("0:a:0", first)
         self.assertNotIn("anullsrc=channel_layout=stereo:sample_rate=48000", first)
 
+    def test_iptv_builder_records_exact_saved_order_and_visible_effects(self):
+        names = ["01-prima.jpg", "02-video.mp4", "03-ultima.jpg"]
+        for name in names:
+            (self.app.MEDIA_DIR / name).write_bytes(b"source")
+        channel = {
+            "id": "ordine-effetti", "name": "Ordine ed effetti", "enabled": True,
+            "playlist": [
+                {"name": names[0], "kind": "image", "duration": 4, "effect": "zoom_in"},
+                {"name": names[1], "kind": "video", "fit": "smart"},
+                {"name": names[2], "kind": "image", "duration": 5, "effect": "pan"},
+            ],
+            "schedule": [],
+        }
+        self.app.store.update({"iptv": {"channels": [channel]}})
+
+        def fake_run(command, **kwargs):
+            if command[0] == "ffprobe":
+                value = "h264\n" if "stream=codec_name" in command else "16.0\n"
+                return mock.Mock(stdout=value)
+            target = Path(command[-1])
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"built" * 300)
+            return mock.Mock(stdout="")
+
+        with mock.patch.object(self.app.IPTVEngine, "_probe_duration", return_value=7), mock.patch.object(
+            self.app.IPTVEngine, "_has_audio", return_value=False
+        ), mock.patch.object(self.app.subprocess, "run", side_effect=fake_run):
+            self.app.iptv.build("ordine-effetti")
+
+        metadata = json.loads(self.app.iptv.build_metadata("ordine-effetti").read_text(encoding="utf-8"))
+        self.assertEqual([item["name"] for item in metadata["sequence"]], names)
+        self.assertEqual([item["position"] for item in metadata["sequence"]], [1, 2, 3])
+        self.assertEqual([item["duration"] for item in metadata["sequence"]], [4, 7, 5])
+        self.assertEqual([item["effect"] for item in metadata["sequence"]], ["zoom_in", "none", "pan"])
+        concat = (self.app.iptv.output("ordine-effetti").parent / "parts" / "concat.txt").read_text()
+        self.assertLess(concat.index("0000.mp4"), concat.index("0001.mp4"))
+        self.assertLess(concat.index("0001.mp4"), concat.index("0002.mp4"))
+
+    def test_image_effects_are_deliberately_visible(self):
+        zoom_in = self.app.IPTVEngine._effect_filter("zoom_in", 10)
+        zoom_out = self.app.IPTVEngine._effect_filter("zoom_out", 10)
+        pan = self.app.IPTVEngine._effect_filter("pan", 10)
+        fade = self.app.IPTVEngine._fade_filter(10)
+        self.assertIn("0.30", zoom_in)
+        self.assertIn("1.30", zoom_out)
+        self.assertIn("z=1.25", pan)
+        self.assertIn("d=1.200", fade)
+
     def test_state_exposes_sonos_favorites_for_music_picker(self):
         states = [{
             "entity_id": "media_player.sala",
@@ -251,6 +299,9 @@ class CarellasServerTest(unittest.TestCase):
         html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
         self.assertIn("if(dirty&&!force)return", html)
         self.assertIn("Ordine di riproduzione, da sinistra a destra", html)
+        self.assertIn("Sequenza realmente generata", html)
+        self.assertIn("monitorIptvBuild", html)
+        self.assertIn("Salva e genera sequenza", html)
         self.assertIn("images:[]", html)
         self.assertIn("foto selezionate su 6", html)
         self.assertNotIn('id="audioDriver"', html)
@@ -709,6 +760,41 @@ class CarellasServerTest(unittest.TestCase):
         changed["playlist"] = [{"name": "seconda.jpg", "kind": "image", "duration": 15}]
         self.app.store.update({"iptv": {"channels": [changed]}})
         self.assertEqual(self.app.iptv.runtime_status()["revision-check"]["state"], "outdated")
+
+    def test_failed_rebuild_never_reports_stale_output_as_ready(self):
+        channel = {
+            "id": "failed-rebuild", "name": "Errore rigenerazione", "enabled": True,
+            "playlist": [{"name": "nuova-foto.jpg", "kind": "image", "duration": 8}],
+            "schedule": [],
+        }
+        self.app.store.update({
+            "iptv": {"channels": [channel]},
+            "browser_player": {"enabled": True, "users": [{
+                "username": "tverrore", "password": "segreta5", "channel_id": "failed-rebuild",
+            }]},
+        })
+        output = self.app.iptv.output("failed-rebuild")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(b"old output")
+        hls = self.app.iptv.hls_manifest("failed-rebuild")
+        hls.parent.mkdir(parents=True, exist_ok=True)
+        hls.write_text("#EXTM3U\n", encoding="utf-8")
+        self.app.iptv.set_status("failed-rebuild", "error", "File sorgente non trovato")
+        self.assertEqual(self.app.iptv.runtime_status()["failed-rebuild"]["state"], "error")
+
+        login = urllib.request.Request(
+            self.player_base + "/api/login",
+            data=json.dumps({"username": "tverrore", "password": "segreta5"}).encode(),
+            method="POST", headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(login) as response:
+            cookie = response.headers["Set-Cookie"].split(";", 1)[0]
+        state_request = urllib.request.Request(self.player_base + "/api/state", headers={"Cookie": cookie})
+        with urllib.request.urlopen(state_request) as response:
+            state = json.loads(response.read())
+        self.assertFalse(state["ready"])
+        self.assertEqual(state["status"], "error")
+        self.assertIn("File sorgente", state["message"])
 
     def test_player_requests_rebuild_for_outdated_channel_and_keeps_old_video_until_ready(self):
         channel = {
