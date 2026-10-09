@@ -1,5 +1,14 @@
 # Carellas Media Ads
 
+## Novità stabile 0.4.27
+
+- Aggiunto il comando esplicito **Reimposta password** per ogni utente Player TV, con conferma e pulsanti per mostrare/nascondere entrambi i campi.
+- Reimpostando la password vengono invalidate automaticamente le precedenti sessioni del Player TV.
+- Salvando un nuovo ordine di video, foto o collage, il relativo canale viene ora ricreato automaticamente senza riavviare l'add-on.
+- Il Player TV continua a mostrare il canale precedente durante la conversione e carica quello aggiornato automaticamente appena pronto.
+- Se si salva nuovamente durante una conversione, viene accodata un'ulteriore ricostruzione con l'ordine più recente.
+- I pulsanti IT/DE restano disponibili nelle schermate di accesso e servizio, ma scompaiono durante la riproduzione pubblicitaria.
+
 ## Novità stabile 0.4.26
 
 - Il Player TV prepara automaticamente il canale assegnato quando il file di riproduzione non esiste ancora.
