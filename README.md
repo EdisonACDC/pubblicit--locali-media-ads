@@ -1,5 +1,12 @@
 # Carellas Media Ads
 
+## Novità stabile 0.4.30
+
+- Eliminato il tremolio di **Zoom avanti**, **Zoom indietro** e **Movimento laterale**.
+- Gli effetti vengono calcolati su una superficie 3840×2160 e ridotti al formato finale 1280×720, evitando gli scatti dovuti all’arrotondamento dei pixel.
+- Il movimento usa ora un’accelerazione e una decelerazione progressive, più naturali e fluide.
+- La nuova versione del formato forza automaticamente la rigenerazione dei canali esistenti.
+
 ## Novità stabile 0.4.29
 
 - La sequenza generata conserva in modo verificabile l’ordine esatto di video, foto e collage impostato nell’editor.
