@@ -1,5 +1,12 @@
 # Carellas Media Ads
 
+## Novità stabile 0.4.28
+
+- Ogni canale salva ora un'impronta della sequenza realmente convertita.
+- Il Player confronta ordine, durate, effetti e formato salvati con il file generato: se non coincidono, il canale viene marcato come non aggiornato e ricostruito automaticamente.
+- Il collegamento video include la revisione effettivamente generata, così il browser della TV non può continuare a usare la versione precedente dalla cache.
+- Dopo l'aggiornamento, i vecchi canali privi dell'impronta vengono rigenerati una sola volta; successivamente vengono ricreati soltanto quando cambia la sequenza.
+
 ## Novità stabile 0.4.27
 
 - Aggiunto il comando esplicito **Reimposta password** per ogni utente Player TV, con conferma e pulsanti per mostrare/nascondere entrambi i campi.
