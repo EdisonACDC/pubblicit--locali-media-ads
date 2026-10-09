@@ -684,6 +684,64 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(payload["channels"]["not-built-yet"]["state"], "not_built")
 
+    def test_iptv_detects_when_built_channel_no_longer_matches_saved_sequence(self):
+        channel = {
+            "id": "revision-check", "name": "Controllo revisione", "enabled": True,
+            "playlist": [{"name": "prima.jpg", "kind": "image", "duration": 10}],
+            "schedule": [],
+        }
+        self.app.store.update({"iptv": {"channels": [channel]}})
+        output = self.app.iptv.output("revision-check")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(b"old channel")
+        hls = self.app.iptv.hls_manifest("revision-check")
+        hls.parent.mkdir(parents=True, exist_ok=True)
+        hls.write_text("#EXTM3U\n", encoding="utf-8")
+        self.assertEqual(self.app.iptv.runtime_status()["revision-check"]["state"], "outdated")
+
+        metadata = self.app.iptv.build_metadata("revision-check")
+        metadata.write_text(json.dumps({
+            "signature": self.app.iptv.channel_signature(channel),
+        }), encoding="utf-8")
+        self.assertEqual(self.app.iptv.runtime_status()["revision-check"]["state"], "ready")
+
+        changed = dict(channel)
+        changed["playlist"] = [{"name": "seconda.jpg", "kind": "image", "duration": 15}]
+        self.app.store.update({"iptv": {"channels": [changed]}})
+        self.assertEqual(self.app.iptv.runtime_status()["revision-check"]["state"], "outdated")
+
+    def test_player_requests_rebuild_for_outdated_channel_and_keeps_old_video_until_ready(self):
+        channel = {
+            "id": "player-revision", "name": "Player revisione", "enabled": True,
+            "playlist": [{"name": "nuovo.mp4", "kind": "video"}], "schedule": [],
+        }
+        self.app.store.update({
+            "iptv": {"channels": [channel]},
+            "browser_player": {"enabled": True, "users": [{
+                "username": "revisiontv", "password": "segreta4", "channel_id": "player-revision",
+            }]},
+        })
+        output = self.app.iptv.output("player-revision")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(b"previous video")
+        hls = self.app.iptv.hls_manifest("player-revision")
+        hls.parent.mkdir(parents=True, exist_ok=True)
+        hls.write_text("#EXTM3U\n", encoding="utf-8")
+        login = urllib.request.Request(
+            self.player_base + "/api/login",
+            data=json.dumps({"username": "revisiontv", "password": "segreta4"}).encode(),
+            method="POST", headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(login) as response:
+            cookie = response.headers["Set-Cookie"].split(";", 1)[0]
+        state_request = urllib.request.Request(self.player_base + "/api/state", headers={"Cookie": cookie})
+        with mock.patch.object(self.app.iptv, "build_async", return_value=True) as rebuild:
+            with urllib.request.urlopen(state_request) as response:
+                state = json.loads(response.read())
+        rebuild.assert_called_once_with("player-revision")
+        self.assertTrue(state["ready"])
+        self.assertIn("/channel.mp4?v=", state["video_url"])
+
     def test_single_sonos_uses_synchronized_playback_and_restores_state(self):
         ad = "Carellas_Ristorante_Spot_DE_Maschile.mp3"
         self.app.store.update({"audio": {"players": ["media_player.sala"], "ads": [ad], "repeat_count": 1, "volume": 35}})
