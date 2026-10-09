@@ -1,5 +1,12 @@
 # Carellas Media Ads
 
+## Novità stabile 0.4.26
+
+- Il Player TV prepara automaticamente il canale assegnato quando il file di riproduzione non esiste ancora.
+- Durante la preparazione mostra lo stato reale e distingue conversione, canale vuoto, canale eliminato ed errore.
+- Gli utenti Player TV salvati sono raccolti in una tendina: si seleziona un utente alla volta per modificarlo o eliminarlo.
+- Salvataggio ed eliminazione degli utenti sono immediati e mostrano una conferma chiara.
+
 ## Novità stabile 0.4.25
 
 - Dopo un caricamento, il nuovo file compare immediatamente nella Libreria senza uscire e rientrare dall’app.
