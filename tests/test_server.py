@@ -115,10 +115,65 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("Passwort anzeigen", html)
         dashboard = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
         self.assertIn('id="playerUsers"', dashboard)
+        self.assertIn('id="playerUserSelect"', dashboard)
+        self.assertIn('onchange="selectPlayerUser(this.value)"', dashboard)
+        self.assertIn("function selectPlayerUser(value)", dashboard)
         self.assertIn("c.browser_player=", dashboard)
         self.assertIn('onclick="togglePasswordField(this)"', dashboard)
         self.assertIn('onclick="savePlayerUser(${i},this)"', dashboard)
         self.assertIn('Password salvata.', dashboard)
+
+    def test_browser_player_prepares_missing_assigned_channel_automatically(self):
+        self.app.store.update({
+            "iptv": {"channels": [{
+                "id": "automatico", "name": "Automatico", "enabled": True,
+                "playlist": [{"name": "video.mp4", "kind": "video"}],
+            }]},
+            "browser_player": {"enabled": True, "users": [{
+                "username": "tvauto", "password": "segreta2", "channel_id": "automatico",
+            }]},
+        })
+        output = self.app.iptv.output("automatico")
+        output.unlink(missing_ok=True)
+        self.app.iptv.status.pop("automatico", None)
+        login = urllib.request.Request(
+            self.player_base + "/api/login",
+            data=json.dumps({"username": "tvauto", "password": "segreta2"}).encode(),
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(login) as response:
+            cookie = response.headers["Set-Cookie"].split(";", 1)[0]
+        state_request = urllib.request.Request(self.player_base + "/api/state", headers={"Cookie": cookie})
+        with mock.patch.object(self.app.iptv, "build_async", return_value=True) as build:
+            with urllib.request.urlopen(state_request) as response:
+                state = json.loads(response.read())
+        build.assert_called_once_with("automatico")
+        self.assertFalse(state["ready"])
+        self.assertEqual(state["status"], "not_built")
+        self.assertIn("message", state)
+
+    def test_browser_player_reports_empty_channel_without_endless_build(self):
+        self.app.store.update({
+            "iptv": {"channels": [{"id": "vuoto", "name": "Vuoto", "enabled": True, "playlist": []}]},
+            "browser_player": {"enabled": True, "users": [{
+                "username": "tvvuoto", "password": "segreta3", "channel_id": "vuoto",
+            }]},
+        })
+        login = urllib.request.Request(
+            self.player_base + "/api/login",
+            data=json.dumps({"username": "tvvuoto", "password": "segreta3"}).encode(),
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(login) as response:
+            cookie = response.headers["Set-Cookie"].split(";", 1)[0]
+        state_request = urllib.request.Request(self.player_base + "/api/state", headers={"Cookie": cookie})
+        with mock.patch.object(self.app.iptv, "build_async") as build:
+            with urllib.request.urlopen(state_request) as response:
+                state = json.loads(response.read())
+        build.assert_not_called()
+        self.assertEqual(state["status"], "empty_channel")
 
     def test_admin_save_persists_player_credentials_for_login(self):
         status, payload = self.request("/api/config", "POST", {
