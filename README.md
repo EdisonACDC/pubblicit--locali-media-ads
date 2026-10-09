@@ -1,5 +1,11 @@
 # Carellas Media Ads
 
+## Novità stabile 0.4.25
+
+- Dopo un caricamento, il nuovo file compare immediatamente nella Libreria senza uscire e rientrare dall’app.
+- L’aggiornamento della Libreria non cancella le modifiche di configurazione non ancora salvate.
+- Il selettore del file non viene più considerato una modifica della configurazione generale.
+
 ## Novità stabile 0.4.24
 
 - Aggiunto un pulsante **Salva utente** direttamente nella scheda di ogni Player TV.
