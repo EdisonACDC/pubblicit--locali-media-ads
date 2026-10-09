@@ -664,6 +664,7 @@ class IPTVEngine:
     def __init__(self):
         self.lock = threading.RLock()
         self.status = {}
+        self.building = set()
 
     def channels(self):
         return store.config.get("iptv", {}).get("channels", [])
@@ -686,10 +687,11 @@ class IPTVEngine:
             result = copy.deepcopy(self.status)
         for channel in self.channels():
             channel_id = safe_channel_id(channel.get("id", ""))
-            if channel_id not in result:
+            complete = self.output(channel_id).is_file() and self.hls_manifest(channel_id).is_file()
+            if channel_id not in result or (result[channel_id].get("state") == "ready" and not complete):
                 result[channel_id] = {
-                    "state": "ready" if self.hls_manifest(channel_id).is_file() else "not_built",
-                    "message": "Canale HLS pronto" if self.hls_manifest(channel_id).is_file() else "Premi Crea/Aggiorna canale",
+                    "state": "ready" if complete else "not_built",
+                    "message": "Canale HLS pronto" if complete else "Canale da preparare",
                     "time": "",
                 }
         return result
@@ -972,12 +974,23 @@ class IPTVEngine:
             raise
 
     def build_async(self, channel_id):
+        channel_id = safe_channel_id(channel_id)
+        with self.lock:
+            if channel_id in self.building:
+                return False
+            self.building.add(channel_id)
+        self.set_status(channel_id, "building", "Preparazione automatica del canale")
+
         def worker():
             try:
                 self.build(channel_id)
             except Exception:
                 pass
+            finally:
+                with self.lock:
+                    self.building.discard(channel_id)
         threading.Thread(target=worker, name=f"iptv-build-{safe_channel_id(channel_id)}", daemon=True).start()
+        return True
 
 
 iptv = IPTVEngine()
@@ -1260,7 +1273,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4.25"
+    server_version = "CarellasMediaAds/0.4.26"
 
     def log_message(self, fmt, *args):
         return
@@ -1867,7 +1880,7 @@ def player_session_username(token):
 class PlayerHandler(Handler):
     """Porta pubblica limitata al player TV: nessun accesso alla configurazione dell'add-on."""
 
-    server_version = "CarellasTVPlayer/0.4.25"
+    server_version = "CarellasTVPlayer/0.4.26"
 
     def player_username(self):
         cookie = SimpleCookie(self.headers.get("Cookie", ""))
@@ -1939,12 +1952,27 @@ class PlayerHandler(Handler):
             channel = iptv.channel(channel_id)
             output = iptv.output(channel_id)
             if path == "/api/state":
+                status = iptv.runtime_status().get(channel_id, {})
+                if channel and channel.get("playlist") and not output.is_file() and status.get("state") == "not_built":
+                    iptv.build_async(channel_id)
+                    status = iptv.runtime_status().get(channel_id, {})
+                if not channel:
+                    player_state, message = "missing_channel", "Il canale assegnato non esiste più"
+                elif not channel.get("playlist"):
+                    player_state, message = "empty_channel", "Il canale non contiene ancora video o foto"
+                elif output.is_file():
+                    player_state, message = "ready", "Canale pronto"
+                else:
+                    player_state = status.get("state", "not_built")
+                    message = status.get("message") or "Il canale deve essere preparato"
                 self.send_player_json({
                     "ok": True,
                     "username": user["username"],
                     "channel_id": channel_id,
                     "channel_name": channel.get("name", channel_id) if channel else channel_id,
                     "ready": bool(channel and output.is_file()),
+                    "status": player_state,
+                    "message": message,
                     "fit": user.get("fit", "contain"),
                     "video_url": f"/channel.mp4?v={output.stat().st_mtime_ns}" if output.is_file() else "",
                 })
