@@ -30,6 +30,7 @@ MEDIA_DIR = Path(os.environ.get("CARELLAS_MEDIA_DIR", "/media/carellas_media_ads
 IPTV_DIR = DATA_DIR / "iptv"
 UPLOAD_DIR = DATA_DIR / "uploads"
 CONFIG_FILE = DATA_DIR / "carellas_media_ads.json"
+RUNTIME_FILE = DATA_DIR / "carellas_media_ads_runtime.json"
 DEFAULT_FILE = APP_DIR / "default_config.json"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 HA_API = os.environ.get("CARELLAS_HA_API", "http://supervisor/core/api")
@@ -113,15 +114,23 @@ class Store:
         except (FileNotFoundError, json.JSONDecodeError):
             saved = {}
         self.config = deep_merge(defaults, saved)
-        # La versione stabile supporta solo Sonos. Elimina eventuali opzioni
-        # Alexa rimaste da configurazioni beta precedenti.
-        self.config.setdefault("audio", {}).pop("driver", None)
-        self.config["audio"].pop("resume_music_after_ad", None)
-        self.config["audio"].pop("spot_duration_seconds", None)
+        self.normalize()
         music = self.config.setdefault("music", {})
         music.setdefault("slots", [])
         self.save()
         self.install_bundled_media()
+
+    def normalize(self):
+        """Mantiene la configurazione stabile priva di opzioni beta/obsolete."""
+        audio = self.config.setdefault("audio", {})
+        audio.pop("driver", None)
+        audio.pop("resume_music_after_ad", None)
+        audio.pop("spot_duration_seconds", None)
+        # Nella stabile ogni intervallo trasmette esattamente un solo spot.
+        audio["repeat_count"] = 1
+        audio["repeat_gap_seconds"] = 0
+        if self.config.get("language") not in {"it", "de"}:
+            self.config["language"] = "it"
 
     def install_bundled_media(self):
         source = APP_DIR / "bundled_media"
@@ -143,6 +152,7 @@ class Store:
             candidate = deep_merge(self.config, payload)
             validate_music_slots(candidate.get("music", {}))
             self.config = candidate
+            self.normalize()
             self.save()
             return copy.deepcopy(self.config)
 
@@ -937,7 +947,28 @@ class Scheduler(threading.Thread):
         self.daily_audio_count = 0
         self.audio_count_lock = threading.Lock()
         self.day = datetime.now().date()
+        self._load_runtime()
         self.busy = threading.Lock()
+
+    def _load_runtime(self):
+        try:
+            saved = json.loads(RUNTIME_FILE.read_text(encoding="utf-8"))
+            if saved.get("day") == self.day.isoformat():
+                self.daily_audio_count = max(0, int(saved.get("audio_today", 0)))
+        except (FileNotFoundError, json.JSONDecodeError, TypeError, ValueError):
+            self.daily_audio_count = 0
+
+    def _save_runtime(self):
+        temporary = RUNTIME_FILE.with_suffix(".tmp")
+        try:
+            temporary.write_text(json.dumps({
+                "day": self.day.isoformat(),
+                "audio_today": self.daily_audio_count,
+            }), encoding="utf-8")
+            os.replace(temporary, RUNTIME_FILE)
+        except OSError as error:
+            temporary.unlink(missing_ok=True)
+            store.log("warning", f"Conteggio giornaliero non salvato: {error}")
 
     def audio_today(self):
         with self.audio_count_lock:
@@ -951,6 +982,7 @@ class Scheduler(threading.Thread):
                 self.day = today
                 self.daily_audio_count = 0
             self.daily_audio_count += 1
+            self._save_runtime()
             return self.daily_audio_count
 
     def pick_audio(self, ads, mode):
@@ -1122,6 +1154,7 @@ class Scheduler(threading.Thread):
                     with self.audio_count_lock:
                         self.day = today
                         self.daily_audio_count = 0
+                        self._save_runtime()
                 self.music_tick()
                 self.audio_tick()
                 self.tv_tick()
@@ -1135,7 +1168,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4.18"
+    server_version = "CarellasMediaAds/0.4.21"
 
     def log_message(self, fmt, *args):
         return
@@ -1287,7 +1320,7 @@ class Handler(BaseHTTPRequestHandler):
         path = self.route_path()
         try:
             if path == "/api/iptv/status":
-                self.send_json({"channels": iptv.status})
+                self.send_json({"channels": iptv.runtime_status()})
                 return
             if path == "/iptv/channels.m3u":
                 lines = ["#EXTM3U"]
@@ -1661,8 +1694,33 @@ class Handler(BaseHTTPRequestHandler):
                     store.config[section]["ads"] = [x for x in store.config[section].get("ads", []) if x != name]
                 else:
                     store.config[section]["playlist"] = [x for x in store.config[section].get("playlist", []) if x.get("name") != name]
+            affected_channels = []
+            for channel in store.config.get("iptv", {}).get("channels", []):
+                before = channel.get("playlist", [])
+                after = []
+                changed = False
+                for item in before:
+                    if item.get("name") == name:
+                        changed = True
+                        continue
+                    if item.get("kind") == "collage" and name in item.get("images", []):
+                        item = copy.deepcopy(item)
+                        item["images"] = [image for image in item.get("images", []) if image != name]
+                        changed = True
+                        if len(item["images"]) < 2:
+                            continue
+                    after.append(item)
+                if changed:
+                    channel["playlist"] = after
+                    channel_id = safe_channel_id(channel.get("id", ""))
+                    affected_channels.append(channel_id)
+                    shutil.rmtree(iptv.output(channel_id).parent, ignore_errors=True)
+                    iptv.set_status(channel_id, "not_built", "Contenuto eliminato: ricrea il canale")
             store.save()
-            store.log("info", f"File eliminato: {name}")
+            message = f"File eliminato: {name}"
+            if affected_channels:
+                message += f"; {len(affected_channels)} canale/i IPTV da ricreare"
+            store.log("info", message)
             self.send_json({"ok": True})
         except FileNotFoundError:
             self.send_json({"error": "File non trovato"}, 404)
