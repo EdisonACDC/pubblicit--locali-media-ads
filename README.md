@@ -1,5 +1,13 @@
 # Carellas Media Ads
 
+## Novità stabile 0.4.18
+
+- Con più spot audio selezionati, la programmazione ne riproduce esattamente uno a ogni intervallo.
+- Gli spot avanzano nell'ordine della lista e la rotazione ricomincia dal primo solo dopo l'ultimo.
+- Le vecchie impostazioni di ripetizione non possono più causare più annunci nello stesso intervallo automatico.
+- Interfaccia italiana/tedesca completa, inclusi contenuti dinamici, playlist Sonos, IPTV, collage e messaggi operativi.
+- Riepilogo visibile dell'ordine automatico degli spot selezionati.
+
 ## Novità stabile 0.4.17
 
 - Orari generali di accensione della musica separati dalle sorgenti.
@@ -11,7 +19,7 @@
 
 Repository Home Assistant per gestire pubblicità audio su Sonos e playlist di immagini/video su Smart TV.
 
-> Versione stabile 0.4.15 con programmazione musicale multi-fascia: ogni orario può avviare una playlist, radio o preferito Sonos differente, con giorni, volume e altoparlanti propri. Include inoltre conteggio degli spot, arresto immediato, sincronizzazione Sonos, interfaccia responsive, browser musicale, sequenze/collage 16:9 e canali IPTV HLS indipendenti.
+> Versione stabile 0.4.15 con programmazione multi-fascia: ogni orario può avviare una playlist, radio o preferito Sonos differente, con giorni, volume e altoparlanti propri. Include inoltre conteggio degli spot, arresto immediato, sincronizzazione Sonos, interfaccia responsive, browser musicale, sequenze/collage 16:9 e canali IPTV HLS indipendenti.
 
 Nel repository è disponibile anche **Carellas Media Ads Beta 0.5.0-beta.2** come applicazione separata sulla porta `8100`. La stabile 0.4.15 rimane Sonos-only e include fasce musicali con sorgenti indipendenti, conteggio corretto degli spot, arresto manuale, riproduzione sincronizzata soltanto sui diffusori scelti, streaming MP3 con richieste parziali, un'interfaccia responsive, browser musicale, durata automatica degli spot, sequenze IPTV ordinabili, video completi, adattamento 16:9, collage ed effetti. La Beta mantiene anche Alexa.
 
@@ -92,6 +100,6 @@ Procedura:
 2. Salvare e premere **Crea/Aggiorna canale**; la conversione preventiva può richiedere alcuni minuti.
 3. Copiare l'URL M3U del canale e inserirlo nell'app IPTV della TV.
 4. Ripetere la procedura per ogni zona, senza necessità di sincronizzazione.
-5. Per importare tutti i canali in una sola volta usare `http://IP-HOME-ASSISTANT:8099/iptv/channels.m3u`.
+5. Per importare tuti i canali in una sola volta usare `http://IP-HOME-ASSISTANT:8099/iptv/channels.m3u`.
 
 I contenuti vengono normalizzati a H.264/AAC 1280×720 e distribuiti come canali HLS in ciclo continuo. La conversione avviene solo quando si crea o aggiorna il canale; ogni TV riceve poi un flusso indipendente.
