@@ -665,6 +665,7 @@ class IPTVEngine:
         self.lock = threading.RLock()
         self.status = {}
         self.building = set()
+        self.rebuild_pending = set()
 
     def channels(self):
         return store.config.get("iptv", {}).get("channels", [])
@@ -977,6 +978,9 @@ class IPTVEngine:
         channel_id = safe_channel_id(channel_id)
         with self.lock:
             if channel_id in self.building:
+                # Se l'utente salva di nuovo mentre FFmpeg sta lavorando,
+                # ricrea ancora il canale al termine usando l'ultimo ordine.
+                self.rebuild_pending.add(channel_id)
                 return False
             self.building.add(channel_id)
         self.set_status(channel_id, "building", "Preparazione automatica del canale")
@@ -987,8 +991,13 @@ class IPTVEngine:
             except Exception:
                 pass
             finally:
+                rebuild_again = False
                 with self.lock:
                     self.building.discard(channel_id)
+                    rebuild_again = channel_id in self.rebuild_pending
+                    self.rebuild_pending.discard(channel_id)
+                if rebuild_again:
+                    self.build_async(channel_id)
         threading.Thread(target=worker, name=f"iptv-build-{safe_channel_id(channel_id)}", daemon=True).start()
         return True
 
@@ -1273,7 +1282,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4.26"
+    server_version = "CarellasMediaAds/0.4.27"
 
     def log_message(self, fmt, *args):
         return
@@ -1669,8 +1678,30 @@ class Handler(BaseHTTPRequestHandler):
         path = self.route_path()
         try:
             if path == "/api/config":
+                old_channels = {
+                    safe_channel_id(channel.get("id", "")): json.dumps(
+                        channel.get("playlist") or [], ensure_ascii=False, sort_keys=True
+                    )
+                    for channel in store.config.get("iptv", {}).get("channels", [])
+                }
                 config = store.update(self.json_body())
-                self.send_json({"ok": True, "config": config})
+                rebuilt = []
+                new_channels = {
+                    safe_channel_id(channel.get("id", "")): channel
+                    for channel in config.get("iptv", {}).get("channels", [])
+                }
+                for channel_id, channel in new_channels.items():
+                    signature = json.dumps(channel.get("playlist") or [], ensure_ascii=False, sort_keys=True)
+                    if old_channels.get(channel_id) == signature:
+                        continue
+                    if channel.get("playlist"):
+                        iptv.build_async(channel_id)
+                        rebuilt.append(channel_id)
+                        store.log("info", f"Ordine aggiornato: ricostruzione automatica del canale {channel.get('name', channel_id)}")
+                    else:
+                        shutil.rmtree(iptv.output(channel_id).parent, ignore_errors=True)
+                        iptv.set_status(channel_id, "not_built", "Canale vuoto")
+                self.send_json({"ok": True, "config": config, "rebuilt_channels": rebuilt})
                 return
             if path == "/api/upload/chunk":
                 self.receive_upload_chunk()
@@ -1880,7 +1911,7 @@ def player_session_username(token):
 class PlayerHandler(Handler):
     """Porta pubblica limitata al player TV: nessun accesso alla configurazione dell'add-on."""
 
-    server_version = "CarellasTVPlayer/0.4.26"
+    server_version = "CarellasTVPlayer/0.4.27"
 
     def player_username(self):
         cookie = SimpleCookie(self.headers.get("Cookie", ""))
@@ -1970,7 +2001,7 @@ class PlayerHandler(Handler):
                     "username": user["username"],
                     "channel_id": channel_id,
                     "channel_name": channel.get("name", channel_id) if channel else channel_id,
-                    "ready": bool(channel and output.is_file()),
+                    "ready": bool(channel and channel.get("playlist") and output.is_file()),
                     "status": player_state,
                     "message": message,
                     "fit": user.get("fit", "contain"),
