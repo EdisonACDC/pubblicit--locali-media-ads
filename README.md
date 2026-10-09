@@ -1,5 +1,13 @@
 # Carellas Media Ads
 
+## Novità stabile 0.4.21
+
+- Il conteggio giornaliero degli spot resta corretto anche dopo un riavvio dell'add-on.
+- La configurazione stabile elimina automaticamente le vecchie opzioni Alexa e di ripetizione.
+- Eliminando un file, vengono rimossi anche i riferimenti IPTV non più validi e il canale viene segnato da ricreare.
+- Lo stato IPTV include correttamente anche i canali non ancora generati.
+- Versione interna del server allineata alla versione pubblicata.
+
 ## Novità stabile 0.4.20
 
 - Selettore Italiano/Deutsch sempre visibile nell'intestazione su telefono, tablet e PC.
