@@ -661,7 +661,7 @@ def play_tv_item(item):
 
 
 class IPTVEngine:
-    BUILD_FORMAT_VERSION = 3
+    BUILD_FORMAT_VERSION = 4
 
     def __init__(self):
         self.lock = threading.RLock()
@@ -782,22 +782,31 @@ class IPTVEngine:
     def _effect_filter(effect, duration):
         frames = max(1, math.ceil(duration * 25))
         last_frame = max(1, frames - 1)
+        # zoompan on a 1280x720 source rounds the crop position to whole
+        # pixels and can visibly alternate around the centre.  Work at 3x
+        # resolution and use cosine easing, then let zoompan downsample to the
+        # final 1280x720 frame.  This removes the centre jitter without
+        # distorting the image.
+        smooth = f"(1-cos(PI*min(on/{last_frame},1)))/2"
+        high_resolution = "scale=3840:2160:flags=lanczos,"
         if effect == "zoom_in":
             return (
-                f"zoompan=z='1.0+0.30*min(on/{last_frame},1)':"
+                high_resolution +
+                f"zoompan=z='1.0+0.30*{smooth}':"
                 "x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
                 "d=1:s=1280x720:fps=25"
             )
         if effect == "zoom_out":
             return (
-                f"zoompan=z='1.30-0.30*min(on/{last_frame},1)':"
+                high_resolution +
+                f"zoompan=z='1.30-0.30*{smooth}':"
                 "x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
                 "d=1:s=1280x720:fps=25"
             )
         if effect == "pan":
             return (
-                "zoompan=z=1.25:"
-                f"x='(iw-iw/zoom)*min(on/{last_frame},1)':"
+                high_resolution + "zoompan=z=1.25:"
+                f"x='(iw-iw/zoom)*{smooth}':"
                 "y='ih/2-(ih/zoom/2)':d=1:s=1280x720:fps=25"
             )
         if effect == "black_white":
@@ -1359,7 +1368,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4.29"
+    server_version = "CarellasMediaAds/0.4.30"
 
     def log_message(self, fmt, *args):
         return
@@ -1988,7 +1997,7 @@ def player_session_username(token):
 class PlayerHandler(Handler):
     """Porta pubblica limitata al player TV: nessun accesso alla configurazione dell'add-on."""
 
-    server_version = "CarellasTVPlayer/0.4.29"
+    server_version = "CarellasTVPlayer/0.4.30"
 
     def player_username(self):
         cookie = SimpleCookie(self.headers.get("Cookie", ""))
