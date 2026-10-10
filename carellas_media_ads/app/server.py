@@ -468,7 +468,10 @@ def refresh_sonos_catalog(entity_id, max_depth=5, max_folders=120, max_items=300
     def remember(browser, trusted=False):
         for child in browser.get("children") or []:
             media_id = str(child.get("media_content_id") or "")
-            if child.get("can_play") and media_id and (trusted or _is_native_sonos_item(child)):
+            # Anche dentro una cartella chiamata "I miei Sonos" Home Assistant
+            # può mescolare migliaia di elementi di Radio Browser. Importiamo
+            # soltanto ID nativi Sonos (FV:/S:/SQ:) per evitare la lista infinita.
+            if child.get("can_play") and media_id and _is_native_sonos_item(child):
                 items[media_id] = {
                     "id": media_id,
                     "name": str(child.get("title") or media_id),
@@ -1110,11 +1113,22 @@ def start_music(selection=None, fade_in=False):
     }
     try:
         if content_type == "sonos_source":
-            ha.service("media_player", "select_source", {
-                "entity_id": coordinator,
-                "source": content_id,
-            })
-            ha.service("media_player", "media_play", {"entity_id": coordinator})
+            # Le playlist Sonos vengono riprodotte in modo più affidabile con
+            # play_media. Alcune versioni espongono invece la stessa voce come
+            # source: in quel caso usiamo select_source come ripiego.
+            try:
+                play_sonos_media({
+                    "entity_id": coordinator,
+                    "media_content_type": "playlist",
+                    "media_content_id": content_id,
+                })
+            except Exception as playlist_error:
+                store.log("warning", f"Playlist Sonos non avviata direttamente, provo come sorgente: {playlist_error}")
+                ha.service("media_player", "select_source", {
+                    "entity_id": coordinator,
+                    "source": content_id,
+                })
+                ha.service("media_player", "media_play", {"entity_id": coordinator})
         else:
             play_sonos_media(payload)
     except Exception:
@@ -1983,7 +1997,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4.41"
+    server_version = "CarellasMediaAds/0.4.42"
 
     def log_message(self, fmt, *args):
         return
@@ -2639,7 +2653,7 @@ def player_session_username(token):
 class PlayerHandler(Handler):
     """Porta pubblica limitata al player TV: nessun accesso alla configurazione dell'add-on."""
 
-    server_version = "CarellasTVPlayer/0.4.41"
+    server_version = "CarellasTVPlayer/0.4.42"
 
     def player_username(self):
         cookie = SimpleCookie(self.headers.get("Cookie", ""))
