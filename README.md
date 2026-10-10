@@ -1,5 +1,11 @@
 # Carellas Media Ads
 
+## Novità stabile 0.4.36
+
+- Gli orari generali sono ora il limite principale: playlist e radio vengono automaticamente attivate soltanto nei giorni e nelle fasce generali, anche quando la sorgente contiene giorni più ampi.
+- Le nuove sorgenti musicali selezionano automaticamente gli stessi giorni configurati negli orari generali, senza bloccare il salvataggio se successivamente gli orari cambiano.
+- **Aggiorna playlist Sonos** forza l’aggiornamento dei Preferiti in Home Assistant e percorre ricorsivamente “I miei Sonos”, comprese le sottocartelle di playlist e radio.
+
 ## Novità stabile 0.4.35
 
 - Sorveglianza automatica del gruppo Sonos durante tutta la riproduzione musicale.
