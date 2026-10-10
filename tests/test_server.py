@@ -357,14 +357,13 @@ class CarellasServerTest(unittest.TestCase):
             "media_content_id": "S:/Freitag", "can_expand": False, "can_play": True,
         }]}
 
-        def browse(_domain, _service, payload):
-            media_id = payload.get("media_content_id")
+        def browse(_entity_id, _media_type=None, media_id=None):
             browser = {None: root, "my-sonos": my_sonos, "playlists": playlists}[media_id]
-            return {"media_player.sala": browser}
+            return browser
 
         with mock.patch.object(self.app.ha, "states", side_effect=[before, after]), \
                 mock.patch.object(self.app.ha, "service") as update, \
-                mock.patch.object(self.app.ha, "service_response", side_effect=browse):
+                mock.patch.object(self.app.ha, "browse_media", side_effect=browse):
             catalog = self.app.refresh_sonos_catalog("media_player.sala")
 
         update.assert_called_once_with("homeassistant", "update_entity", {
@@ -557,9 +556,7 @@ class CarellasServerTest(unittest.TestCase):
                 "can_play": True,
             }],
         }
-        with mock.patch.object(
-            self.app.ha, "service_response", return_value={"media_player.sala": browser}
-        ) as service:
+        with mock.patch.object(self.app.ha, "browse_media", return_value=browser) as service:
             status, payload = self.request("/api/music/browse", "POST", {
                 "entity_id": "media_player.sala",
                 "media_content_type": "library",
@@ -567,11 +564,57 @@ class CarellasServerTest(unittest.TestCase):
             })
         self.assertEqual(status, 200)
         self.assertEqual(payload["browser"]["children"][0]["title"], "Playlist cena")
-        service.assert_called_once_with("media_player", "browse_media", {
-            "entity_id": "media_player.sala",
-            "media_content_type": "library",
-            "media_content_id": "root",
-        })
+        service.assert_called_once_with("media_player.sala", "library", "root")
+
+    def test_home_assistant_browse_media_uses_authenticated_websocket(self):
+        browser = {
+            "title": "Sonos Playlists",
+            "children": [{
+                "title": "Carellas Ristorante",
+                "media_content_type": "playlist",
+                "media_content_id": "Carellas Ristorante",
+                "can_play": True,
+            }],
+        }
+
+        class Connection:
+            def __init__(self):
+                self.sent = []
+                self.responses = iter([
+                    json.dumps({"type": "auth_required"}),
+                    json.dumps({"type": "auth_ok"}),
+                ])
+                self.closed = False
+
+            def send(self, value):
+                payload = json.loads(value)
+                self.sent.append(payload)
+                if payload.get("type") == "media_player/browse_media":
+                    self.responses = iter([json.dumps({
+                        "id": payload["id"], "type": "result", "success": True,
+                        "result": browser,
+                    })])
+
+            def recv(self):
+                return next(self.responses)
+
+            def close(self):
+                self.closed = True
+
+        connection = Connection()
+        fake_websocket = mock.Mock()
+        fake_websocket.create_connection.return_value = connection
+        with mock.patch.object(self.app, "websocket", fake_websocket):
+            result = self.app.ha.browse_media("media_player.sala", "library", "root")
+
+        self.assertEqual(result, browser)
+        fake_websocket.create_connection.assert_called_once_with(self.app.HA_WS, timeout=25)
+        self.assertEqual(connection.sent[0]["type"], "auth")
+        self.assertEqual(connection.sent[1]["type"], "media_player/browse_media")
+        self.assertEqual(connection.sent[1]["entity_id"], "media_player.sala")
+        self.assertEqual(connection.sent[1]["media_content_type"], "library")
+        self.assertEqual(connection.sent[1]["media_content_id"], "root")
+        self.assertTrue(connection.closed)
 
     def test_music_slots_select_different_sources_at_adjacent_times(self):
         music = {
