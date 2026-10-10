@@ -683,10 +683,43 @@ class CarellasServerTest(unittest.TestCase):
             self.app.play_audio(ad, manual=True)
         probe.assert_called_once_with(self.app.MEDIA_DIR / ad)
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [0.6, 0.6])
-        self.assertAlmostEqual(wait.call_args_list[0].args[0], 42.25, places=2)
+        self.assertAlmostEqual(
+            wait.call_args_list[0].args[0],
+            42.25 + self.app.SONOS_SPOT_TAIL_GUARD_SECONDS,
+            places=2,
+        )
         self.assertEqual(len([call for call in self.calls if call[1] == "play_media"]), 1)
         self.assertTrue(any(call[1] == "media_play" for call in self.calls))
         self.assertEqual(self.app.scheduler.audio_today(), count_before + 1)
+        (self.app.MEDIA_DIR / ad).unlink()
+
+    def test_spot_is_not_faded_or_cut_before_its_real_end(self):
+        ad = "spot-senza-tagli.mp3"
+        (self.app.MEDIA_DIR / ad).write_bytes(b"audio")
+        self.app.store.update({"audio": {
+            "players": ["media_player.sala"],
+            "ads": [ad],
+            "repeat_count": 1,
+            "volume": 35,
+            "transition_seconds": 3,
+        }})
+        self.calls.clear()
+        with mock.patch.object(self.app, "probe_media_duration", return_value=10.0), \
+                mock.patch.object(self.app, "fade_sonos") as fade, \
+                mock.patch.object(self.app.audio_stop_event, "wait", return_value=False) as wait:
+            self.app.play_audio(ad, manual=True)
+
+        self.assertAlmostEqual(
+            wait.call_args_list[0].args[0],
+            10.0 + self.app.SONOS_SPOT_TAIL_GUARD_SECONDS,
+            places=2,
+        )
+        self.assertFalse(any(call.args[1] == 0.35 for call in fade.call_args_list))
+        play_index = next(i for i, call in enumerate(self.calls) if call[1] == "play_media")
+        self.assertTrue(any(
+            call[1] == "volume_set" and call[2].get("volume_level") == 0.35
+            for call in self.calls[:play_index]
+        ))
         (self.app.MEDIA_DIR / ad).unlink()
 
     def test_music_start_endpoint_plays_on_selected_sonos(self):
