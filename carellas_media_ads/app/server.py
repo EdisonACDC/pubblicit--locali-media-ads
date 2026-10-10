@@ -1636,7 +1636,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4.33"
+    server_version = "CarellasMediaAds/0.4.34"
 
     def log_message(self, fmt, *args):
         return
@@ -2280,7 +2280,7 @@ def player_session_username(token):
 class PlayerHandler(Handler):
     """Porta pubblica limitata al player TV: nessun accesso alla configurazione dell'add-on."""
 
-    server_version = "CarellasTVPlayer/0.4.33"
+    server_version = "CarellasTVPlayer/0.4.34"
 
     def player_username(self):
         cookie = SimpleCookie(self.headers.get("Cookie", ""))
