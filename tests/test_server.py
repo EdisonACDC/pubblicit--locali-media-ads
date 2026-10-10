@@ -742,7 +742,7 @@ class CarellasServerTest(unittest.TestCase):
         self.app.store.update({"music": {
             "players": ["media_player.sala"],
             "content_id": "Carellas Ristorante",
-            "content_type": "sonos_source",
+            "content_type": "sonos_playlist_source",
             "volume": 25,
         }})
         self.calls.clear()
@@ -761,7 +761,7 @@ class CarellasServerTest(unittest.TestCase):
         selection = {
             "players": ["media_player.sala"],
             "content_id": "Radio Italia",
-            "content_type": "sonos_source",
+            "content_type": "sonos_playlist_source",
             "volume": 25,
         }
 
@@ -781,6 +781,25 @@ class CarellasServerTest(unittest.TestCase):
             "source": "Radio Italia",
         }), self.calls)
         self.assertTrue(any(call[1] == "media_play" for call in self.calls))
+
+    def test_music_start_uses_select_source_for_native_sonos_radio(self):
+        selection = {
+            "players": ["media_player.sala"],
+            "content_id": "Radio Italia Anni 60",
+            "content_type": "sonos_radio_source",
+            "volume": 25,
+        }
+        self.calls.clear()
+
+        players = self.app.start_music(selection)
+
+        self.assertEqual(players, ["media_player.sala"])
+        self.assertIn(("media_player", "select_source", {
+            "entity_id": "media_player.sala",
+            "source": "Radio Italia Anni 60",
+        }), self.calls)
+        self.assertTrue(any(call[1] == "media_play" for call in self.calls))
+        self.assertFalse(any(call[1] == "play_media" for call in self.calls))
 
     def test_music_browser_uses_selected_sonos_media_library(self):
         browser = {
@@ -1103,6 +1122,27 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(attempts, 2)
         self.assertIn(("media_player", "media_stop", {"entity_id": "media_player.sala"}), calls)
 
+    def test_sonos_source_retries_701_then_succeeds(self):
+        calls = []
+        attempts = 0
+
+        def service(domain, name, payload):
+            nonlocal attempts
+            calls.append((domain, name, payload))
+            if name == "select_source":
+                attempts += 1
+                if attempts == 1:
+                    raise RuntimeError("UPnP Error 701 received: Transition not available")
+
+        with mock.patch.object(self.app.ha, "service", side_effect=service), mock.patch.object(
+            self.app.time, "sleep"
+        ):
+            self.app.select_sonos_source("media_player.sala", "Radio Italia Anni 60")
+
+        self.assertEqual(attempts, 2)
+        self.assertIn(("media_player", "media_stop", {"entity_id": "media_player.sala"}), calls)
+        self.assertTrue(any(call[1] == "media_play" for call in calls))
+
     def test_scheduler_switches_source_when_music_slot_changes(self):
         original = json.loads(json.dumps(self.app.store.config["music"]))
         first = {
@@ -1204,6 +1244,9 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("defaultMusicDays", html)
         self.assertIn("verrà ignorata automaticamente", html)
         self.assertIn("Limitata automaticamente", html)
+        self.assertIn("function sonosPlaybackType", html)
+        self.assertIn("sonos_radio_source", html)
+        self.assertIn("sonos_playlist_source", html)
 
     def test_upload_refreshes_library_without_discarding_unsaved_settings(self):
         html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
