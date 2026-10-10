@@ -623,6 +623,71 @@ class CarellasServerTest(unittest.TestCase):
             ])
         self.assertEqual(players, ["media_player.sala", "media_player.bar"])
 
+    def test_sonos_group_repair_joins_only_missing_members(self):
+        states = [{
+            "entity_id": "media_player.sala",
+            "state": "playing",
+            "attributes": {"group_members": ["media_player.sala"]},
+        }, {
+            "entity_id": "media_player.bar",
+            "state": "idle",
+            "attributes": {"group_members": ["media_player.bar"]},
+        }]
+        self.calls.clear()
+        with mock.patch.object(self.app.ha, "states", return_value=states), mock.patch.object(
+            self.app, "SONOS_GROUP_SETTLE_SECONDS", 0
+        ):
+            result = self.app.repair_sonos_group(
+                ["media_player.sala", "media_player.bar"],
+                "media_player.sala",
+                0.25,
+            )
+        self.assertEqual(result["missing"], ["media_player.bar"])
+        self.assertIn(("media_player", "join", {
+            "entity_id": "media_player.sala",
+            "group_members": ["media_player.bar"],
+        }), self.calls)
+        self.assertIn(("media_player", "media_play", {
+            "entity_id": "media_player.sala",
+        }), self.calls)
+        volume = next(call for call in self.calls if call[1] == "volume_set")
+        self.assertEqual(volume[2]["entity_id"], ["media_player.bar"])
+        self.assertEqual(volume[2]["volume_level"], 0.25)
+
+    def test_music_scheduler_repairs_group_without_restarting_source(self):
+        original = json.loads(json.dumps(self.app.store.config["music"]))
+        slot = {
+            "id": "one", "name": "Playlist", "players": ["media_player.sala", "media_player.bar"],
+            "content_id": "S:/Pranzo", "content_type": "playlist", "volume": 20,
+        }
+        states = [{
+            "entity_id": "media_player.sala", "state": "playing",
+            "attributes": {"group_members": ["media_player.sala"]},
+        }, {
+            "entity_id": "media_player.bar", "state": "idle",
+            "attributes": {"group_members": ["media_player.bar"]},
+        }]
+        engine = self.app.Scheduler()
+        self.app.store.config["music"] = {
+            "enabled": True, "players": slot["players"], "slots": [slot],
+            "schedule": [], "stop_at_end": True, "volume": 25,
+        }
+        self.calls.clear()
+        try:
+            with mock.patch.object(self.app, "active_music_slot", return_value=slot), mock.patch.object(
+                self.app, "start_music", return_value=slot["players"]
+            ) as start, mock.patch.object(self.app.ha, "states", return_value=states), mock.patch.object(
+                self.app, "SONOS_GROUP_SETTLE_SECONDS", 0
+            ):
+                engine.music_tick()
+                engine.music_tick()
+        finally:
+            self.app.store.config["music"] = original
+        self.assertEqual(start.call_count, 1)
+        joins = [call for call in self.calls if call[1] == "join"]
+        self.assertEqual(len(joins), 1)
+        self.assertEqual(joins[0][2]["group_members"], ["media_player.bar"])
+
     def test_sonos_701_stops_briefly_and_retries_once(self):
         calls = []
         attempts = 0
