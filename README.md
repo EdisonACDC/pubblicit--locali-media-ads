@@ -1,5 +1,12 @@
 # Carellas Media Ads
 
+## Novità stabile 0.4.35
+
+- Sorveglianza automatica del gruppo Sonos durante tutta la riproduzione musicale.
+- Se un altoparlante selezionato esce dal gruppo, viene riagganciato senza fermare gli altri.
+- Dopo ogni spot viene verificato il ripristino reale dei gruppi precedenti, non soltanto l'invio del comando.
+- Il registro segnala i Sonos momentaneamente non raggiungibili e conferma quando tornano collegati.
+
 ## Novità stabile 0.4.34
 
 - Nuovo pulsante **Aggiorna playlist Sonos**: rilegge immediatamente playlist, radio e preferiti dal Sonos selezionato senza riavviare l’add-on.
