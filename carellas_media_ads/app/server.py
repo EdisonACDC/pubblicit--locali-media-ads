@@ -45,6 +45,7 @@ SONOS_GROUP_SETTLE_SECONDS = float(os.environ.get("CARELLAS_SONOS_GROUP_SETTLE_S
 SONOS_RESTORE_SETTLE_SECONDS = float(os.environ.get("CARELLAS_SONOS_RESTORE_SETTLE_SECONDS", "0.6"))
 SONOS_RESTORE_RETRIES = max(1, int(os.environ.get("CARELLAS_SONOS_RESTORE_RETRIES", "3")))
 SONOS_FADE_STEPS = max(2, int(os.environ.get("CARELLAS_SONOS_FADE_STEPS", "6")))
+SONOS_GROUP_CHECK_SECONDS = max(5.0, float(os.environ.get("CARELLAS_SONOS_GROUP_CHECK_SECONDS", "15")))
 SONOS_QUIET_VOLUME = 0.01
 MAX_UPLOAD = 1024 * 1024 * 1024 * 4
 UPLOAD_CHUNK_SIZE = 4 * 1024 * 1024
@@ -565,6 +566,78 @@ def sonos_playback_context(players):
     return snapshot_targets, resume_targets
 
 
+def sonos_group_topology(players):
+    """Memorizza i gruppi reali dei Sonos scelti prima di uno spot."""
+    try:
+        states = {item.get("entity_id"): item for item in ha.states()}
+    except Exception as error:
+        store.log("warning", f"Topologia Sonos precedente non leggibile: {error}")
+        return {}
+    groups = {}
+    for player in dict.fromkeys(players):
+        item = states.get(player, {})
+        members = item.get("attributes", {}).get("group_members") or [player]
+        coordinator = members[0] if members else player
+        groups.setdefault(coordinator, [])
+        for member in members:
+            if member not in groups[coordinator]:
+                groups[coordinator].append(member)
+    return groups
+
+
+def repair_sonos_group(players, preferred_coordinator=None, volume_level=None):
+    """Riaggancia soltanto i membri usciti dal gruppo, senza fermare quelli attivi."""
+    requested = list(dict.fromkeys(player for player in players if player))
+    if not requested:
+        return {"coordinator": None, "missing": [], "unavailable": []}
+    try:
+        states = {item.get("entity_id"): item for item in ha.states()}
+    except Exception as error:
+        raise RuntimeError(f"Controllo gruppo Sonos non riuscito: {error}") from error
+
+    reachable = [
+        player for player in requested
+        if player in states and states[player].get("state") != "unavailable"
+    ]
+    unavailable = [player for player in requested if player not in reachable]
+    if not reachable:
+        return {"coordinator": None, "missing": [], "unavailable": unavailable}
+
+    coordinator = preferred_coordinator if preferred_coordinator in reachable else reachable[0]
+    members = states.get(coordinator, {}).get("attributes", {}).get("group_members") or [coordinator]
+    missing = [player for player in reachable if player not in members]
+    if missing:
+        ha.service("media_player", "join", {
+            "entity_id": coordinator,
+            "group_members": missing,
+        })
+        if SONOS_GROUP_SETTLE_SECONDS > 0:
+            time.sleep(SONOS_GROUP_SETTLE_SECONDS)
+        if volume_level is not None:
+            level = max(0.0, min(float(volume_level), 1.0))
+            set_sonos_volume_levels({player: level for player in missing})
+        # Il coordinatore continua il flusso corrente; i membri appena entrati
+        # lo seguono senza riavviare la playlist sugli altoparlanti già attivi.
+        ha.service("media_player", "media_play", {"entity_id": coordinator})
+    return {"coordinator": coordinator, "missing": missing, "unavailable": unavailable}
+
+
+def repair_sonos_topology(groups, volume_levels=None):
+    """Verifica dopo lo spot che ogni gruppo salvato sia stato davvero ripristinato."""
+    repaired = []
+    unavailable = []
+    for coordinator, members in (groups or {}).items():
+        result = repair_sonos_group(members, preferred_coordinator=coordinator)
+        repaired.extend(result["missing"])
+        unavailable.extend(result["unavailable"])
+        if volume_levels and result["missing"]:
+            set_sonos_volume_levels({
+                player: volume_levels[player]
+                for player in result["missing"] if player in volume_levels
+            })
+    return list(dict.fromkeys(repaired)), list(dict.fromkeys(unavailable))
+
+
 def sonos_volume_levels(players, fallback=0.25):
     """Legge i volumi correnti; il fallback evita salti se HA non espone ancora lo stato."""
     fallback = max(0.0, min(float(fallback), 1.0))
@@ -692,6 +765,7 @@ def play_audio(filename=None, manual=False):
     audio_stop_event.clear()
     snapshot_created = False
     snapshot_targets = list(players)
+    original_groups = {}
     resume_targets = []
     stopped = False
     previous_volumes = sonos_volume_levels(players, 0.25)
@@ -701,6 +775,7 @@ def play_audio(filename=None, manual=False):
         # stato dei soli Sonos scelti, li isoliamo e riproduciamo un unico
         # normale flusso sul coordinatore del gruppo temporaneo.
         snapshot_targets, resume_targets = sonos_playback_context(players)
+        original_groups = sonos_group_topology(players)
         ha.service("sonos", "snapshot", {
             "entity_id": snapshot_targets,
             "with_group": True,
@@ -751,6 +826,11 @@ def play_audio(filename=None, manual=False):
                     previous_volumes,
                     transition,
                 )
+                repaired, unavailable = repair_sonos_topology(original_groups, previous_volumes)
+                if repaired:
+                    store.log("warning", "Sonos riagganciati dopo lo spot: " + ", ".join(repaired))
+                if unavailable:
+                    store.log("warning", "Sonos non raggiungibili dopo lo spot: " + ", ".join(unavailable))
                 store.log("info", f"Musica e gruppi ripristinati su {len(players)} Sonos selezionati")
             except Exception as error:
                 store.log("error", f"Ripristino Sonos non riuscito: {error}")
@@ -1380,6 +1460,10 @@ class Scheduler(threading.Thread):
         self.music_selection = None
         self.music_failed_slot_key = None
         self.music_retry_at = 0.0
+        self.music_expected_players = []
+        self.music_coordinator = None
+        self.music_group_check_at = 0.0
+        self.music_group_issue = None
         self.tv_active = False
         self.tv_ready_at = 0.0
         self.iptv_active = {}
@@ -1509,6 +1593,10 @@ class Scheduler(threading.Thread):
                         time.sleep(SONOS_GROUP_SETTLE_SECONDS)
                 players = start_music(slot, fade_in=True)
                 self.music_players = players
+                self.music_expected_players = target_players
+                self.music_coordinator = players[0] if players else None
+                self.music_group_check_at = 0.0
+                self.music_group_issue = None
                 self.music_volume = max(0, min(int(slot.get("volume", cfg.get("volume", 25))), 100)) / 100
                 self.music_slot_key = slot_key
                 self.music_slot_id = slot.get("id")
@@ -1522,6 +1610,11 @@ class Scheduler(threading.Thread):
                 if previous_selection:
                     try:
                         self.music_players = start_music(previous_selection, fade_in=True)
+                        self.music_expected_players = list(dict.fromkeys(
+                            previous_selection.get("players") or cfg.get("players") or []
+                        ))
+                        self.music_coordinator = self.music_players[0] if self.music_players else None
+                        self.music_group_check_at = 0.0
                         active = True
                         store.log("warning", "Cambio sorgente annullato: ripristinata la musica precedente")
                     except Exception as restore_error:
@@ -1540,10 +1633,36 @@ class Scheduler(threading.Thread):
             self.music_selection = None
             self.music_failed_slot_key = None
             self.music_retry_at = 0.0
+            self.music_expected_players = []
+            self.music_coordinator = None
+            self.music_group_check_at = 0.0
+            self.music_group_issue = None
         elif not active:
             self.music_failed_slot_key = None
             self.music_retry_at = 0.0
+            self.music_expected_players = []
+            self.music_coordinator = None
+            self.music_group_issue = None
         self.music_active = active
+        if active and not changed and time.monotonic() >= self.music_group_check_at:
+            self.music_group_check_at = time.monotonic() + SONOS_GROUP_CHECK_SECONDS
+            expected = self.music_expected_players or list(dict.fromkeys(
+                slot.get("players") or cfg.get("players") or []
+            ))
+            try:
+                result = repair_sonos_group(expected, self.music_coordinator, self.music_volume)
+                if result["coordinator"]:
+                    self.music_coordinator = result["coordinator"]
+                issue = tuple(sorted(result["unavailable"]))
+                if result["missing"]:
+                    store.log("warning", "Sonos riagganciati automaticamente: " + ", ".join(result["missing"]))
+                if issue and issue != self.music_group_issue:
+                    store.log("warning", "Sonos momentaneamente non raggiungibili: " + ", ".join(issue))
+                if not issue and self.music_group_issue:
+                    store.log("success", "Tutti i Sonos programmati sono nuovamente collegati")
+                self.music_group_issue = issue or None
+            except Exception as error:
+                store.log("warning", f"Controllo automatico gruppo Sonos non riuscito: {error}")
 
     def tv_tick(self):
         cfg = store.config["tv"]
@@ -1636,7 +1755,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4.34"
+    server_version = "CarellasMediaAds/0.4.35"
 
     def log_message(self, fmt, *args):
         return
@@ -2280,7 +2399,7 @@ def player_session_username(token):
 class PlayerHandler(Handler):
     """Porta pubblica limitata al player TV: nessun accesso alla configurazione dell'add-on."""
 
-    server_version = "CarellasTVPlayer/0.4.34"
+    server_version = "CarellasTVPlayer/0.4.35"
 
     def player_username(self):
         cookie = SimpleCookie(self.headers.get("Cookie", ""))
