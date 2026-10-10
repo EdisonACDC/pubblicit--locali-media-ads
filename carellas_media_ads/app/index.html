@@ -38,7 +38,7 @@
 
   <section id="dashboard" class="tab active"><div class="grid">
     <div class="metric third"><b id="mAudio">0</b><span data-i="today">Spot riprodotti oggi</span></div><div class="metric third"><b id="mMusic">—</b><span data-i="musicSchedule">Programmazione musica</span></div><div class="metric third"><b id="mTv">—</b><span data-i="tvSchedule">Programmazione TV</span></div>
-    <div class="card wide"><h2 data-i="quick">Comandi rapidi</h2><div class="row"><button class="btn" onclick="testSelectedAudio()">▶ Prova spot adesso</button><button class="btn danger" onclick="stopAudio()" data-i="stopSpot">■ Ferma spot</button><button class="btn secondary" onclick="startMusic()">▶ Avvia musica</button><button class="btn danger" onclick="stopMusic()">■ Ferma musica</button><button class="btn secondary" onclick="showTab('tv')">📺 Prova TV</button></div></div>
+    <div class="card wide"><h2 data-i="quick">Comandi rapidi</h2><div class="row"><button class="btn" onclick="testSelectedAudio()">▶ Prova spot adesso</button><button class="btn danger" onclick="stopAudio()" data-i="stopSpot">■ Ferma spot</button><button class="btn secondary" onclick="startMusic(true)">▶ Avvia musica</button><button class="btn danger" onclick="stopMusic()">■ Ferma musica</button><button class="btn secondary" onclick="showTab('tv')">📺 Prova TV</button></div></div>
     <div class="card wide"><h2 data-i="connection">Collegamento locale</h2><p class="sub" data-i="connectionHelp">Sonos e TV devono poter raggiungere questo indirizzo nella rete del ristorante.</p><div class="field"><label>URL contenuti multimediali</label><input id="baseUrl" placeholder="http://192.168.178.50:8099" oninput="if($('iptvBaseUrl'))$('iptvBaseUrl').value=this.value"></div><div id="resolvedUrl" class="notice"></div></div>
   </div></section>
 
@@ -267,13 +267,13 @@ collect=function(){const c=collectBase();c.audio.transition_seconds=Math.max(0,M
 async function monitorIptvBuild(channelIds){const ids=[...new Set((channelIds||[]).filter(Boolean))];if(!ids.length)return;const token=++buildMonitorToken;for(let attempt=0;attempt<300&&token===buildMonitorToken;attempt++){await new Promise(resolve=>setTimeout(resolve,2000));try{const result=await request('api/iptv/status?ts='+Date.now(),{cache:'no-store'});state.runtime.iptv_status=result.channels||{};renderIptv();const statuses=ids.map(id=>state.runtime.iptv_status[id]||{});if(statuses.some(status=>status.state==='error')){const failed=statuses.find(status=>status.state==='error');toast((uiLanguage()==='de'?'Fehler beim Erzeugen der Sequenz: ':'Errore nella generazione della sequenza: ')+(failed.message||''),true);return}if(statuses.every(status=>status.state==='ready')){toast(uiLanguage()==='de'?'Neue Sequenz erzeugt und an den Player übertragen':'Nuova sequenza generata e trasmessa al Player');return}}catch(e){if(attempt===299)toast(e.message,true)}}}
 async function saveConfig(){try{const result=await request('api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(collect())});dirty=false;toast(result.rebuilt_channels?.length?'Salvataggio completato. Il canale modificato viene aggiornato automaticamente.':'Configurazione e ordine salvati');await load(true);if(result.rebuilt_channels?.length)monitorIptvBuild(result.rebuilt_channels);return result}catch(e){toast(e.message,true);return null}}
 async function saveLanguage(lang){tr(lang);updateAudioRotationSummary();try{await request('api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({language:lang})});state.config.language=lang;toast(lang==='de'?'Sprache gespeichert':'Lingua salvata')}catch(e){toast(e.message,true)}}
-async function startMusic(){
-  if(!speakerValues('musicPlayers').length)return toast('Seleziona almeno un altoparlante Sonos per la musica',true);
-  if(!$('musicId').value.trim())return toast('Premi “Sfoglia la musica del Sonos” e scegli un contenuto',true);
+async function startMusic(useSchedule=false){
+  if(!useSchedule&&!speakerValues('musicPlayers').length)return toast('Seleziona almeno un altoparlante Sonos per la musica',true);
+  if(!useSchedule&&!$('musicId').value.trim())return toast('Premi “Sfoglia la musica del Sonos” e scegli un contenuto',true);
   try{
     await request('api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(collect())});
     dirty=false;
-    await api('api/music/start');
+    await api('api/music/start',{scheduled:useSchedule});
   }catch(e){toast(e.message,true)}
 }
 function stopMusic(){return api('api/music/stop')}
