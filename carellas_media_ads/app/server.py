@@ -357,10 +357,19 @@ def load_sonos_catalog():
     for item in payload.get("items", []) if isinstance(payload, dict) else []:
         if not isinstance(item, dict) or not item.get("id"):
             continue
+        media_id = str(item["id"])
+        media_type = str(item.get("type") or "music")
+        if media_id.startswith("media-source://"):
+            continue
+        if not (
+            media_id.startswith(("FV:", "S:", "SQ:"))
+            or media_type in {"favorite_item_id", "sonos_playlist", "sonos_source"}
+        ):
+            continue
         result.append({
-            "id": str(item["id"]),
-            "name": str(item.get("name") or item["id"]),
-            "type": str(item.get("type") or "music"),
+            "id": media_id,
+            "name": str(item.get("name") or media_id),
+            "type": media_type,
         })
     return result
 
@@ -421,6 +430,13 @@ def refresh_sonos_catalog(entity_id, max_depth=5, max_folders=120, max_items=300
     for state in states:
         entity = str(state.get("entity_id", ""))
         attrs = state.get("attributes", {})
+        if entity.startswith("media_player.") and isinstance(attrs.get("group_members"), list):
+            for source in attrs.get("source_list") or []:
+                source = str(source).strip()
+                if source:
+                    items[f"source:{source}"] = {
+                        "id": source, "name": source, "type": "sonos_source",
+                    }
         favorites = attrs.get("items")
         if entity == "sensor.sonos_favorites" or isinstance(favorites, dict):
             if entity.startswith("sensor."):
@@ -459,8 +475,10 @@ def refresh_sonos_catalog(entity_id, max_depth=5, max_folders=120, max_items=300
                     "type": str(child.get("media_content_type") or "music"),
                 }
 
-    # La radice può essere il Media Browser generale di Home Assistant.
-    # È attendibile solo se si identifica esplicitamente come Sonos.
+    # ``media_player/browse_media`` può restituire la radice generale di Home
+    # Assistant (Media locali, Radio Browser, ecc.). Non va mai importata come
+    # se fosse la libreria Sonos. Una radice è attendibile solo se si identifica
+    # esplicitamente come Sonos; gli ID FV:/S:/SQ: restano comunque sicuri.
     root_is_sonos = _is_sonos_browser_node(root)
     remember(root, trusted=root_is_sonos)
     root_folders = [child for child in (root.get("children") or []) if child.get("can_expand")]
@@ -490,7 +508,8 @@ def refresh_sonos_catalog(entity_id, max_depth=5, max_folders=120, max_items=300
                 for child in (browser.get("children") or [])
                 if child.get("can_expand")
             )
-    catalog_items = sorted(items.values(), key=lambda item: item["name"].lower())
+    unique_items = {(item["type"], item["id"]): item for item in items.values()}
+    catalog_items = sorted(unique_items.values(), key=lambda item: item["name"].lower())
     save_sonos_catalog(catalog_items)
     store.log("success", f"Catalogo Sonos aggiornato e salvato: {len(catalog_items)} contenuti")
     return {
@@ -509,6 +528,7 @@ def refresh_sonos_catalog(entity_id, max_depth=5, max_folders=120, max_items=300
         "source": "sonos",
         "truncated": bool(queue or len(items) >= max_items),
     }
+
 
 def local_base_url():
     configured = store.config.get("media_base_url", "").strip().rstrip("/")
@@ -1082,13 +1102,21 @@ def start_music(selection=None, fade_in=False):
     previous_levels = sonos_volume_levels(players, target_volume)
     start_level = SONOS_QUIET_VOLUME if transition > 0 else target_volume
     set_sonos_volume_levels({player: start_level for player in players})
+    content_type = selection.get("content_type", "music")
     payload = {
         "entity_id": coordinator,
-        "media_content_type": selection.get("content_type", "music"),
+        "media_content_type": content_type,
         "media_content_id": content_id,
     }
     try:
-        play_sonos_media(payload)
+        if content_type == "sonos_source":
+            ha.service("media_player", "select_source", {
+                "entity_id": coordinator,
+                "source": content_id,
+            })
+            ha.service("media_player", "media_play", {"entity_id": coordinator})
+        else:
+            play_sonos_media(payload)
     except Exception:
         # Se il cambio non riesce, non lasciare i diffusori muti: prova a
         # riprendere il flusso che Sonos stava già eseguendo e il suo volume.
@@ -1955,7 +1983,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4.40"
+    server_version = "CarellasMediaAds/0.4.41"
 
     def log_message(self, fmt, *args):
         return
@@ -2195,6 +2223,15 @@ class Handler(BaseHTTPRequestHandler):
                             for media_id, name in favorites.items():
                                 if str(media_id).startswith("FV:"):
                                     favorites_by_id[str(media_id)] = str(name)
+                        if entity_id.startswith("media_player.") and isinstance(attrs.get("group_members"), list):
+                            for source in attrs.get("source_list") or []:
+                                source = str(source).strip()
+                                if source:
+                                    favorites_by_id[f"source:{source}"] = {
+                                        "id": source,
+                                        "name": source,
+                                        "type": "sonos_source",
+                                    }
                 except Exception as exc:
                     error = str(exc)
                 # Compatibilità con installazioni Sonos meno recenti, nelle
@@ -2602,7 +2639,7 @@ def player_session_username(token):
 class PlayerHandler(Handler):
     """Porta pubblica limitata al player TV: nessun accesso alla configurazione dell'add-on."""
 
-    server_version = "CarellasTVPlayer/0.4.40"
+    server_version = "CarellasTVPlayer/0.4.41"
 
     def player_username(self):
         cookie = SimpleCookie(self.headers.get("Cookie", ""))
