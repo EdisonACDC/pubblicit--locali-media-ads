@@ -325,6 +325,58 @@ class CarellasServerTest(unittest.TestCase):
             {"id": "FV:2/31", "name": "Radio Italia"},
         ])
 
+    def test_sonos_refresh_forces_favorites_update_and_scans_nested_playlists(self):
+        before = [{
+            "entity_id": "sensor.sonos_favorites",
+            "state": "1",
+            "attributes": {"items": {"FV:2/31": "Radio Italia"}},
+        }]
+        after = [{
+            "entity_id": "sensor.sonos_favorites",
+            "state": "2",
+            "attributes": {"items": {
+                "FV:2/31": "Radio Italia", "FV:2/4": "Carellas Ristorante",
+            }},
+        }]
+        root = {"title": "Sonos", "children": [{
+            "title": "I miei Sonos", "media_content_type": "favorites",
+            "media_content_id": "my-sonos", "can_expand": True, "can_play": False,
+        }]}
+        my_sonos = {"title": "I miei Sonos", "children": [{
+            "title": "Playlist", "media_content_type": "playlist_folder",
+            "media_content_id": "playlists", "can_expand": True, "can_play": False,
+        }, {
+            "title": "Radio Kiss Kiss", "media_content_type": "favorite_item_id",
+            "media_content_id": "FV:2/88", "can_expand": False, "can_play": True,
+        }]}
+        playlists = {"title": "Playlist", "children": [{
+            "title": "Gigi D'Alessio", "media_content_type": "playlist",
+            "media_content_id": "S:/Gigi", "can_expand": False, "can_play": True,
+        }, {
+            "title": "Freitag", "media_content_type": "playlist",
+            "media_content_id": "S:/Freitag", "can_expand": False, "can_play": True,
+        }]}
+
+        def browse(_domain, _service, payload):
+            media_id = payload.get("media_content_id")
+            browser = {None: root, "my-sonos": my_sonos, "playlists": playlists}[media_id]
+            return {"media_player.sala": browser}
+
+        with mock.patch.object(self.app.ha, "states", side_effect=[before, after]), \
+                mock.patch.object(self.app.ha, "service") as update, \
+                mock.patch.object(self.app.ha, "service_response", side_effect=browse):
+            catalog = self.app.refresh_sonos_catalog("media_player.sala")
+
+        update.assert_called_once_with("homeassistant", "update_entity", {
+            "entity_id": ["sensor.sonos_favorites"],
+        })
+        self.assertEqual({item["name"] for item in catalog["items"]}, {
+            "Radio Italia", "Carellas Ristorante", "Radio Kiss Kiss",
+            "Gigi D'Alessio", "Freitag",
+        })
+        self.assertEqual(catalog["folders_scanned"], 2)
+        self.assertFalse(catalog["truncated"])
+
     def test_state_sonos_picker_hides_unavailable_and_non_sonos_players(self):
         states = [{
             "entity_id": "media_player.sala",
@@ -370,7 +422,8 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("browseSonosBack", html)
         self.assertIn("Aggiorna playlist Sonos", html)
         self.assertIn("refreshSonosSources", html)
-        self.assertIn("playableSonosItems", html)
+        self.assertIn("api/music/refresh", html)
+        self.assertIn("Aggiornamento completo della libreria Sonos", html)
 
     def test_dashboard_is_responsive_on_phone(self):
         html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
@@ -578,7 +631,7 @@ class CarellasServerTest(unittest.TestCase):
         base["slots"][1]["players"] = ["media_player.terrazza"]
         self.app.validate_music_slots(base)
 
-    def test_music_slot_must_fit_inside_general_opening_hours(self):
+    def test_music_slot_is_automatically_limited_by_general_opening_hours(self):
         music = {
             "schedule": [{"days": [0], "start": "10:00", "end": "12:00"}],
             "players": ["media_player.sala"],
@@ -587,9 +640,63 @@ class CarellasServerTest(unittest.TestCase):
                 "duration_minutes": 120, "content_id": "S:/Pranzo",
             }],
         }
-        with self.assertRaisesRegex(RuntimeError, "supera gli orari generali"):
-            self.app.validate_music_slots(music)
-        music["slots"][0]["duration_minutes"] = 60
+        self.app.validate_music_slots(music)
+        self.assertIsNotNone(self.app.active_music_slot(music, datetime(2026, 9, 21, 11, 30)))
+        self.assertIsNone(self.app.active_music_slot(music, datetime(2026, 9, 21, 12, 30)))
+
+    def test_music_slot_ignores_days_missing_from_general_schedule(self):
+        music = {
+            "schedule": [{"days": [0, 1, 2, 3, 4, 5], "start": "10:00", "end": "23:00"}],
+            "players": ["media_player.sala"],
+            "slots": [{
+                "name": "Radio", "days": [0, 1, 2, 3, 4, 5, 6], "start": "12:00",
+                "duration_minutes": 10, "content_id": "FV:2/31",
+            }],
+        }
+        self.app.validate_music_slots(music)
+        self.assertIsNotNone(self.app.active_music_slot(music, datetime(2026, 9, 21, 12, 5)))
+        self.assertIsNone(self.app.active_music_slot(music, datetime(2026, 9, 27, 12, 5)))
+
+    def test_music_slot_accepts_adjacent_general_schedule_windows(self):
+        music = {
+            "schedule": [
+                {"days": [0], "start": "10:00", "end": "12:00"},
+                {"days": [0], "start": "12:00", "end": "14:00"},
+            ],
+            "players": ["media_player.sala"],
+            "slots": [{
+                "name": "Playlist", "days": [0], "start": "11:00",
+                "duration_minutes": 120, "content_id": "S:/Pranzo",
+            }],
+        }
+        self.app.validate_music_slots(music)
+
+    def test_music_slot_obeys_gap_between_general_schedule_windows(self):
+        music = {
+            "schedule": [
+                {"days": [0], "start": "10:00", "end": "12:00"},
+                {"days": [0], "start": "12:30", "end": "14:00"},
+            ],
+            "players": ["media_player.sala"],
+            "slots": [{
+                "name": "Playlist", "days": [0], "start": "11:00",
+                "duration_minutes": 120, "content_id": "S:/Pranzo",
+            }],
+        }
+        self.app.validate_music_slots(music)
+        self.assertIsNotNone(self.app.active_music_slot(music, datetime(2026, 9, 21, 11, 30)))
+        self.assertIsNone(self.app.active_music_slot(music, datetime(2026, 9, 21, 12, 15)))
+        self.assertIsNotNone(self.app.active_music_slot(music, datetime(2026, 9, 21, 12, 45)))
+
+    def test_music_slot_accepts_overnight_general_schedule(self):
+        music = {
+            "schedule": [{"days": [6], "start": "22:00", "end": "02:00"}],
+            "players": ["media_player.sala"],
+            "slots": [{
+                "name": "Notte", "days": [6], "start": "23:00",
+                "duration_minutes": 120, "content_id": "S:/Notte",
+            }],
+        }
         self.app.validate_music_slots(music)
 
     def test_sonos_fade_reaches_target_gradually(self):
@@ -809,6 +916,10 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn('id="audioTransition"', html)
         self.assertIn('id="musicTransition"', html)
         self.assertIn("musicSlotWithinGeneralSchedule", html)
+        self.assertIn("uncoveredMusicSlotParts", html)
+        self.assertIn("defaultMusicDays", html)
+        self.assertIn("verrà ignorata automaticamente", html)
+        self.assertIn("Limitata automaticamente", html)
 
     def test_upload_refreshes_library_without_discarding_unsaved_settings(self):
         html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
