@@ -1079,7 +1079,13 @@ def stop_audio():
     store.log("info", "Richiesto arresto immediato dello spot Sonos")
     return True
 
-def play_sonos_media(payload, retries=2):
+def sonos_transition_busy(error):
+    """Riconosce il rifiuto temporaneo di Sonos durante un cambio sorgente."""
+    message = str(error).lower()
+    return "701" in message and "transition not available" in message
+
+
+def play_sonos_media(payload, retries=3):
     """Avvia una sorgente Sonos e gestisce la transizione UPnP 701 ancora occupata."""
     last_error = None
     for attempt in range(max(1, int(retries))):
@@ -1088,13 +1094,35 @@ def play_sonos_media(payload, retries=2):
             return
         except Exception as error:
             last_error = error
-            message = str(error).lower()
-            transition_busy = "701" in message and "transition not available" in message
-            if not transition_busy or attempt + 1 >= retries:
+            if not sonos_transition_busy(error) or attempt + 1 >= retries:
                 raise
             store.log("warning", "Sonos ancora occupato nel cambio sorgente: nuovo tentativo controllato")
             ha.service("media_player", "media_stop", {"entity_id": payload["entity_id"]})
-            time.sleep(1.2)
+            time.sleep(1.2 * (attempt + 1))
+    raise last_error
+
+
+def select_sonos_source(entity_id, source, retries=3):
+    """Seleziona una sorgente nativa Sonos con recupero dall'errore UPnP 701."""
+    last_error = None
+    for attempt in range(max(1, int(retries))):
+        try:
+            ha.service("media_player", "select_source", {
+                "entity_id": entity_id,
+                "source": source,
+            })
+            ha.service("media_player", "media_play", {"entity_id": entity_id})
+            return
+        except Exception as error:
+            last_error = error
+            if not sonos_transition_busy(error) or attempt + 1 >= retries:
+                raise
+            store.log("warning", "Sonos ancora occupato nella selezione della sorgente: attendo e riprovo")
+            try:
+                ha.service("media_player", "media_stop", {"entity_id": entity_id})
+            except Exception as stop_error:
+                store.log("warning", f"Arresto transizione Sonos non riuscito: {stop_error}")
+            time.sleep(1.2 * (attempt + 1))
     raise last_error
 
 
@@ -1118,7 +1146,9 @@ def start_music(selection=None, fade_in=False):
         "media_content_id": content_id,
     }
     try:
-        if content_type == "sonos_source":
+        if content_type == "sonos_radio_source":
+            select_sonos_source(coordinator, content_id)
+        elif content_type == "sonos_playlist_source":
             # Le playlist Sonos vengono riprodotte in modo più affidabile con
             # play_media. Alcune versioni espongono invece la stessa voce come
             # source: in quel caso usiamo select_source come ripiego.
@@ -1130,11 +1160,18 @@ def start_music(selection=None, fade_in=False):
                 })
             except Exception as playlist_error:
                 store.log("warning", f"Playlist Sonos non avviata direttamente, provo come sorgente: {playlist_error}")
-                ha.service("media_player", "select_source", {
+                select_sonos_source(coordinator, content_id)
+        elif content_type == "sonos_source":
+            # Compatibilita con le configurazioni delle versioni precedenti.
+            try:
+                select_sonos_source(coordinator, content_id)
+            except Exception as source_error:
+                store.log("warning", f"Sorgente Sonos precedente non selezionabile, provo come playlist: {source_error}")
+                play_sonos_media({
                     "entity_id": coordinator,
-                    "source": content_id,
+                    "media_content_type": "playlist",
+                    "media_content_id": content_id,
                 })
-                ha.service("media_player", "media_play", {"entity_id": coordinator})
         else:
             play_sonos_media(payload)
     except Exception:
@@ -2003,7 +2040,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4.43"
+    server_version = "CarellasMediaAds/0.4.44"
 
     def log_message(self, fmt, *args):
         return
@@ -2659,7 +2696,7 @@ def player_session_username(token):
 class PlayerHandler(Handler):
     """Porta pubblica limitata al player TV: nessun accesso alla configurazione dell'add-on."""
 
-    server_version = "CarellasTVPlayer/0.4.43"
+    server_version = "CarellasTVPlayer/0.4.44"
 
     def player_username(self):
         cookie = SimpleCookie(self.headers.get("Cookie", ""))
