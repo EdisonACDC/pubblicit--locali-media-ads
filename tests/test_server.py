@@ -325,6 +325,25 @@ class CarellasServerTest(unittest.TestCase):
             {"id": "FV:2/31", "name": "Radio Italia"},
         ])
 
+    def test_state_sonos_picker_hides_unavailable_and_non_sonos_players(self):
+        states = [{
+            "entity_id": "media_player.sala",
+            "state": "playing",
+            "attributes": {"friendly_name": "Sonos Sala", "group_members": ["media_player.sala"]},
+        }, {
+            "entity_id": "media_player.vecchio",
+            "state": "unavailable",
+            "attributes": {"friendly_name": "Sonos Vecchio", "group_members": ["media_player.vecchio"]},
+        }, {
+            "entity_id": "media_player.televisore",
+            "state": "idle",
+            "attributes": {"friendly_name": "Televisore"},
+        }]
+        with mock.patch.object(self.app.ha, "states", return_value=states):
+            status, payload = self.request("/api/state")
+        self.assertEqual(status, 200)
+        self.assertEqual([item["entity_id"] for item in payload["entities"]], ["media_player.sala"])
+
     def test_editor_preserves_unsaved_settings_and_shows_sequence_order(self):
         html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
         self.assertIn("if(dirty&&!force)return", html)
@@ -435,6 +454,7 @@ class CarellasServerTest(unittest.TestCase):
             "ads": [ad],
             "repeat_count": 2,
             "repeat_gap_seconds": 7,
+            "transition_seconds": 0,
         }})
         self.calls.clear()
         count_before = self.app.scheduler.audio_today()
@@ -443,8 +463,8 @@ class CarellasServerTest(unittest.TestCase):
         ) as sleep, mock.patch.object(self.app.audio_stop_event, "wait", return_value=False) as wait:
             self.app.play_audio(ad, manual=True)
         probe.assert_called_once_with(self.app.MEDIA_DIR / ad)
-        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1.5, 1.5])
-        self.assertEqual([call.args[0] for call in wait.call_args_list], [42.25])
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [0.6, 0.6])
+        self.assertAlmostEqual(wait.call_args_list[0].args[0], 42.25, places=2)
         self.assertEqual(len([call for call in self.calls if call[1] == "play_media"]), 1)
         self.assertTrue(any(call[1] == "media_play" for call in self.calls))
         self.assertEqual(self.app.scheduler.audio_today(), count_before + 1)
@@ -555,6 +575,75 @@ class CarellasServerTest(unittest.TestCase):
         base["slots"][1]["players"] = ["media_player.terrazza"]
         self.app.validate_music_slots(base)
 
+    def test_music_slot_must_fit_inside_general_opening_hours(self):
+        music = {
+            "schedule": [{"days": [0], "start": "10:00", "end": "12:00"}],
+            "players": ["media_player.sala"],
+            "slots": [{
+                "name": "Playlist troppo lunga", "days": [0], "start": "11:00",
+                "duration_minutes": 120, "content_id": "S:/Pranzo",
+            }],
+        }
+        with self.assertRaisesRegex(RuntimeError, "supera gli orari generali"):
+            self.app.validate_music_slots(music)
+        music["slots"][0]["duration_minutes"] = 60
+        self.app.validate_music_slots(music)
+
+    def test_sonos_fade_reaches_target_gradually(self):
+        self.calls.clear()
+        levels = {"media_player.sala": 0.4}
+        with mock.patch.object(self.app.time, "sleep") as sleep:
+            self.app.fade_sonos(["media_player.sala"], 0.1, 3, levels)
+        volume_calls = [call for call in self.calls if call[1] == "volume_set"]
+        self.assertEqual(len(volume_calls), self.app.SONOS_FADE_STEPS)
+        self.assertGreater(volume_calls[0][2]["volume_level"], 0.1)
+        self.assertEqual(volume_calls[-1][2]["volume_level"], 0.1)
+        self.assertEqual(len(sleep.call_args_list), self.app.SONOS_FADE_STEPS - 1)
+
+    def test_only_available_sonos_entities_are_used(self):
+        states = [{
+            "entity_id": "media_player.sala",
+            "state": "playing",
+            "attributes": {"group_members": ["media_player.sala", "media_player.bar"]},
+        }, {
+            "entity_id": "media_player.bar",
+            "state": "idle",
+            "attributes": {"group_members": ["media_player.sala", "media_player.bar"]},
+        }, {
+            "entity_id": "media_player.vecchio",
+            "state": "unavailable",
+            "attributes": {},
+        }]
+        with mock.patch.object(self.app.ha, "states", return_value=states):
+            players = self.app.available_sonos_players([
+                "media_player.sala", "media_player.bar", "media_player.vecchio",
+            ])
+        self.assertEqual(players, ["media_player.sala", "media_player.bar"])
+
+    def test_sonos_701_stops_briefly_and_retries_once(self):
+        calls = []
+        attempts = 0
+
+        def service(domain, name, payload):
+            nonlocal attempts
+            calls.append((domain, name, payload))
+            if name == "play_media":
+                attempts += 1
+                if attempts == 1:
+                    raise RuntimeError("UPnP Error 701 received: Transition not available")
+
+        payload = {
+            "entity_id": "media_player.sala",
+            "media_content_type": "favorite_item_id",
+            "media_content_id": "FV:2/31",
+        }
+        with mock.patch.object(self.app.ha, "service", side_effect=service), mock.patch.object(
+            self.app.time, "sleep"
+        ):
+            self.app.play_sonos_media(payload)
+        self.assertEqual(attempts, 2)
+        self.assertIn(("media_player", "media_stop", {"entity_id": "media_player.sala"}), calls)
+
     def test_scheduler_switches_source_when_music_slot_changes(self):
         original = json.loads(json.dumps(self.app.store.config["music"]))
         first = {
@@ -584,6 +673,59 @@ class CarellasServerTest(unittest.TestCase):
         unjoin = [call for call in self.calls if call[1] == "unjoin"]
         self.assertEqual(unjoin[-1][2]["entity_id"], ["media_player.sala", "media_player.terrazza"])
 
+    def test_scheduler_restores_previous_source_when_switch_fails(self):
+        original = json.loads(json.dumps(self.app.store.config["music"]))
+        first = {
+            "id": "one", "name": "Playlist", "players": ["media_player.sala"],
+            "content_id": "S:/Pranzo", "content_type": "playlist", "volume": 20,
+        }
+        second = {
+            "id": "two", "name": "Radio", "players": ["media_player.sala"],
+            "content_id": "FV:2/31", "content_type": "favorite_item_id", "volume": 30,
+        }
+        engine = self.app.Scheduler()
+        self.app.store.config["music"] = {
+            "enabled": True, "players": ["media_player.sala"], "slots": [first, second],
+            "schedule": [], "stop_at_end": True, "volume": 25, "transition_seconds": 0,
+        }
+        try:
+            with mock.patch.object(self.app, "active_music_slot", side_effect=[first, second]), mock.patch.object(
+                self.app, "fade_sonos"
+            ), mock.patch.object(
+                self.app, "start_music", side_effect=[["media_player.sala"], RuntimeError("Sonos occupato"), ["media_player.sala"]]
+            ) as start:
+                engine.music_tick()
+                engine.music_tick()
+        finally:
+            self.app.store.config["music"] = original
+        self.assertEqual(start.call_count, 3)
+        self.assertEqual(start.call_args_list[-1].args[0]["id"], "one")
+        self.assertEqual(engine.music_slot_id, "one")
+
+    def test_scheduler_waits_before_retrying_failed_music_slot(self):
+        original = json.loads(json.dumps(self.app.store.config["music"]))
+        slot = {
+            "id": "radio", "name": "Radio", "players": ["media_player.sala"],
+            "content_id": "FV:2/31", "content_type": "favorite_item_id", "volume": 30,
+        }
+        engine = self.app.Scheduler()
+        self.app.store.config["music"] = {
+            "enabled": True, "players": ["media_player.sala"], "slots": [slot],
+            "schedule": [], "stop_at_end": True, "volume": 25,
+        }
+        try:
+            with mock.patch.object(self.app, "active_music_slot", return_value=slot), mock.patch.object(
+                self.app, "start_music", side_effect=RuntimeError("UPnP 701")
+            ) as start:
+                engine.music_tick()
+                engine.music_tick()
+        finally:
+            self.app.store.config["music"] = original
+        self.assertEqual(start.call_count, 1)
+        self.assertIsNotNone(engine.music_failed_slot_key)
+        self.assertGreater(engine.music_retry_at, 0)
+        self.assertFalse(engine.music_active)
+
     def test_music_slot_editor_is_available_on_phone(self):
         html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
         self.assertIn("Orari di accensione musica", html)
@@ -596,6 +738,9 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("function replaceMusicSlotSource", html)
         self.assertIn("function duplicateMusicSlot", html)
         self.assertIn(".music-slot-grid{grid-template-columns:1fr}", html)
+        self.assertIn('id="audioTransition"', html)
+        self.assertIn('id="musicTransition"', html)
+        self.assertIn("musicSlotWithinGeneralSchedule", html)
 
     def test_upload_refreshes_library_without_discarding_unsaved_settings(self):
         html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
@@ -870,7 +1015,7 @@ class CarellasServerTest(unittest.TestCase):
 
     def test_single_sonos_uses_synchronized_playback_and_restores_state(self):
         ad = "Carellas_Ristorante_Spot_DE_Maschile.mp3"
-        self.app.store.update({"audio": {"players": ["media_player.sala"], "ads": [ad], "repeat_count": 1, "volume": 35}})
+        self.app.store.update({"audio": {"players": ["media_player.sala"], "ads": [ad], "repeat_count": 1, "volume": 35, "transition_seconds": 0}})
         self.calls.clear()
         with mock.patch.object(self.app, "probe_media_duration", return_value=57), mock.patch.object(
             self.app.time, "sleep"
@@ -902,7 +1047,7 @@ class CarellasServerTest(unittest.TestCase):
             "state": "playing",
             "attributes": {"friendly_name": "Non selezionato", "group_members": ["media_player.non_selezionato"]},
         }]
-        self.app.store.update({"audio": {"players": players, "ads": [ad], "repeat_count": 1}})
+        self.app.store.update({"audio": {"players": players, "ads": [ad], "repeat_count": 1, "transition_seconds": 0}})
         self.calls.clear()
         with mock.patch.object(self.app.ha, "states", return_value=states), mock.patch.object(
             self.app, "probe_media_duration", return_value=57
@@ -936,7 +1081,7 @@ class CarellasServerTest(unittest.TestCase):
     def test_stop_audio_endpoint_interrupts_spot_and_restores_snapshot(self):
         ad = "Carellas_Ristorante_Spot_DE_Maschile.mp3"
         players = ["media_player.sala", "media_player.bar"]
-        self.app.store.update({"audio": {"players": players, "ads": [ad], "repeat_count": 1}})
+        self.app.store.update({"audio": {"players": players, "ads": [ad], "repeat_count": 1, "transition_seconds": 0}})
         self.calls.clear()
         waiting = threading.Event()
         real_wait = self.app.audio_stop_event.wait
@@ -970,7 +1115,7 @@ class CarellasServerTest(unittest.TestCase):
     def test_sonos_state_is_restored_when_spot_playback_fails(self):
         ad = "Carellas_Ristorante_Spot_DE_Maschile.mp3"
         players = ["media_player.sala", "media_player.bar"]
-        self.app.store.update({"audio": {"players": players, "ads": [ad], "repeat_count": 1}})
+        self.app.store.update({"audio": {"players": players, "ads": [ad], "repeat_count": 1, "transition_seconds": 0}})
         self.calls.clear()
         count_before = self.app.scheduler.audio_today()
 
@@ -1001,7 +1146,7 @@ class CarellasServerTest(unittest.TestCase):
             "state": "playing",
             "attributes": {"group_members": original_group},
         } for player in players]
-        self.app.store.update({"audio": {"players": players, "ads": [ad], "repeat_count": 1}})
+        self.app.store.update({"audio": {"players": players, "ads": [ad], "repeat_count": 1, "transition_seconds": 0}})
         self.calls.clear()
         with mock.patch.object(self.app.ha, "states", return_value=states), mock.patch.object(
             self.app, "probe_media_duration", return_value=57
