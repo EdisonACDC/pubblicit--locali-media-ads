@@ -1,5 +1,12 @@
 # Carellas Media Ads
 
+## Novità stabile 0.4.33
+
+- Dissolvenza regolabile per il passaggio tra playlist e radio Sonos, senza interruzioni brusche.
+- Ingresso e uscita graduali degli spot audio; al termine la musica precedente riparte con dissolvenza e con i volumi originali delle singole sale.
+- Tempi tecnici di raggruppamento Sonos ridotti per limitare il silenzio prima e dopo gli annunci.
+- Ogni sorgente musicale deve rientrare interamente negli orari generali di accensione; il pannello mostra subito se la durata supera il limite.
+
 ## Novità stabile 0.4.32
 
 - Il pulsante **Apri** della Libreria usa ora il collegamento protetto Home Assistant Ingress, quindi funziona anche da un PC fuori dalla rete del ristorante.
