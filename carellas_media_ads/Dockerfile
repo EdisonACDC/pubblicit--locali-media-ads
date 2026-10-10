@@ -4,7 +4,7 @@ FROM ${BUILD_FROM}
 WORKDIR /app
 COPY app /app
 COPY run.sh /run.sh
-RUN apk add --no-cache ffmpeg \
+RUN apk add --no-cache ffmpeg py3-websocket-client \
     && cat /app/bundled_media/Carellas_Ristorante_Spot_DE_Femminile.mp3.part.* > /app/bundled_media/Carellas_Ristorante_Spot_DE_Femminile.mp3 \
     && cat /app/bundled_media/Carellas_Ristorante_Spot_DE_Maschile.mp3.part.* > /app/bundled_media/Carellas_Ristorante_Spot_DE_Maschile.mp3 \
     && find /app/bundled_media -name '*.part.*' -delete \
