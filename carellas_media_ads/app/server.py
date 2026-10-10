@@ -41,9 +41,11 @@ TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 HA_API = os.environ.get("CARELLAS_HA_API", "http://supervisor/core/api")
 PORT = 8099
 PLAYER_PORT = 8101
-SONOS_GROUP_SETTLE_SECONDS = float(os.environ.get("CARELLAS_SONOS_GROUP_SETTLE_SECONDS", "1.5"))
-SONOS_RESTORE_SETTLE_SECONDS = float(os.environ.get("CARELLAS_SONOS_RESTORE_SETTLE_SECONDS", "1.5"))
+SONOS_GROUP_SETTLE_SECONDS = float(os.environ.get("CARELLAS_SONOS_GROUP_SETTLE_SECONDS", "0.6"))
+SONOS_RESTORE_SETTLE_SECONDS = float(os.environ.get("CARELLAS_SONOS_RESTORE_SETTLE_SECONDS", "0.6"))
 SONOS_RESTORE_RETRIES = max(1, int(os.environ.get("CARELLAS_SONOS_RESTORE_RETRIES", "3")))
+SONOS_FADE_STEPS = max(2, int(os.environ.get("CARELLAS_SONOS_FADE_STEPS", "6")))
+SONOS_QUIET_VOLUME = 0.01
 MAX_UPLOAD = 1024 * 1024 * 1024 * 4
 UPLOAD_CHUNK_SIZE = 4 * 1024 * 1024
 MIN_FREE_AFTER_UPLOAD = 1024 * 1024 * 512
@@ -163,6 +165,15 @@ class Store:
         # Nella stabile ogni intervallo trasmette esattamente un solo spot.
         audio["repeat_count"] = 1
         audio["repeat_gap_seconds"] = 0
+        try:
+            audio["transition_seconds"] = max(0.0, min(float(audio.get("transition_seconds", 3)), 10.0))
+        except (TypeError, ValueError):
+            audio["transition_seconds"] = 3
+        music = self.config.setdefault("music", {})
+        try:
+            music["transition_seconds"] = max(0.0, min(float(music.get("transition_seconds", 3)), 10.0))
+        except (TypeError, ValueError):
+            music["transition_seconds"] = 3
         if self.config.get("language") not in {"it", "de"}:
             self.config["language"] = "it"
         player = self.config.setdefault("browser_player", {})
@@ -402,10 +413,37 @@ def _slot_intervals(slot):
     return intervals
 
 
+def _schedule_intervals(schedule):
+    """Espande le fasce generali nei sette giorni, comprese quelle notturne."""
+    intervals = []
+    for row in schedule or []:
+        if row.get("enabled", True) is False:
+            continue
+        try:
+            sh, sm = map(int, str(row.get("start", "")).split(":"))
+            eh, em = map(int, str(row.get("end", "")).split(":"))
+            start, end = sh * 60 + sm, eh * 60 + em
+        except (TypeError, ValueError):
+            continue
+        if not (0 <= start < 1440 and 0 <= end < 1440) or start == end:
+            continue
+        for day in row.get("days", []):
+            if not isinstance(day, int) or not 0 <= day <= 6:
+                continue
+            if start < end:
+                intervals.append((day, start, end))
+            else:
+                intervals.append((day, start, 1440))
+                intervals.append(((day + 1) % 7, 0, end))
+    return intervals
+
+
 def validate_music_slots(music):
     """Rifiuta fasce incomplete o sovrapposte sugli stessi Sonos."""
     slots = [slot for slot in (music.get("slots") or []) if slot.get("enabled", True)]
     global_players = set(music.get("players") or [])
+    schedule_rows = [row for row in (music.get("schedule") or []) if row.get("enabled", True)]
+    global_intervals = _schedule_intervals(schedule_rows)
     for index, slot in enumerate(slots):
         label = slot.get("name") or f"Fascia {index + 1}"
         if not slot.get("content_id"):
@@ -414,6 +452,14 @@ def validate_music_slots(music):
             raise RuntimeError(f"{label}: seleziona almeno un giorno")
         if not _slot_intervals(slot):
             raise RuntimeError(f"{label}: orario non valido o inizio uguale alla fine")
+        if schedule_rows and not all(
+            any(day == general_day and general_start <= start and end <= general_end
+                for general_day, general_start, general_end in global_intervals)
+            for day, start, end in _slot_intervals(slot)
+        ):
+            raise RuntimeError(
+                f"{label}: la durata supera gli orari generali di accensione della musica"
+            )
         players = set(slot.get("players") or global_players)
         if not players:
             raise RuntimeError(f"{label}: seleziona almeno un altoparlante Sonos")
@@ -437,11 +483,40 @@ def validate_music_slots(music):
                 )
 
 
+def available_sonos_players(players):
+    """Scarta entità eliminate, non disponibili o non appartenenti all'integrazione Sonos."""
+    requested = list(dict.fromkeys(player for player in players if player))
+    try:
+        states = {item.get("entity_id"): item for item in ha.states()}
+    except Exception as error:
+        store.log("warning", f"Verifica altoparlanti Sonos non riuscita: {error}")
+        return requested
+    sonos_ids = set()
+    for entity_id, item in states.items():
+        members = item.get("attributes", {}).get("group_members")
+        if entity_id.startswith("media_player.") and isinstance(members, list):
+            sonos_ids.add(entity_id)
+            sonos_ids.update(member for member in members if isinstance(member, str))
+    # Le versioni moderne dell'integrazione espongono group_members. Se nessuna
+    # entità lo espone, manteniamo la compatibilità con installazioni più vecchie.
+    if sonos_ids:
+        valid = [
+            player for player in requested
+            if player in sonos_ids and states.get(player, {}).get("state") != "unavailable"
+        ]
+    else:
+        valid = [player for player in requested if states.get(player, {}).get("state") != "unavailable"]
+    removed = [player for player in requested if player not in valid]
+    if removed:
+        store.log("warning", "Altoparlanti ignorati perché non sono Sonos disponibili: " + ", ".join(removed))
+    return valid
+
+
 def prepare_sonos_group(players, force=False):
     """Raggruppa gli altoparlanti e restituisce il coordinatore Sonos."""
-    players = list(dict.fromkeys(player for player in players if player))
+    players = available_sonos_players(players)
     if not players:
-        raise RuntimeError("Nessun altoparlante selezionato")
+        raise RuntimeError("Nessun altoparlante Sonos disponibile tra quelli selezionati")
     coordinator = players[0]
     if len(players) == 1:
         return coordinator
@@ -490,7 +565,63 @@ def sonos_playback_context(players):
     return snapshot_targets, resume_targets
 
 
-def restore_sonos_playback(snapshot_targets, resume_targets):
+def sonos_volume_levels(players, fallback=0.25):
+    """Legge i volumi correnti; il fallback evita salti se HA non espone ancora lo stato."""
+    fallback = max(0.0, min(float(fallback), 1.0))
+    try:
+        states = {item.get("entity_id"): item for item in ha.states()}
+    except Exception as error:
+        store.log("warning", f"Volume Sonos non leggibile: {error}")
+        states = {}
+    levels = {}
+    for player in dict.fromkeys(players):
+        raw = states.get(player, {}).get("attributes", {}).get("volume_level", fallback)
+        try:
+            levels[player] = max(0.0, min(float(raw), 1.0))
+        except (TypeError, ValueError):
+            levels[player] = fallback
+    return levels
+
+
+def set_sonos_volume_levels(levels):
+    """Imposta anche volumi diversi senza perdere il bilanciamento tra le sale."""
+    grouped = {}
+    for player, level in levels.items():
+        grouped.setdefault(round(max(0.0, min(float(level), 1.0)), 3), []).append(player)
+    for level, players in grouped.items():
+        ha.service("media_player", "volume_set", {
+            "entity_id": players,
+            "volume_level": level,
+        })
+
+
+def fade_sonos(players, target, seconds, start_levels=None):
+    """Dissolvenza lineare corta e stabile, mantenendo i volumi relativi dei Sonos."""
+    players = available_sonos_players(players)
+    if not players:
+        return
+    seconds = max(0.0, min(float(seconds or 0), 15.0))
+    if isinstance(target, dict):
+        targets = {player: max(0.0, min(float(target.get(player, 0)), 1.0)) for player in players}
+    else:
+        targets = {player: max(0.0, min(float(target), 1.0)) for player in players}
+    starts = start_levels or sonos_volume_levels(players, next(iter(targets.values()), 0.25))
+    if seconds <= 0:
+        set_sonos_volume_levels(targets)
+        return
+    for step in range(1, SONOS_FADE_STEPS + 1):
+        progress = step / SONOS_FADE_STEPS
+        set_sonos_volume_levels({
+            player: starts.get(player, targets[player]) +
+            (targets[player] - starts.get(player, targets[player])) * progress
+            for player in players
+        })
+        if step < SONOS_FADE_STEPS:
+            time.sleep(seconds / SONOS_FADE_STEPS)
+
+
+def restore_sonos_playback(snapshot_targets, resume_targets, selected_players=None, volume_levels=None,
+                           transition_seconds=0):
     """Ripristina gruppi/coda e riavvia la musica che proveniva direttamente da Sonos."""
     last_error = None
     for attempt in range(SONOS_RESTORE_RETRIES):
@@ -511,7 +642,17 @@ def restore_sonos_playback(snapshot_targets, resume_targets):
     if SONOS_RESTORE_SETTLE_SECONDS > 0:
         time.sleep(SONOS_RESTORE_SETTLE_SECONDS)
     if resume_targets:
+        selected_players = list(dict.fromkeys(selected_players or snapshot_targets))
+        if volume_levels and transition_seconds > 0:
+            set_sonos_volume_levels({player: SONOS_QUIET_VOLUME for player in selected_players})
         ha.service("media_player", "media_play", {"entity_id": resume_targets})
+        if volume_levels and transition_seconds > 0:
+            fade_sonos(
+                selected_players,
+                volume_levels,
+                transition_seconds,
+                {player: SONOS_QUIET_VOLUME for player in selected_players},
+            )
         store.log("info", f"Ripresa forzata della musica Sonos su {len(resume_targets)} gruppo/i")
 
 
@@ -527,7 +668,9 @@ def play_audio(filename=None, manual=False):
     if not filename:
         raise RuntimeError("Nessuno spot audio configurato")
 
-    players = list(dict.fromkeys(player for player in players if player))
+    players = available_sonos_players(players)
+    if not players:
+        raise RuntimeError("Nessun altoparlante Sonos disponibile tra quelli selezionati")
     repetitions = max(1, min(int(cfg.get("repeat_count", 1)), 10))
     if not manual:
         # La programmazione automatica deve trasmettere un solo spot a ogni
@@ -542,6 +685,7 @@ def play_audio(filename=None, manual=False):
     gap = max(0, min(int(cfg.get("repeat_gap_seconds", 5)), 600))
     duration = probe_media_duration(MEDIA_DIR / safe_name(filename))
     volume = max(1, min(int(cfg.get("volume", 35)), 100))
+    transition = max(0.0, min(float(cfg.get("transition_seconds", 3)), 10.0))
 
     if not audio_playback_lock.acquire(blocking=False):
         raise RuntimeError("Uno spot Sonos è già in riproduzione")
@@ -550,6 +694,7 @@ def play_audio(filename=None, manual=False):
     snapshot_targets = list(players)
     resume_targets = []
     stopped = False
+    previous_volumes = sonos_volume_levels(players, 0.25)
     try:
         # La funzione Sonos announce avvia un AudioClip indipendente su ogni
         # diffusore e non garantisce la sincronizzazione. Salviamo quindi lo
@@ -561,14 +706,13 @@ def play_audio(filename=None, manual=False):
             "with_group": True,
         })
         snapshot_created = True
+        fade_sonos(players, SONOS_QUIET_VOLUME, transition, previous_volumes)
         ha.service("media_player", "unjoin", {"entity_id": players})
         if SONOS_GROUP_SETTLE_SECONDS > 0:
             time.sleep(SONOS_GROUP_SETTLE_SECONDS)
         coordinator = prepare_sonos_group(players, force=True)
-        ha.service("media_player", "volume_set", {
-            "entity_id": players,
-            "volume_level": volume / 100,
-        })
+        quiet_levels = {player: SONOS_QUIET_VOLUME for player in players}
+        set_sonos_volume_levels(quiet_levels)
 
         for index in range(repetitions):
             if audio_stop_event.is_set():
@@ -579,22 +723,34 @@ def play_audio(filename=None, manual=False):
                 "media_content_type": "music",
                 "media_content_id": media_url(filename),
             })
+            spot_started = time.monotonic()
+            fade_in = min(transition, duration / 4)
+            fade_sonos(players, volume / 100, fade_in, quiet_levels)
             scheduler.record_audio_play()
             store.log(
                 "success",
                 f"Spot sincronizzato su {len(players)} Sonos selezionati: "
                 f"{filename} ({index + 1}/{repetitions})",
             )
-            if audio_stop_event.wait(duration):
+            fade_out = min(transition, duration / 4)
+            remaining = max(0.0, duration - (time.monotonic() - spot_started) - fade_out)
+            if audio_stop_event.wait(remaining):
                 stopped = True
                 break
+            fade_sonos(players, SONOS_QUIET_VOLUME, fade_out)
             if index + 1 < repetitions and gap and audio_stop_event.wait(gap):
                 stopped = True
                 break
     finally:
         if snapshot_created:
             try:
-                restore_sonos_playback(snapshot_targets, resume_targets)
+                restore_sonos_playback(
+                    snapshot_targets,
+                    resume_targets,
+                    players,
+                    previous_volumes,
+                    transition,
+                )
                 store.log("info", f"Musica e gruppi ripristinati su {len(players)} Sonos selezionati")
             except Exception as error:
                 store.log("error", f"Ripristino Sonos non riuscito: {error}")
@@ -614,32 +770,79 @@ def stop_audio():
     store.log("info", "Richiesto arresto immediato dello spot Sonos")
     return True
 
-def start_music(selection=None):
+def play_sonos_media(payload, retries=2):
+    """Avvia una sorgente Sonos e gestisce la transizione UPnP 701 ancora occupata."""
+    last_error = None
+    for attempt in range(max(1, int(retries))):
+        try:
+            ha.service("media_player", "play_media", payload)
+            return
+        except Exception as error:
+            last_error = error
+            message = str(error).lower()
+            transition_busy = "701" in message and "transition not available" in message
+            if not transition_busy or attempt + 1 >= retries:
+                raise
+            store.log("warning", "Sonos ancora occupato nel cambio sorgente: nuovo tentativo controllato")
+            ha.service("media_player", "media_stop", {"entity_id": payload["entity_id"]})
+            time.sleep(1.2)
+    raise last_error
+
+
+def start_music(selection=None, fade_in=False):
     cfg = store.config["music"]
     selection = selection or cfg
-    players = list(dict.fromkeys(selection.get("players") or cfg.get("players") or []))
+    players = available_sonos_players(selection.get("players") or cfg.get("players") or [])
     content_id = selection.get("content_id")
     if not players or not content_id:
         raise RuntimeError("Configurazione musica incompleta")
     coordinator = prepare_sonos_group(players)
-    ha.service("media_player", "volume_set", {
-        "entity_id": players,
-        "volume_level": max(0, min(int(selection.get("volume", cfg.get("volume", 25))), 100)) / 100,
-    })
+    target_volume = max(0, min(int(selection.get("volume", cfg.get("volume", 25))), 100)) / 100
+    transition = max(0.0, min(float(cfg.get("transition_seconds", 3)), 10.0)) if fade_in else 0
+    previous_levels = sonos_volume_levels(players, target_volume)
+    start_level = SONOS_QUIET_VOLUME if transition > 0 else target_volume
+    set_sonos_volume_levels({player: start_level for player in players})
     payload = {
         "entity_id": coordinator,
         "media_content_type": selection.get("content_type", "music"),
         "media_content_id": content_id,
     }
-    ha.service("media_player", "play_media", payload)
+    try:
+        play_sonos_media(payload)
+    except Exception:
+        # Se il cambio non riesce, non lasciare i diffusori muti: prova a
+        # riprendere il flusso che Sonos stava già eseguendo e il suo volume.
+        try:
+            ha.service("media_player", "media_play", {"entity_id": coordinator})
+            if transition > 0:
+                fade_sonos(
+                    players,
+                    previous_levels,
+                    transition,
+                    {player: start_level for player in players},
+                )
+            else:
+                set_sonos_volume_levels(previous_levels)
+        except Exception as restore_error:
+            store.log("error", f"Ripresa musica dopo cambio fallito non riuscita: {restore_error}")
+        raise
+    if transition > 0:
+        fade_sonos(
+            players,
+            target_volume,
+            transition,
+            {player: start_level for player in players},
+        )
     title = selection.get("name") or selection.get("title") or content_id
     store.log("success", f"Musica del locale avviata sul gruppo Sonos sincronizzato: {title}")
     return players
 
 
-def stop_music(players=None):
+def stop_music(players=None, fade_seconds=0):
     players = list(dict.fromkeys(players or store.config["music"].get("players", [])))
     if players:
+        if fade_seconds:
+            fade_sonos(players, SONOS_QUIET_VOLUME, fade_seconds)
         ha.service("media_player", "media_stop", {"entity_id": players})
         store.log("info", "Musica del locale arrestata dalla programmazione")
 
@@ -1173,6 +1376,10 @@ class Scheduler(threading.Thread):
         self.music_slot_key = None
         self.music_slot_id = None
         self.music_players = []
+        self.music_volume = 0.25
+        self.music_selection = None
+        self.music_failed_slot_key = None
+        self.music_retry_at = 0.0
         self.tv_active = False
         self.tv_ready_at = 0.0
         self.iptv_active = {}
@@ -1229,7 +1436,7 @@ class Scheduler(threading.Thread):
         return selected
 
     def selected_playing(self):
-        selected = set(store.config["audio"].get("players", []))
+        selected = set(available_sonos_players(store.config["audio"].get("players", [])))
         if not selected:
             return False
         try:
@@ -1278,11 +1485,19 @@ class Scheduler(threading.Thread):
                 slot.get("players", []),
                 slot.get("volume", cfg.get("volume", 25)),
             ], ensure_ascii=False, sort_keys=True)
+        if active and slot_key == self.music_failed_slot_key and time.monotonic() < self.music_retry_at:
+            # Un Sonos in transizione può restituire UPnP 701 per alcuni
+            # secondi. Evitiamo una raffica di tentativi a ogni ciclo.
+            return
         changed = active and slot_key != self.music_slot_key
         if changed:
+            previous_selection = copy.deepcopy(self.music_selection)
             try:
                 previous = list(self.music_players)
                 target_players = list(dict.fromkeys(slot.get("players") or cfg.get("players") or []))
+                transition = max(0.0, min(float(cfg.get("transition_seconds", 3)), 10.0))
+                if previous:
+                    fade_sonos(previous, SONOS_QUIET_VOLUME, transition)
                 if previous and set(previous) != set(target_players):
                     # Scioglie il vecchio gruppo prima di crearne uno diverso:
                     # un Sonos rimosso dalla fascia non deve continuare a suonare.
@@ -1292,21 +1507,42 @@ class Scheduler(threading.Thread):
                     })
                     if SONOS_GROUP_SETTLE_SECONDS > 0:
                         time.sleep(SONOS_GROUP_SETTLE_SECONDS)
-                players = start_music(slot)
+                players = start_music(slot, fade_in=True)
                 self.music_players = players
+                self.music_volume = max(0, min(int(slot.get("volume", cfg.get("volume", 25))), 100)) / 100
                 self.music_slot_key = slot_key
                 self.music_slot_id = slot.get("id")
+                self.music_selection = copy.deepcopy(slot)
+                self.music_failed_slot_key = None
+                self.music_retry_at = 0.0
             except Exception as error:
                 store.log("error", f"Avvio musica non riuscito: {error}")
-                active = False
+                self.music_failed_slot_key = slot_key
+                self.music_retry_at = time.monotonic() + 300
+                if previous_selection:
+                    try:
+                        self.music_players = start_music(previous_selection, fade_in=True)
+                        active = True
+                        store.log("warning", "Cambio sorgente annullato: ripristinata la musica precedente")
+                    except Exception as restore_error:
+                        store.log("error", f"Ripristino sorgente musicale non riuscito: {restore_error}")
+                        active = False
+                else:
+                    active = False
         elif not active and self.music_active and cfg.get("stop_at_end", True):
             try:
-                stop_music(self.music_players)
+                stop_music(self.music_players, cfg.get("transition_seconds", 3))
             except Exception as error:
                 store.log("error", f"Arresto musica non riuscito: {error}")
             self.music_players = []
             self.music_slot_key = None
             self.music_slot_id = None
+            self.music_selection = None
+            self.music_failed_slot_key = None
+            self.music_retry_at = 0.0
+        elif not active:
+            self.music_failed_slot_key = None
+            self.music_retry_at = 0.0
         self.music_active = active
 
     def tv_tick(self):
@@ -1400,7 +1636,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4.32"
+    server_version = "CarellasMediaAds/0.4.33"
 
     def log_message(self, fmt, *args):
         return
@@ -1612,6 +1848,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path == "/api/state":
                 entities = []
+                media_entities = []
+                sonos_detected = False
                 power_entities = []
                 favorites_by_id = {}
                 error = None
@@ -1626,7 +1864,11 @@ class Handler(BaseHTTPRequestHandler):
                             "device_class": attrs.get("device_class"),
                         }
                         if entity_id.startswith("media_player."):
-                            entities.append(item)
+                            media_entities.append(item)
+                            if isinstance(attrs.get("group_members"), list):
+                                sonos_detected = True
+                                if state.get("state") != "unavailable":
+                                    entities.append(item)
                         if entity_id.startswith(("media_player.", "switch.", "button.", "script.")):
                             power_entities.append(item)
                         favorites = attrs.get("items")
@@ -1636,6 +1878,10 @@ class Handler(BaseHTTPRequestHandler):
                                     favorites_by_id[str(media_id)] = str(name)
                 except Exception as exc:
                     error = str(exc)
+                # Compatibilità con installazioni Sonos meno recenti, nelle
+                # quali group_members potrebbe non essere ancora esposto.
+                if not sonos_detected:
+                    entities = media_entities
                 self.send_json({
                     "config": store.config,
                     "media": store.media(),
@@ -2034,7 +2280,7 @@ def player_session_username(token):
 class PlayerHandler(Handler):
     """Porta pubblica limitata al player TV: nessun accesso alla configurazione dell'add-on."""
 
-    server_version = "CarellasTVPlayer/0.4.32"
+    server_version = "CarellasTVPlayer/0.4.33"
 
     def player_username(self):
         cookie = SimpleCookie(self.headers.get("Cookie", ""))
