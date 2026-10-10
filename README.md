@@ -1,5 +1,11 @@
 # Carellas Media Ads
 
+## Novità stabile 0.4.37
+
+- La libreria Sonos completa viene ora letta tramite il Media Browser WebSocket ufficiale di Home Assistant, lo stesso percorso utilizzato dal player multimediale.
+- Il pulsante **Aggiorna playlist Sonos** recupera anche le playlist Sonos e le cartelle riproducibili, non soltanto i Preferiti già presenti nel sensore.
+- Gli errori di autenticazione o lettura vengono mostrati chiaramente nel pannello invece di lasciare apparentemente invariato l'elenco.
+
 ## Novità stabile 0.4.36
 
 - Gli orari generali sono ora il limite principale: playlist e radio vengono automaticamente attivate soltanto nei giorni e nelle fasce generali, anche quando la sorgente contiene giorni più ampi.
