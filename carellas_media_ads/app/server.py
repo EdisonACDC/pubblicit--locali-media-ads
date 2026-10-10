@@ -2040,7 +2040,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4.44"
+    server_version = "CarellasMediaAds/0.4.45"
 
     def log_message(self, fmt, *args):
         return
@@ -2573,8 +2573,26 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"ok": True})
                 return
             if path == "/api/music/start":
-                start_music()
-                self.send_json({"ok": True})
+                body = self.json_body()
+                selection = None
+                if body.get("scheduled"):
+                    music = store.config["music"]
+                    selection = active_music_slot(music)
+                    if not selection:
+                        selection = next((
+                            slot for slot in music.get("slots", [])
+                            if slot.get("enabled", True)
+                            and slot.get("content_id")
+                            and (slot.get("players") or music.get("players"))
+                        ), None)
+                    selection = selection or music
+                start_music(selection)
+                selected = selection or store.config["music"]
+                self.send_json({
+                    "ok": True,
+                    "source": selected.get("name") or selected.get("title")
+                    or selected.get("content_id", ""),
+                })
                 return
             if path == "/api/music/refresh":
                 body = self.json_body()
@@ -2696,7 +2714,7 @@ def player_session_username(token):
 class PlayerHandler(Handler):
     """Porta pubblica limitata al player TV: nessun accesso alla configurazione dell'add-on."""
 
-    server_version = "CarellasTVPlayer/0.4.44"
+    server_version = "CarellasTVPlayer/0.4.45"
 
     def player_username(self):
         cookie = SimpleCookie(self.headers.get("Cookie", ""))
