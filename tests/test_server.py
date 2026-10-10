@@ -45,6 +45,9 @@ class CarellasServerTest(unittest.TestCase):
         cls.player_httpd.server_close()
         cls.temp.cleanup()
 
+    def setUp(self):
+        self.app.SONOS_CATALOG_FILE.unlink(missing_ok=True)
+
     def request(self, path, method="GET", body=None, content_type="application/json"):
         data = None if body is None else (body if isinstance(body, bytes) else json.dumps(body).encode())
         req = urllib.request.Request(self.base + path, data=data, method=method, headers={"Content-Type": content_type})
@@ -321,8 +324,8 @@ class CarellasServerTest(unittest.TestCase):
             status, payload = self.request("/api/state")
         self.assertEqual(status, 200)
         self.assertEqual(payload["sonos_favorites"], [
-            {"id": "FV:2/4", "name": "Cena Carellas"},
-            {"id": "FV:2/31", "name": "Radio Italia"},
+            {"id": "FV:2/4", "name": "Cena Carellas", "type": "favorite_item_id"},
+            {"id": "FV:2/31", "name": "Radio Italia", "type": "favorite_item_id"},
         ])
 
     def test_sonos_refresh_forces_favorites_update_and_scans_nested_playlists(self):
@@ -375,6 +378,140 @@ class CarellasServerTest(unittest.TestCase):
         })
         self.assertEqual(catalog["folders_scanned"], 2)
         self.assertFalse(catalog["truncated"])
+
+    def test_sonos_refresh_rejects_generic_home_assistant_media_browser(self):
+        states = [{
+            "entity_id": "sensor.sonos_favorites", "state": "1",
+            "attributes": {"items": {"FV:2/31": "Radio Italia"}},
+        }]
+        generic_root = {"title": "Audio", "children": [{
+            "title": "Radio Browser", "media_content_type": "library",
+            "media_content_id": "media-source://radio_browser", "can_expand": True,
+            "can_play": False,
+        }, {
+            "title": "Brano locale", "media_content_type": "audio/mpeg",
+            "media_content_id": "media-source://media_source/local/song.mp3",
+            "can_expand": False, "can_play": True,
+        }]}
+
+        with mock.patch.object(self.app.ha, "states", side_effect=[states, states]), \
+                mock.patch.object(self.app.ha, "service"), \
+                mock.patch.object(self.app.ha, "browse_media", return_value=generic_root) as browse:
+            catalog = self.app.refresh_sonos_catalog("media_player.sala")
+
+        self.assertEqual(catalog["items"], [{
+            "id": "FV:2/31", "name": "Radio Italia", "type": "favorite_item_id",
+        }])
+        self.assertEqual(catalog["folders_scanned"], 0)
+        self.assertEqual(catalog["source"], "sonos")
+        browse.assert_called_once_with("media_player.sala", None, None)
+
+    def test_saved_sonos_catalog_discards_old_radio_browser_entries(self):
+        self.app.SONOS_CATALOG_FILE.write_text(json.dumps({"items": [{
+            "id": "media-source://radio_browser/abc",
+            "name": "Radio Browser inutile",
+            "type": "audio/mpeg",
+        }, {
+            "id": "Carellas Ristorante",
+            "name": "Carellas Ristorante",
+            "type": "sonos_source",
+        }]}), encoding="utf-8")
+
+        self.assertEqual(self.app.load_sonos_catalog(), [{
+            "id": "Carellas Ristorante",
+            "name": "Carellas Ristorante",
+            "type": "sonos_source",
+        }])
+
+    def test_sonos_refresh_reads_native_sources_from_sonos_player(self):
+        states = [{
+            "entity_id": "media_player.sala",
+            "state": "playing",
+            "attributes": {
+                "friendly_name": "Sonos Sala",
+                "group_members": ["media_player.sala"],
+                "source_list": ["Carellas Ristorante", "Gigi D'Alessio"],
+            },
+        }]
+        generic_root = {"title": "Audio", "children": [{
+            "title": "Radio Browser",
+            "media_content_type": "library",
+            "media_content_id": "media-source://radio_browser",
+            "can_expand": True,
+            "can_play": False,
+        }]}
+
+        with mock.patch.object(self.app.ha, "states", return_value=states), \
+                mock.patch.object(self.app.ha, "browse_media", return_value=generic_root):
+            catalog = self.app.refresh_sonos_catalog("media_player.sala")
+
+        self.assertEqual(catalog["items"], [{
+            "id": "Carellas Ristorante",
+            "name": "Carellas Ristorante",
+            "type": "sonos_source",
+        }, {
+            "id": "Gigi D'Alessio",
+            "name": "Gigi D'Alessio",
+            "type": "sonos_source",
+        }])
+
+    def test_sonos_refresh_scans_only_explicit_sonos_folder_in_generic_root(self):
+        states = []
+        root = {"title": "Audio", "children": [{
+            "title": "Radio Browser", "media_content_type": "library",
+            "media_content_id": "radio-browser", "can_expand": True, "can_play": False,
+        }, {
+            "title": "I miei Sonos", "media_content_type": "favorites",
+            "media_content_id": "my-sonos", "can_expand": True, "can_play": False,
+        }]}
+        sonos = {"title": "I miei Sonos", "children": [{
+            "title": "Carellas Ristorante", "media_content_type": "playlist",
+            "media_content_id": "S:/Carellas", "can_expand": False, "can_play": True,
+        }]}
+
+        def browse(_entity_id, _media_type=None, media_id=None):
+            return {None: root, "my-sonos": sonos}[media_id]
+
+        with mock.patch.object(self.app.ha, "states", return_value=states), \
+                mock.patch.object(self.app.ha, "browse_media", side_effect=browse) as call:
+            catalog = self.app.refresh_sonos_catalog("media_player.sala")
+
+        self.assertEqual([item["id"] for item in catalog["items"]], ["S:/Carellas"])
+        self.assertEqual(catalog["folders_scanned"], 1)
+        self.assertEqual(call.call_count, 2)
+
+    def test_refreshed_sonos_catalog_survives_next_state_reload(self):
+        self.app.SONOS_CATALOG_FILE.unlink(missing_ok=True)
+        before = [{
+            "entity_id": "sensor.sonos_favorites", "state": "1",
+            "attributes": {"items": {"FV:2/31": "Radio Italia"}},
+        }]
+        after = [{
+            "entity_id": "sensor.sonos_favorites", "state": "1",
+            "attributes": {"items": {"FV:2/31": "Radio Italia"}},
+        }]
+        state_reload = [{
+            "entity_id": "media_player.sala", "state": "idle",
+            "attributes": {
+                "friendly_name": "Sonos Sala",
+                "group_members": ["media_player.sala"],
+            },
+        }, *after]
+        root = {"title": "Sonos", "children": [{
+            "title": "Carellas Ristorante", "media_content_type": "playlist",
+            "media_content_id": "S:/Carellas", "can_expand": False, "can_play": True,
+        }]}
+        with mock.patch.object(self.app.ha, "states", side_effect=[before, after, state_reload]), \
+                mock.patch.object(self.app.ha, "service"), \
+                mock.patch.object(self.app.ha, "browse_media", return_value=root):
+            status, refreshed = self.request("/api/music/refresh", "POST", {
+                "entity_id": "media_player.sala",
+            })
+            self.assertEqual(status, 200)
+            self.assertIn("S:/Carellas", {item["id"] for item in refreshed["items"]})
+            status, reloaded = self.request("/api/state")
+        self.assertEqual(status, 200)
+        self.assertIn("S:/Carellas", {item["id"] for item in reloaded["sonos_favorites"]})
 
     def test_state_sonos_picker_hides_unavailable_and_non_sonos_players(self):
         states = [{
@@ -540,6 +677,26 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(len(play_calls), 1)
         self.assertEqual(play_calls[0][2]["entity_id"], "media_player.sala")
         self.assertEqual(play_calls[0][2]["media_content_id"], "https://example.test/radio.mp3")
+
+    def test_music_start_uses_select_source_for_native_sonos_playlist(self):
+        self.app.store.update({"music": {
+            "players": ["media_player.sala"],
+            "content_id": "Carellas Ristorante",
+            "content_type": "sonos_source",
+            "volume": 25,
+        }})
+        self.calls.clear()
+
+        status, payload = self.request("/api/music/start", "POST", {})
+
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["ok"])
+        self.assertIn(("media_player", "select_source", {
+            "entity_id": "media_player.sala",
+            "source": "Carellas Ristorante",
+        }), self.calls)
+        self.assertTrue(any(call[1] == "media_play" for call in self.calls))
+        self.assertFalse(any(call[1] == "play_media" for call in self.calls))
 
     def test_music_browser_uses_selected_sonos_media_library(self):
         browser = {
