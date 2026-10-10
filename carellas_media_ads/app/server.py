@@ -52,6 +52,9 @@ SONOS_RESTORE_SETTLE_SECONDS = float(os.environ.get("CARELLAS_SONOS_RESTORE_SETT
 SONOS_RESTORE_RETRIES = max(1, int(os.environ.get("CARELLAS_SONOS_RESTORE_RETRIES", "3")))
 SONOS_FADE_STEPS = max(2, int(os.environ.get("CARELLAS_SONOS_FADE_STEPS", "6")))
 SONOS_GROUP_CHECK_SECONDS = max(5.0, float(os.environ.get("CARELLAS_SONOS_GROUP_CHECK_SECONDS", "15")))
+SONOS_SPOT_TAIL_GUARD_SECONDS = max(
+    0.0, min(float(os.environ.get("CARELLAS_SONOS_SPOT_TAIL_GUARD_SECONDS", "0.4")), 2.0)
+)
 SONOS_QUIET_VOLUME = 0.01
 MAX_UPLOAD = 1024 * 1024 * 1024 * 4
 UPLOAD_CHUNK_SIZE = 4 * 1024 * 1024
@@ -1010,32 +1013,35 @@ def play_audio(filename=None, manual=False):
             time.sleep(SONOS_GROUP_SETTLE_SECONDS)
         coordinator = prepare_sonos_group(players, force=True)
         quiet_levels = {player: SONOS_QUIET_VOLUME for player in players}
+        spot_levels = {player: volume / 100 for player in players}
         set_sonos_volume_levels(quiet_levels)
 
         for index in range(repetitions):
             if audio_stop_event.is_set():
                 stopped = True
                 break
+            # La dissolvenza riguarda la musica precedente, non lo spot: il
+            # messaggio deve partire subito al volume impostato e deve restare
+            # integro fino all'ultima sillaba.
+            set_sonos_volume_levels(spot_levels)
             ha.service("media_player", "play_media", {
                 "entity_id": coordinator,
                 "media_content_type": "music",
                 "media_content_id": media_url(filename),
             })
-            spot_started = time.monotonic()
-            fade_in = min(transition, duration / 4)
-            fade_sonos(players, volume / 100, fade_in, quiet_levels)
             scheduler.record_audio_play()
             store.log(
                 "success",
                 f"Spot sincronizzato su {len(players)} Sonos selezionati: "
                 f"{filename} ({index + 1}/{repetitions})",
             )
-            fade_out = min(transition, duration / 4)
-            remaining = max(0.0, duration - (time.monotonic() - spot_started) - fade_out)
-            if audio_stop_event.wait(remaining):
+            # Il piccolo margine compensa il buffering iniziale dei Sonos. In
+            # precedenza la dissolvenza iniziava prima della fine e tagliava la
+            # traccia; ora il ripristino parte solo dopo la durata completa.
+            if audio_stop_event.wait(duration + SONOS_SPOT_TAIL_GUARD_SECONDS):
                 stopped = True
                 break
-            fade_sonos(players, SONOS_QUIET_VOLUME, fade_out)
+            set_sonos_volume_levels(quiet_levels)
             if index + 1 < repetitions and gap and audio_stop_event.wait(gap):
                 stopped = True
                 break
@@ -1997,7 +2003,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4.42"
+    server_version = "CarellasMediaAds/0.4.43"
 
     def log_message(self, fmt, *args):
         return
@@ -2653,7 +2659,7 @@ def player_session_username(token):
 class PlayerHandler(Handler):
     """Porta pubblica limitata al player TV: nessun accesso alla configurazione dell'add-on."""
 
-    server_version = "CarellasTVPlayer/0.4.42"
+    server_version = "CarellasTVPlayer/0.4.43"
 
     def player_username(self):
         cookie = SimpleCookie(self.headers.get("Cookie", ""))
