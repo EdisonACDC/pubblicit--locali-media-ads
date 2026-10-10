@@ -303,6 +303,109 @@ audio_playback_lock = threading.Lock()
 audio_stop_event = threading.Event()
 
 
+def _sonos_browser(entity_id, media_type=None, media_id=None):
+    payload = {"entity_id": entity_id}
+    if media_type:
+        payload["media_content_type"] = str(media_type)
+    if media_id:
+        payload["media_content_id"] = str(media_id)
+    response = ha.service_response("media_player", "browse_media", payload)
+    browser = response.get(entity_id)
+    if browser is None and response:
+        browser = next(iter(response.values()))
+    if not isinstance(browser, dict):
+        raise RuntimeError("Il player selezionato non ha restituito contenuti multimediali")
+    return browser
+
+
+def refresh_sonos_catalog(entity_id, max_depth=5, max_folders=120, max_items=3000):
+    """Aggiorna i Preferiti e percorre ricorsivamente la sezione 'I miei Sonos'."""
+    states = ha.states()
+    favorite_entities = []
+    items = {}
+    for state in states:
+        entity = str(state.get("entity_id", ""))
+        attrs = state.get("attributes", {})
+        favorites = attrs.get("items")
+        if entity == "sensor.sonos_favorites" or isinstance(favorites, dict):
+            if entity.startswith("sensor."):
+                favorite_entities.append(entity)
+        if isinstance(favorites, dict):
+            for media_id, name in favorites.items():
+                if str(media_id).startswith("FV:"):
+                    items[str(media_id)] = {
+                        "id": str(media_id), "name": str(name), "type": "favorite_item_id",
+                    }
+    if favorite_entities:
+        try:
+            ha.service("homeassistant", "update_entity", {
+                "entity_id": list(dict.fromkeys(favorite_entities)),
+            })
+            for state in ha.states():
+                favorites = state.get("attributes", {}).get("items")
+                if isinstance(favorites, dict):
+                    for media_id, name in favorites.items():
+                        if str(media_id).startswith("FV:"):
+                            items[str(media_id)] = {
+                                "id": str(media_id), "name": str(name), "type": "favorite_item_id",
+                            }
+        except Exception as error:
+            store.log("warning", f"Aggiornamento Preferiti Sonos non riuscito: {error}")
+
+    root = _sonos_browser(entity_id)
+
+    def remember(browser):
+        for child in browser.get("children") or []:
+            media_id = str(child.get("media_content_id") or "")
+            if child.get("can_play") and media_id:
+                items[media_id] = {
+                    "id": media_id,
+                    "name": str(child.get("title") or media_id),
+                    "type": str(child.get("media_content_type") or "music"),
+                }
+
+    remember(root)
+    root_folders = [child for child in (root.get("children") or []) if child.get("can_expand")]
+    preferred = [
+        child for child in root_folders
+        if re.search(
+            r"favor|prefer|mein sonos|my sonos|playlist|radio|sender|station",
+            " ".join(str(child.get(key) or "") for key in (
+                "title", "media_class", "media_content_type", "media_content_id",
+            )),
+            re.IGNORECASE,
+        )
+    ]
+    queue = [(child, 1) for child in (preferred or root_folders)]
+    visited = set()
+    browsed = 0
+    while queue and browsed < max_folders and len(items) < max_items:
+        folder, depth = queue.pop(0)
+        key = (str(folder.get("media_content_type") or ""), str(folder.get("media_content_id") or ""))
+        if not key[1] or key in visited:
+            continue
+        visited.add(key)
+        try:
+            browser = _sonos_browser(entity_id, key[0], key[1])
+        except Exception as error:
+            store.log("warning", f"Cartella Sonos non leggibile ({folder.get('title', key[1])}): {error}")
+            continue
+        browsed += 1
+        remember(browser)
+        if depth < max_depth:
+            queue.extend(
+                (child, depth + 1)
+                for child in (browser.get("children") or [])
+                if child.get("can_expand")
+            )
+    return {
+        "root": root,
+        "items": sorted(items.values(), key=lambda item: item["name"].lower()),
+        "folders_scanned": browsed,
+        "truncated": bool(queue or len(items) >= max_items),
+    }
+
+
 def local_base_url():
     configured = store.config.get("media_base_url", "").strip().rstrip("/")
     if configured:
@@ -443,8 +546,6 @@ def validate_music_slots(music):
     """Rifiuta fasce incomplete o sovrapposte sugli stessi Sonos."""
     slots = [slot for slot in (music.get("slots") or []) if slot.get("enabled", True)]
     global_players = set(music.get("players") or [])
-    schedule_rows = [row for row in (music.get("schedule") or []) if row.get("enabled", True)]
-    global_intervals = _schedule_intervals(schedule_rows)
     for index, slot in enumerate(slots):
         label = slot.get("name") or f"Fascia {index + 1}"
         if not slot.get("content_id"):
@@ -453,14 +554,9 @@ def validate_music_slots(music):
             raise RuntimeError(f"{label}: seleziona almeno un giorno")
         if not _slot_intervals(slot):
             raise RuntimeError(f"{label}: orario non valido o inizio uguale alla fine")
-        if schedule_rows and not all(
-            any(day == general_day and general_start <= start and end <= general_end
-                for general_day, general_start, general_end in global_intervals)
-            for day, start, end in _slot_intervals(slot)
-        ):
-            raise RuntimeError(
-                f"{label}: la durata supera gli orari generali di accensione della musica"
-            )
+        # Gli orari generali sono il cancello principale: una sorgente può
+        # contenere giorni/orari più ampi e verrà semplicemente ignorata fuori
+        # dalle fasce generali da active_music_slot().
         players = set(slot.get("players") or global_players)
         if not players:
             raise RuntimeError(f"{label}: seleziona almeno un altoparlante Sonos")
@@ -1755,7 +1851,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4.35"
+    server_version = "CarellasMediaAds/0.4.36"
 
     def log_message(self, fmt, *args):
         return
@@ -2279,22 +2375,22 @@ class Handler(BaseHTTPRequestHandler):
                 start_music()
                 self.send_json({"ok": True})
                 return
+            if path == "/api/music/refresh":
+                body = self.json_body()
+                entity_id = str(body.get("entity_id", ""))
+                if not entity_id.startswith("media_player."):
+                    raise RuntimeError("Seleziona prima un altoparlante Sonos")
+                catalog = refresh_sonos_catalog(entity_id)
+                self.send_json({"ok": True, **catalog})
+                return
             if path == "/api/music/browse":
                 body = self.json_body()
                 entity_id = str(body.get("entity_id", ""))
                 if not entity_id.startswith("media_player."):
                     raise RuntimeError("Seleziona prima un altoparlante Sonos")
-                payload = {"entity_id": entity_id}
-                if body.get("media_content_type"):
-                    payload["media_content_type"] = str(body["media_content_type"])
-                if body.get("media_content_id"):
-                    payload["media_content_id"] = str(body["media_content_id"])
-                response = ha.service_response("media_player", "browse_media", payload)
-                browser = response.get(entity_id)
-                if browser is None and response:
-                    browser = next(iter(response.values()))
-                if not isinstance(browser, dict):
-                    raise RuntimeError("Il player selezionato non ha restituito contenuti multimediali")
+                browser = _sonos_browser(
+                    entity_id, body.get("media_content_type"), body.get("media_content_id")
+                )
                 self.send_json({"ok": True, "browser": browser})
                 return
             if path == "/api/music/stop":
@@ -2399,7 +2495,7 @@ def player_session_username(token):
 class PlayerHandler(Handler):
     """Porta pubblica limitata al player TV: nessun accesso alla configurazione dell'add-on."""
 
-    server_version = "CarellasTVPlayer/0.4.35"
+    server_version = "CarellasTVPlayer/0.4.36"
 
     def player_username(self):
         cookie = SimpleCookie(self.headers.get("Cookie", ""))
