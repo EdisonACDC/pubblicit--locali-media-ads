@@ -368,6 +368,9 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("Sfoglia la musica del Sonos", html)
         self.assertIn("api/music/browse", html)
         self.assertIn("browseSonosBack", html)
+        self.assertIn("Aggiorna playlist Sonos", html)
+        self.assertIn("refreshSonosSources", html)
+        self.assertIn("playableSonosItems", html)
 
     def test_dashboard_is_responsive_on_phone(self):
         html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
