@@ -343,6 +343,43 @@ ha = HomeAssistant()
 upload_lock = threading.Lock()
 audio_playback_lock = threading.Lock()
 audio_stop_event = threading.Event()
+sonos_catalog_lock = threading.RLock()
+
+
+def load_sonos_catalog():
+    """Rilegge il catalogo completo dell'ultimo aggiornamento Sonos riuscito."""
+    with sonos_catalog_lock:
+        try:
+            payload = json.loads(SONOS_CATALOG_FILE.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return []
+    if not isinstance(payload, list):
+        return []
+    result = []
+    for item in payload:
+        if not isinstance(item, dict) or not item.get("id") or not item.get("name"):
+            continue
+        result.append({
+            "id": str(item["id"]),
+            "name": str(item["name"]),
+            "type": str(item.get("type") or "music"),
+        })
+    return result
+
+
+def save_sonos_catalog(items):
+    """Salva atomicamente il catalogo per mantenerlo dopo refresh e riavvii."""
+    normalized = [
+        {"id": str(item["id"]), "name": str(item["name"]),
+         "type": str(item.get("type") or "music")}
+        for item in items
+        if isinstance(item, dict) and item.get("id") and item.get("name")
+    ]
+    with sonos_catalog_lock:
+        temporary = SONOS_CATALOG_FILE.with_suffix(".tmp")
+        temporary.write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(temporary, SONOS_CATALOG_FILE)
+
 
 
 def _sonos_browser(entity_id, media_type=None, media_id=None):
@@ -432,9 +469,12 @@ def refresh_sonos_catalog(entity_id, max_depth=5, max_folders=120, max_items=300
                 for child in (browser.get("children") or [])
                 if child.get("can_expand")
             )
+    catalog_items = sorted(items.values(), key=lambda item: item["name"].lower())
+    save_sonos_catalog(catalog_items)
+    store.log("success", f"Catalogo Sonos aggiornato e salvato: {len(catalog_items)} contenuti")
     return {
         "root": root,
-        "items": sorted(items.values(), key=lambda item: item["name"].lower()),
+        "items": catalog_items,
         "folders_scanned": browsed,
         "truncated": bool(queue or len(items) >= max_items),
     }
@@ -1885,7 +1925,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4.37"
+    server_version = "CarellasMediaAds/0.4.39"
 
     def log_message(self, fmt, *args):
         return
@@ -2131,15 +2171,18 @@ class Handler(BaseHTTPRequestHandler):
                 # quali group_members potrebbe non essere ancora esposto.
                 if not sonos_detected:
                     entities = media_entities
+                for favorite in load_sonos_catalog():
+                    favorites_by_id[favorite["id"]] = favorite
                 self.send_json({
                     "config": store.config,
                     "media": store.media(),
                     "entities": sorted(entities, key=lambda x: x["name"].lower()),
                     "power_entities": sorted(power_entities, key=lambda x: x["name"].lower()),
-                    "sonos_favorites": sorted(
-                        ({"id": media_id, "name": name} for media_id, name in favorites_by_id.items()),
-                        key=lambda x: x["name"].lower(),
-                    ),
+                    "sonos_favorites": sorted((
+                        value if isinstance(value, dict)
+                        else {"id": media_id, "name": value, "type": "favorite_item_id"}
+                        for media_id, value in favorites_by_id.items()
+                    ), key=lambda x: x["name"].lower()),
                     "logs": store.logs,
                     "runtime": {
                         "audio_today": scheduler.audio_today(),
@@ -2529,7 +2572,7 @@ def player_session_username(token):
 class PlayerHandler(Handler):
     """Porta pubblica limitata al player TV: nessun accesso alla configurazione dell'add-on."""
 
-    server_version = "CarellasTVPlayer/0.4.37"
+    server_version = "CarellasTVPlayer/0.4.39"
 
     def player_username(self):
         cookie = SimpleCookie(self.headers.get("Cookie", ""))
