@@ -390,6 +390,29 @@ def _sonos_browser(entity_id, media_type=None, media_id=None):
     return browser
 
 
+def _is_sonos_browser_node(node):
+    """Riconosce soltanto contenitori appartenenti a Sonos/My Sonos."""
+    text = " ".join(str(node.get(key) or "") for key in (
+        "title", "media_class", "media_content_type", "media_content_id",
+    ))
+    return bool(re.search(
+        r"\bsonos\b|i miei sonos|mein sonos|my sonos|sonos[-_ ]?favorite|"
+        r"preferiti sonos|favoriten sonos",
+        text,
+        re.IGNORECASE,
+    ))
+
+
+def _is_native_sonos_item(node):
+    """ID riproducibili creati dal sistema Sonos, non da Media Browser HA."""
+    media_id = str(node.get("media_content_id") or "")
+    media_type = str(node.get("media_content_type") or "").lower()
+    return (
+        media_id.startswith(("FV:", "S:", "SQ:"))
+        or media_type in {"favorite_item_id", "sonos_playlist"}
+    )
+
+
 def refresh_sonos_catalog(entity_id, max_depth=5, max_folders=120, max_items=3000):
     """Aggiorna i Preferiti e percorre ricorsivamente la sezione 'I miei Sonos'."""
     states = ha.states()
@@ -426,29 +449,26 @@ def refresh_sonos_catalog(entity_id, max_depth=5, max_folders=120, max_items=300
 
     root = _sonos_browser(entity_id)
 
-    def remember(browser):
+    def remember(browser, trusted=False):
         for child in browser.get("children") or []:
             media_id = str(child.get("media_content_id") or "")
-            if child.get("can_play") and media_id:
+            if child.get("can_play") and media_id and (trusted or _is_native_sonos_item(child)):
                 items[media_id] = {
                     "id": media_id,
                     "name": str(child.get("title") or media_id),
                     "type": str(child.get("media_content_type") or "music"),
                 }
 
-    remember(root)
+    # La radice può essere il Media Browser generale di Home Assistant.
+    # È attendibile solo se si identifica esplicitamente come Sonos.
+    root_is_sonos = _is_sonos_browser_node(root)
+    remember(root, trusted=root_is_sonos)
     root_folders = [child for child in (root.get("children") or []) if child.get("can_expand")]
-    preferred = [
+    sonos_folders = [
         child for child in root_folders
-        if re.search(
-            r"favor|prefer|mein sonos|my sonos|playlist|radio|sender|station",
-            " ".join(str(child.get(key) or "") for key in (
-                "title", "media_class", "media_content_type", "media_content_id",
-            )),
-            re.IGNORECASE,
-        )
+        if root_is_sonos or _is_sonos_browser_node(child)
     ]
-    queue = [(child, 1) for child in (preferred or root_folders)]
+    queue = [(child, 1) for child in sonos_folders]
     visited = set()
     browsed = 0
     while queue and browsed < max_folders and len(items) < max_items:
@@ -463,7 +483,7 @@ def refresh_sonos_catalog(entity_id, max_depth=5, max_folders=120, max_items=300
             store.log("warning", f"Cartella Sonos non leggibile ({folder.get('title', key[1])}): {error}")
             continue
         browsed += 1
-        remember(browser)
+        remember(browser, trusted=True)
         if depth < max_depth:
             queue.extend(
                 (child, depth + 1)
@@ -474,12 +494,21 @@ def refresh_sonos_catalog(entity_id, max_depth=5, max_folders=120, max_items=300
     save_sonos_catalog(catalog_items)
     store.log("success", f"Catalogo Sonos aggiornato e salvato: {len(catalog_items)} contenuti")
     return {
-        "root": root,
+        "root": {
+            "title": "I miei Sonos",
+            "children": [{
+                "title": item["name"],
+                "media_content_id": item["id"],
+                "media_content_type": item["type"],
+                "can_expand": False,
+                "can_play": True,
+            } for item in catalog_items],
+        },
         "items": catalog_items,
         "folders_scanned": browsed,
+        "source": "sonos",
         "truncated": bool(queue or len(items) >= max_items),
     }
-
 
 def local_base_url():
     configured = store.config.get("media_base_url", "").strip().rstrip("/")
@@ -1926,7 +1955,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4.39"
+    server_version = "CarellasMediaAds/0.4.40"
 
     def log_message(self, fmt, *args):
         return
@@ -2573,7 +2602,7 @@ def player_session_username(token):
 class PlayerHandler(Handler):
     """Porta pubblica limitata al player TV: nessun accesso alla configurazione dell'add-on."""
 
-    server_version = "CarellasTVPlayer/0.4.39"
+    server_version = "CarellasTVPlayer/0.4.40"
 
     def player_username(self):
         cookie = SimpleCookie(self.headers.get("Cookie", ""))
