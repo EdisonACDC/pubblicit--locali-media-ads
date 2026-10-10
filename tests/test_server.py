@@ -455,6 +455,29 @@ class CarellasServerTest(unittest.TestCase):
             "type": "sonos_source",
         }])
 
+    def test_sonos_refresh_never_imports_radio_browser_items_from_sonos_folder(self):
+        root = {"title": "Audio", "children": [{
+            "title": "I miei Sonos", "media_content_type": "favorites",
+            "media_content_id": "my-sonos", "can_expand": True, "can_play": False,
+        }]}
+        my_sonos = {"title": "I miei Sonos", "children": [{
+            "title": "Radio Browser infinita", "media_content_type": "audio/mpeg",
+            "media_content_id": "media-source://radio_browser/example",
+            "can_expand": False, "can_play": True,
+        }, {
+            "title": "Preferito vero", "media_content_type": "favorite_item_id",
+            "media_content_id": "FV:2/31", "can_expand": False, "can_play": True,
+        }]}
+
+        def browse(_entity_id, _media_type=None, media_id=None):
+            return my_sonos if media_id == "my-sonos" else root
+
+        with mock.patch.object(self.app.ha, "states", return_value=[]), \
+                mock.patch.object(self.app.ha, "browse_media", side_effect=browse):
+            catalog = self.app.refresh_sonos_catalog("media_player.sala")
+
+        self.assertEqual([item["id"] for item in catalog["items"]], ["FV:2/31"])
+
     def test_sonos_refresh_scans_only_explicit_sonos_folder_in_generic_root(self):
         states = []
         root = {"title": "Audio", "children": [{
@@ -560,6 +583,10 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("refreshSonosSources", html)
         self.assertIn("api/music/refresh", html)
         self.assertIn("Aggiornamento completo della libreria Sonos", html)
+        self.assertIn('id="musicSourceSearch"', html)
+        self.assertIn('id="musicPlaylist"', html)
+        self.assertIn('id="musicRadio"', html)
+        self.assertIn("function filterSonosSourceOptions()", html)
 
     def test_dashboard_is_responsive_on_phone(self):
         html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
@@ -678,7 +705,7 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(play_calls[0][2]["entity_id"], "media_player.sala")
         self.assertEqual(play_calls[0][2]["media_content_id"], "https://example.test/radio.mp3")
 
-    def test_music_start_uses_select_source_for_native_sonos_playlist(self):
+    def test_music_start_uses_play_media_for_native_sonos_playlist(self):
         self.app.store.update({"music": {
             "players": ["media_player.sala"],
             "content_id": "Carellas Ristorante",
@@ -691,12 +718,36 @@ class CarellasServerTest(unittest.TestCase):
 
         self.assertEqual(status, 200)
         self.assertTrue(payload["ok"])
+        play_calls = [call for call in self.calls if call[1] == "play_media"]
+        self.assertEqual(len(play_calls), 1)
+        self.assertEqual(play_calls[0][2]["media_content_type"], "playlist")
+        self.assertEqual(play_calls[0][2]["media_content_id"], "Carellas Ristorante")
+        self.assertFalse(any(call[1] == "select_source" for call in self.calls))
+
+    def test_music_start_falls_back_to_select_source_when_playlist_fails(self):
+        selection = {
+            "players": ["media_player.sala"],
+            "content_id": "Radio Italia",
+            "content_type": "sonos_source",
+            "volume": 25,
+        }
+
+        def service(domain, action, payload):
+            self.calls.append((domain, action, payload))
+            if action == "play_media":
+                raise RuntimeError("playlist non disponibile")
+            return []
+
+        self.calls.clear()
+        with mock.patch.object(self.app.ha, "service", side_effect=service):
+            players = self.app.start_music(selection)
+
+        self.assertEqual(players, ["media_player.sala"])
         self.assertIn(("media_player", "select_source", {
             "entity_id": "media_player.sala",
-            "source": "Carellas Ristorante",
+            "source": "Radio Italia",
         }), self.calls)
         self.assertTrue(any(call[1] == "media_play" for call in self.calls))
-        self.assertFalse(any(call[1] == "play_media" for call in self.calls))
 
     def test_music_browser_uses_selected_sonos_media_library(self):
         browser = {
