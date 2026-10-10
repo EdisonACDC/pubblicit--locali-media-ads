@@ -347,39 +347,40 @@ sonos_catalog_lock = threading.RLock()
 
 
 def load_sonos_catalog():
-    """Rilegge il catalogo completo dell'ultimo aggiornamento Sonos riuscito."""
+    """Restituisce il catalogo Sonos salvato dall'ultimo aggiornamento riuscito."""
     with sonos_catalog_lock:
         try:
             payload = json.loads(SONOS_CATALOG_FILE.read_text(encoding="utf-8"))
         except (FileNotFoundError, json.JSONDecodeError, OSError):
             return []
-    if not isinstance(payload, list):
-        return []
     result = []
-    for item in payload:
-        if not isinstance(item, dict) or not item.get("id") or not item.get("name"):
+    for item in payload.get("items", []) if isinstance(payload, dict) else []:
+        if not isinstance(item, dict) or not item.get("id"):
             continue
         result.append({
             "id": str(item["id"]),
-            "name": str(item["name"]),
+            "name": str(item.get("name") or item["id"]),
             "type": str(item.get("type") or "music"),
         })
     return result
 
 
 def save_sonos_catalog(items):
-    """Salva atomicamente il catalogo per mantenerlo dopo refresh e riavvii."""
+    """Salva atomicamente il catalogo perché i refresh della UI non lo cancellino."""
     normalized = [
-        {"id": str(item["id"]), "name": str(item["name"]),
-         "type": str(item.get("type") or "music")}
+        {
+            "id": str(item["id"]),
+            "name": str(item.get("name") or item["id"]),
+            "type": str(item.get("type") or "music"),
+        }
         for item in items
-        if isinstance(item, dict) and item.get("id") and item.get("name")
+        if isinstance(item, dict) and item.get("id")
     ]
+    payload = {"updated_at": now_iso(), "items": normalized}
+    temporary = SONOS_CATALOG_FILE.with_suffix(".tmp")
     with sonos_catalog_lock:
-        temporary = SONOS_CATALOG_FILE.with_suffix(".tmp")
-        temporary.write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         os.replace(temporary, SONOS_CATALOG_FILE)
-
 
 
 def _sonos_browser(entity_id, media_type=None, media_id=None):
