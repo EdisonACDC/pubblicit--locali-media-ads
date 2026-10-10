@@ -135,8 +135,8 @@ async function refreshSonosSources(){
     toast('Aggiornamento completo della libreria Sonos…');
     const catalog=await request('api/music/refresh',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({entity_id:player})});
     const latest=await request('api/state?sonos_refresh='+Date.now(),{cache:'no-store'});
-    const merged=new Map([...(latest.sonos_favorites||[]),...(catalog.items||[]),...(state.sonos_favorites||[])].map(x=>[String(x.id),x]));
-    state.entities=latest.entities||state.entities;state.power_entities=latest.power_entities||state.power_entities;state.sonos_favorites=[...merged.values()].sort((a,b)=>a.name.localeCompare(b.name,uiLanguage()));
+    const refreshed=new Map((catalog.items||[]).map(x=>[String(x.id),x]));
+    state.entities=latest.entities||state.entities;state.power_entities=latest.power_entities||state.power_entities;state.sonos_favorites=[...refreshed.values()].sort((a,b)=>a.name.localeCompare(b.name,uiLanguage()));
     speakerOptions('musicPlayers');setSpeakerValues('musicPlayers',selectedPlayers);favoriteOptions();renderMusicSlots();
     $('musicId').value=draft.id;$('musicType').value=draft.type;selectedMusicTitle=draft.title;renderSelectedMusic();
     renderSonosBrowser(catalog.root||{});currentBrowse=null;browseStack=[];
