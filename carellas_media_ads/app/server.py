@@ -40,6 +40,7 @@ IPTV_DIR = DATA_DIR / "iptv"
 UPLOAD_DIR = DATA_DIR / "uploads"
 CONFIG_FILE = DATA_DIR / "carellas_media_ads.json"
 RUNTIME_FILE = DATA_DIR / "carellas_media_ads_runtime.json"
+SONOS_CATALOG_FILE = DATA_DIR / "carellas_sonos_catalog.json"
 DEFAULT_FILE = APP_DIR / "default_config.json"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 HA_API = os.environ.get("CARELLAS_HA_API", "http://supervisor/core/api")
