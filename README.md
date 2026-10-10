@@ -1,5 +1,11 @@
 # Carellas Media Ads
 
+## Novità stabile 0.4.34
+
+- Nuovo pulsante **Aggiorna playlist Sonos**: rilegge immediatamente playlist, radio e preferiti dal Sonos selezionato senza riavviare l’add-on.
+- L’aggiornamento esplora anche le cartelle Sonos dedicate a preferiti, playlist e radio e rende le sorgenti trovate disponibili nelle fasce orarie.
+- Le fasce musicali e le modifiche non ancora salvate vengono conservate durante l’aggiornamento dell’elenco.
+
 ## Novità stabile 0.4.33
 
 - Dissolvenza regolabile per il passaggio tra playlist e radio Sonos, senza interruzioni brusche.
