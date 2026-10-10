@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Carellas Media Ads - Home Assistant app, no external Python dependencies."""
+"""Carellas Media Ads - Home Assistant app."""
 
 from __future__ import annotations
 
@@ -22,6 +22,10 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+try:
+    import websocket
+except ModuleNotFoundError:  # Il pacchetto viene installato nell'immagine dell'add-on.
+    websocket = None
 from datetime import datetime
 from http import HTTPStatus
 from http.cookies import SimpleCookie
@@ -39,6 +43,7 @@ RUNTIME_FILE = DATA_DIR / "carellas_media_ads_runtime.json"
 DEFAULT_FILE = APP_DIR / "default_config.json"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 HA_API = os.environ.get("CARELLAS_HA_API", "http://supervisor/core/api")
+HA_WS = os.environ.get("CARELLAS_HA_WS", "ws://supervisor/core/websocket")
 PORT = 8099
 PLAYER_PORT = 8101
 SONOS_GROUP_SETTLE_SECONDS = float(os.environ.get("CARELLAS_SONOS_GROUP_SETTLE_SECONDS", "0.6"))
@@ -295,6 +300,42 @@ class HomeAssistant:
         response = self.request("POST", f"/services/{domain}/{service}?return_response", payload) or {}
         return response.get("service_response", {})
 
+    def websocket_command(self, command, timeout=25):
+        """Esegue un comando WebSocket autenticato sull'istanza Home Assistant."""
+        if websocket is None:
+            raise RuntimeError("Supporto WebSocket non installato nell'add-on")
+        connection = websocket.create_connection(HA_WS, timeout=timeout)
+        try:
+            greeting = json.loads(connection.recv())
+            if greeting.get("type") != "auth_required":
+                raise RuntimeError("Home Assistant WebSocket non richiede l'autenticazione attesa")
+            connection.send(json.dumps({"type": "auth", "access_token": TOKEN}))
+            authenticated = json.loads(connection.recv())
+            if authenticated.get("type") != "auth_ok":
+                raise RuntimeError("Autenticazione WebSocket Home Assistant non riuscita")
+            request_id = int(time.time_ns() % 2_000_000_000) or 1
+            connection.send(json.dumps({"id": request_id, **command}))
+            while True:
+                response = json.loads(connection.recv())
+                if response.get("id") != request_id:
+                    continue
+                if not response.get("success"):
+                    error = response.get("error") or {}
+                    raise RuntimeError(
+                        error.get("message") or "Comando WebSocket Home Assistant non riuscito"
+                    )
+                return response.get("result")
+        finally:
+            connection.close()
+
+    def browse_media(self, entity_id, media_type=None, media_id=None):
+        payload = {"type": "media_player/browse_media", "entity_id": entity_id}
+        if media_type:
+            payload["media_content_type"] = str(media_type)
+        if media_id:
+            payload["media_content_id"] = str(media_id)
+        return self.websocket_command(payload)
+
 
 store = Store()
 ha = HomeAssistant()
@@ -304,15 +345,7 @@ audio_stop_event = threading.Event()
 
 
 def _sonos_browser(entity_id, media_type=None, media_id=None):
-    payload = {"entity_id": entity_id}
-    if media_type:
-        payload["media_content_type"] = str(media_type)
-    if media_id:
-        payload["media_content_id"] = str(media_id)
-    response = ha.service_response("media_player", "browse_media", payload)
-    browser = response.get(entity_id)
-    if browser is None and response:
-        browser = next(iter(response.values()))
+    browser = ha.browse_media(entity_id, media_type, media_id)
     if not isinstance(browser, dict):
         raise RuntimeError("Il player selezionato non ha restituito contenuti multimediali")
     return browser
@@ -1851,7 +1884,7 @@ scheduler = Scheduler()
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "CarellasMediaAds/0.4.36"
+    server_version = "CarellasMediaAds/0.4.37"
 
     def log_message(self, fmt, *args):
         return
@@ -2495,7 +2528,7 @@ def player_session_username(token):
 class PlayerHandler(Handler):
     """Porta pubblica limitata al player TV: nessun accesso alla configurazione dell'add-on."""
 
-    server_version = "CarellasTVPlayer/0.4.36"
+    server_version = "CarellasTVPlayer/0.4.37"
 
     def player_username(self):
         cookie = SimpleCookie(self.headers.get("Cookie", ""))
