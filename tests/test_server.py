@@ -571,7 +571,8 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn('id="audioPlayers" class="speaker-picker"', html)
         self.assertIn('id="musicPlayers" class="speaker-picker"', html)
         self.assertIn("speakerValues('musicPlayers')", html)
-        self.assertIn("api('api/music/start')", html)
+        self.assertIn("api('api/music/start',{scheduled:useSchedule})", html)
+        self.assertIn('onclick="startMusic(true)"', html)
         self.assertIn("api('api/music/stop')", html)
         self.assertNotIn("api('/api/music/start')", html)
         self.assertIn('id="musicFavorite"', html)
@@ -737,6 +738,39 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(len(play_calls), 1)
         self.assertEqual(play_calls[0][2]["entity_id"], "media_player.sala")
         self.assertEqual(play_calls[0][2]["media_content_id"], "https://example.test/radio.mp3")
+
+    def test_dashboard_music_start_uses_active_programmed_slot(self):
+        slot = {
+            "id": "pranzo",
+            "name": "Radio pranzo",
+            "players": ["media_player.sala"],
+            "content_id": "Radio Italia Anni 60",
+            "content_type": "sonos_radio_source",
+            "volume": 25,
+            "enabled": True,
+            "days": [0, 1, 2, 3, 4, 5, 6],
+            "start": "00:00",
+            "duration_minutes": 1439,
+        }
+        self.app.store.update({"music": {
+            "players": [],
+            "content_id": "",
+            "content_type": "music",
+            "volume": 25,
+            "slots": [slot],
+        }})
+        self.calls.clear()
+
+        with mock.patch.object(self.app, "active_music_slot", return_value=slot):
+            status, payload = self.request("/api/music/start", "POST", {"scheduled": True})
+
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["source"], "Radio pranzo")
+        self.assertIn(("media_player", "select_source", {
+            "entity_id": "media_player.sala",
+            "source": "Radio Italia Anni 60",
+        }), self.calls)
 
     def test_music_start_uses_play_media_for_native_sonos_playlist(self):
         self.app.store.update({"music": {
