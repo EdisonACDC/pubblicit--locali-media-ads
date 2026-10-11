@@ -599,6 +599,14 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn(".speaker-option strong,.speaker-option small{white-space:normal", html)
         self.assertIn(".savebar{position:static", html)
 
+    def test_apple_time_fields_do_not_open_unstable_native_picker(self):
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        self.assertIn("function stabilizeAppleTimeInputs", html)
+        self.assertIn("function normalizeClockInput", html)
+        self.assertIn("input.type='text'", html)
+        self.assertIn("input.placeholder='HH:MM'", html)
+        self.assertIn("stableTimeObserver.observe", html)
+
     def test_language_switch_is_always_visible_and_persists_immediately(self):
         html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
         self.assertIn('class="language-control"', html)
