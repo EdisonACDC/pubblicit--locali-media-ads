@@ -70,6 +70,18 @@ I test caricano `server.py` tramite `importlib`, usano directory temporanee con 
 - **Stabile e beta sono separati:** una modifica allo stabile non va copiata nella beta (e viceversa) se non è richiesto.
 - Le impostazioni regolabili usano variabili d'ambiente `CARELLAS_*` con valore predefinito in testa a `server.py`.
 
+## Flusso di lavoro: quando hai finito
+
+Ogni lavoro si chiude condividendolo su GitHub:
+
+1. Lavora su un branch dedicato, mai direttamente su `main`.
+2. Prima di chiudere: test verdi (`python -m unittest discover -s tests`) e prova nel simulatore se la modifica tocca l'interfaccia, Sonos o le TV.
+3. Commit, poi **push del branch**: `git push -u origin <branch>`.
+4. **Crea la Pull Request con `gh`**: `gh pr create --base main --title "<titolo in italiano>" --body "<cosa cambia e come provarlo>"`. Se la PR esiste già, basta il push: si aggiorna da sola.
+5. Nel resoconto finale riporta il link della PR e cosa resta **da verificare sull'impianto**.
+
+Non fare il merge su `main` senza una richiesta esplicita.
+
 ## Rilascio di una nuova versione (stabile)
 
 Seguire lo schema dei commit esistenti:
