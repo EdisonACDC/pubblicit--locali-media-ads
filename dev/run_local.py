@@ -451,6 +451,15 @@ def demo_config():
     }
 
 
+def find_ffmpeg():
+    """FFmpeg appena installato con winget non è ancora nel PATH dei terminali già aperti."""
+    if shutil.which("ffprobe"):
+        return
+    links = Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "WinGet" / "Links"
+    if (links / "ffprobe.exe").exists():
+        os.environ["PATH"] = f"{links}{os.pathsep}{os.environ.get('PATH', '')}"
+
+
 def make_sim_handler(virtual):
     page = (DEV_DIR / "simulator.html").read_bytes()
 
@@ -489,6 +498,7 @@ def main():
     parser.add_argument("--empty", action="store_true", help="al primo avvio (o con --reset) parte senza dati di esempio")
     parser.add_argument("--host", default="127.0.0.1", help="usa 0.0.0.0 per aprirlo da telefono o TV in rete")
     args = parser.parse_args()
+    find_ffmpeg()
 
     root = Path(args.data)
     if args.reset and root.exists():
