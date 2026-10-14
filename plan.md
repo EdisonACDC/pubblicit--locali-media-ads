@@ -121,13 +121,29 @@ Dettagli e criteri di accettazione:
 - **UI-007 · Palinsesto** — Settimana o giorno, filtro per zona, blocchi fuori orario a strisce rosse. Editor laterale: sorgente con ricerca (doppioni uniti), altoparlanti, orari, giorni, volume, dissolvenza, "Prova ora", "Elimina" con conferma.
 - **UI-013 · Telefono** — Verificato a 375 px: nessuno scorrimento orizzontale su tutte le pagine, barra in basso Oggi · Palinsesto · Contenuti · Altro, pulsante "Carica" fluttuante.
 
+### Epica ST · Storico spot e metriche
+
+| Codice | Task | Stato | Pri | Stima |
+|---|---|---|---|---|
+| ST-001 | Storico spot salvato su disco (trasmessi, interrotti, non riusciti, con motivo) | 👀 In revisione | P1 | S |
+| ST-002 | API `GET /api/spots/history` con filtro per giorni ed esportazione CSV per Excel | 👀 In revisione | P1 | S |
+| ST-003 | Dashboard **Storico spot**: periodo, filtri, metriche, grafici, tabella | 👀 In revisione | P1 | M |
+| ST-004 | Storico di esempio degli ultimi 30 giorni nel simulatore | 👀 In revisione | P3 | S |
+
+- **ST-001** — Ogni passaggio registra ora, spot, Sonos, tipo (automatico o prova manuale), durata ed esito. Uno spot fermato a metà resta come "Interrotto", un errore come "Non riuscito" con il motivo. File `carellas_spot_history.json` nella cartella dati: sopravvive ai riavvii, conserva fino a 400 giorni (massimo 50.000 voci).
+- **ST-002** — `?from=AAAA-MM-GG&to=AAAA-MM-GG`. Il CSV usa `;` e la codifica che Excel apre correttamente in italiano e tedesco, con le zone al posto dei nomi tecnici dei Sonos.
+- **ST-003** — Pagina nel menu (e in "Altro" sul telefono), raggiungibile anche dal riquadro "Spot oggi" della pagina Oggi. Periodo: oggi, 7 giorni, 30 giorni, questo mese, personalizzato; filtri per spot e zona. Metriche: spot in onda, media al giorno, minuti in onda, percentuale trasmessa per intero (con interrotti e non riusciti), spot di oggi sul limite, prove manuali. Grafici: spot per giorno, per ora del giorno, per spot e per zona, con dettagli al passaggio del mouse. Tabella di tutti i passaggi con filtro per esito.
+- **ST-004** — Lo storico di esempio è finto e serve solo a vedere la dashboard piena in locale. Nell'add-on reale lo storico parte vuoto e si riempie con gli spot veri.
+
+Nota: lo storico parte da quando l'add-on viene aggiornato. Gli spot trasmessi prima non vengono ricostruiti.
+
 ### Epica QA · Qualità
 
 | Codice | Task | Stato | Pri | Stima |
 |---|---|---|---|---|
-| QA-001 | Test per le estensioni del server e per la nuova interfaccia (114 test) | 👀 In revisione | P1 | S |
+| QA-001 | Test per le estensioni del server e per la nuova interfaccia (116 test) | 👀 In revisione | P1 | S |
 | QA-002 | Accessibilità: focus visibile, etichette, `aria-current`, interruttori `role="switch"` | 🔄 In corso | P2 | S |
-| QA-003 | Traduzioni tedesche di tutte le nuove schermate (448 testi, 0 mancanti) | 👀 In revisione | P1 | S |
+| QA-003 | Traduzioni tedesche di tutte le nuove schermate (492 testi, 0 mancanti) | 👀 In revisione | P1 | S |
 | QA-004 | CI: controllo del JavaScript sia della nuova interfaccia sia di `/classic` | 👀 In revisione | P2 | S |
 
 QA-002 resta aperto: va ancora provato con lettore di schermo e solo tastiera.
@@ -154,6 +170,7 @@ Su macOS o Linux: `python3 dev/run_local.py`.
 | Indirizzo | Cosa |
 |---|---|
 | http://127.0.0.1:8099 | Pannello nuovo |
+| http://127.0.0.1:8099/#/storico | Dashboard storico spot |
 | http://127.0.0.1:8099/classic | Pannello precedente |
 | http://127.0.0.1:8101 | Player TV (utente di esempio `tv-sala`, password `carellas`) |
 | http://127.0.0.1:8098 | Simulatore: casse e TV virtuali, comandi ricevuti |

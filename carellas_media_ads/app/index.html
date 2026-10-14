@@ -241,6 +241,45 @@ dl.facts dt{color:var(--muted)}dl.facts dd{margin:0;min-width:0;overflow-wrap:an
 .lvl{font:600 11px var(--sans);text-transform:uppercase;letter-spacing:.05em;border-radius:99px;padding:2px 8px;justify-self:start;background:var(--card2);color:var(--muted)}
 .lvl.success{background:var(--green-soft);color:var(--green-text)}.lvl.warning{background:var(--warn-soft);color:var(--warn)}.lvl.error{background:var(--red-soft);color:var(--red)}
 
+/* Storico spot: dashboard */
+.filters-row{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
+.filters-row .inp{min-height:40px;width:auto}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.kpi{display:flex;flex-direction:column;gap:4px;padding:16px 18px}
+.kpi .v{font:600 30px/1.1 var(--sans);color:var(--title)}
+.kpi .v small{font:500 14px var(--sans);color:var(--muted)}
+.hero-kpi .v{font-size:52px}
+.chart-cap{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.chart-cap h2{margin:0}
+.cols{display:grid;grid-template-columns:34px minmax(0,1fr);column-gap:8px}
+.cols .yax{position:relative;height:170px;font:11px var(--mono);color:var(--dim);text-align:right}
+.cols .yax span{position:absolute;right:0;transform:translateY(50%)}
+.cols .plot{position:relative;height:170px;border-bottom:1px solid var(--line2)}
+.cols .grid{position:absolute;left:0;right:0;height:1px;background:var(--line3)}
+.cols .bars{position:absolute;inset:0;display:flex;align-items:flex-end;gap:2px}
+.cols .slot{flex:1 1 0;height:100%;display:flex;align-items:flex-end;justify-content:center;position:relative;min-width:0;outline:none}
+.cols .slot:hover,.cols .slot:focus-visible{background:#ffffff08;border-radius:4px 4px 0 0}
+.cols .bar{width:100%;max-width:24px;background:var(--gold);border-radius:4px 4px 0 0;min-height:0}
+.cols .bar.dim{background:#8A6A33}
+.cols .cap-label{position:absolute;bottom:calc(var(--h) + 4px);font:600 11px var(--sans);color:var(--text);white-space:nowrap}
+.cols .xax{grid-column:2;display:flex;gap:2px;font:11px var(--mono);color:var(--dim);margin-top:6px}
+.cols .xax span{flex:1 1 0;text-align:center;min-width:0;overflow:visible;white-space:nowrap}
+.hbars{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:12px}
+.hbars li{display:grid;grid-template-columns:minmax(90px,34%) minmax(0,1fr) auto;gap:10px;align-items:center;font-size:14px}
+.hbars .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hbars .track{height:14px;position:relative}
+.hbars .fill{height:14px;background:var(--gold);border-radius:0 4px 4px 0;max-width:100%}
+.hbars .val{font:600 13px var(--sans);color:var(--text);font-variant-numeric:tabular-nums;white-space:nowrap}
+.hbars .val small{color:var(--muted);font-weight:500}
+.status{display:inline-flex;align-items:center;gap:5px;font:600 12px var(--sans);border-radius:99px;padding:2px 9px;white-space:nowrap}
+.status.played{background:var(--green-soft);color:var(--green-text)}.status.stopped{background:var(--warn-soft);color:var(--warn)}.status.failed{background:var(--red-soft);color:var(--red)}
+.table-wrap{overflow-x:auto}
+table.hist{width:100%;border-collapse:collapse;font-size:14px;min-width:640px}
+table.hist th{text-align:left;font:600 11px var(--sans);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:8px 10px;border-bottom:1px solid var(--line)}
+table.hist td{padding:10px;border-bottom:1px solid var(--line3);vertical-align:top}
+table.hist td.num{font-variant-numeric:tabular-nums;font-family:var(--mono);font-size:13px;white-space:nowrap}
+.tip{position:fixed;z-index:60;pointer-events:none;background:#0E0B09;border:1px solid var(--line2);border-radius:8px;padding:8px 10px;font-size:13px;line-height:1.4;color:var(--text);box-shadow:0 10px 26px #000a;max-width:260px;white-space:pre-line}
+
 /* Barra di salvataggio, toast, navigazione telefono (tavola E) */
 .savebar{position:fixed;left:calc(248px + 50% - 124px);transform:translateX(-50%);bottom:18px;z-index:30;display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#2A1F14;border:1px solid var(--gold);border-radius:14px;padding:10px 12px 10px 16px;box-shadow:0 14px 40px #000c;max-width:calc(100vw - 32px)}
 .savebar b{color:#F8DFB5;font-weight:600}
@@ -279,6 +318,10 @@ dl.facts dt{color:var(--muted)}dl.facts dd{margin:0;min-width:0;overflow-wrap:an
   .seq-foot{position:sticky;bottom:calc(76px + env(safe-area-inset-bottom));margin:16px -16px -16px;z-index:4}
   .log-item{grid-template-columns:64px minmax(0,1fr)}.log-item .lvl{grid-column:2}.log-item .msg{grid-column:1/-1}
   .media-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .hero-kpi .v{font-size:44px}
+  .filters-row .field{flex:1 1 100%!important}.filters-row .inp{width:100%}
+  .kpis .hero-kpi{grid-column:1/-1}
+  .cols .yax,.cols .plot{height:140px}
   .upload-fab{position:fixed;right:20px;bottom:calc(84px + env(safe-area-inset-bottom));z-index:15;border-radius:999px;box-shadow:0 10px 30px #000a}
 }
 @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
@@ -297,6 +340,7 @@ dl.facts dt{color:var(--muted)}dl.facts dd{margin:0;min-width:0;overflow-wrap:an
 <div class="savebar" id="savebar" role="region" aria-label="Modifiche" hidden></div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <div class="pop" id="pop" role="dialog" hidden></div>
+<div class="tip" id="tip" role="tooltip" hidden></div>
 <script>
 'use strict';
 /* ==========================================================================
@@ -305,7 +349,7 @@ dl.facts dt{color:var(--muted)}dl.facts dd{margin:0;min-width:0;overflow-wrap:an
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const clone=o=>JSON.parse(JSON.stringify(o));
-const S={state:null,draft:null,saved:'',route:'oggi',param:'',lang:'it',sel:{},confirm:null,filter:{media:'all',log:'all',q:''},expert:false,uploading:''};
+const S={hist:{period:'7',limit:50},state:null,draft:null,saved:'',route:'oggi',param:'',lang:'it',sel:{},confirm:null,filter:{media:'all',log:'all',q:''},expert:false,uploading:''};
 const DAYS_IT=['Lu','Ma','Me','Gi','Ve','Sa','Do'],DAYS_DE=['Mo','Di','Mi','Do','Fr','Sa','So'];
 const DAYS_LONG_IT=['Lunedì','Martedì','Mercoledì','Giovedì','Venerdì','Sabato','Domenica'];
 const DAYS_LONG_DE=['Montag','Dienstag','Mittwoch','Donnerstag','Freitag','Samstag','Sonntag'];
@@ -362,6 +406,7 @@ function icon(name,size=18){
     up:'<path d="M12 19V5M5 12l7-7 7 7"/>',
     left:'<path d="m15 18-6-6 6-6"/>',right:'<path d="m9 18 6-6-6-6"/>',
     close:'<path d="M18 6 6 18M6 6l12 12"/>',
+    chart:'<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
     eye:'<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
     eyeoff:'<path d="M3 3l18 18"/><path d="M10.6 5.1A10.4 10.4 0 0 1 12 5c6.4 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.1M6.6 6.6C3.9 8.3 2 12 2 12s3.6 7 10 7a9.7 9.7 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>',
     wand:'<path d="m15 4 5 5L9 20H4v-5z"/><path d="m13 6 5 5"/>',
@@ -395,6 +440,7 @@ async function load(force=false){
     if(!S.langSet){S.lang=st.config.language==='de'?'de':'it';S.langSet=true}
     // Ridisegna solo se qualcosa è cambiato davvero: il conto alla rovescia si aggiorna a parte.
     const sig=JSON.stringify({...st,runtime:{...st.runtime,next_spot_in_seconds:null}});
+    if(S.route==='storico'&&Date.now()-(S.hist.at||0)>30000&&!S.hist.loading)loadHistory();
     if(sig===S.sig&&!force){updateLive();return}
     S.sig=sig;
     if(!busy())render();else S.pending=true;
@@ -547,10 +593,11 @@ function parseRoute(){
 function render(){
   if(!S.state||!S.draft)return;
   S.pending=false;
+  $('tip').hidden=true;
   document.documentElement.lang=S.lang;
   renderSide();renderTop();renderTabbar();renderSavebar();
   $('haError').hidden=!S.state.ha_error;$('haError').textContent=S.state.ha_error?L('Home Assistant non risponde')+': '+S.state.ha_error:'';
-  const pages={oggi:pageOggi,zone:pageZone,zona:pageZona,palinsesto:pagePalinsesto,guidata:pageGuidata,contenuti:pageContenuti,registro:pageRegistro,impostazioni:pageImpostazioni,altro:pageAltro};
+  const pages={oggi:pageOggi,zone:pageZone,zona:pageZona,palinsesto:pagePalinsesto,guidata:pageGuidata,contenuti:pageContenuti,storico:pageStorico,registro:pageRegistro,impostazioni:pageImpostazioni,altro:pageAltro};
   const scroll=window.scrollY;
   $('main').innerHTML=(pages[S.route]||pageOggi)();
   window.scrollTo(0,scroll);
@@ -569,6 +616,7 @@ function renderSide(){
     <a href="#/zone" data-act="zone-new" style="color:var(--gold)">${icon('plus')}<span class="grow">${esc(L('Nuova zona'))}</span></a>
     <div class="sep"></div>
     ${navLink('#/contenuti',L('Contenuti'),icon('image'),r==='contenuti')}
+    ${navLink('#/storico',L('Storico spot'),icon('chart'),r==='storico')}
     ${navLink('#/registro',L('Registro'),icon('list'),r==='registro')}
     ${navLink('#/impostazioni',L('Impostazioni'),icon('gear'),r==='impostazioni')}
     ${navLink('#/guidata/1',L('Configurazione guidata'),icon('wand'),r==='guidata')}`;
@@ -672,7 +720,7 @@ function pageOggi(){
         ${paused?`<div class="small muted">${esc(Lf('In pausa fino alle {0}',paused.slice(11,16)))}</div><button class="btn btn-ghost" type="button" data-act="pause" data-v="0">${esc(L('Riprendi adesso'))}</button>`:`<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px"><button class="btn btn-ghost" type="button" data-act="pause" data-v="30">30 min</button><button class="btn btn-ghost" type="button" data-act="pause" data-v="60">${esc(L('1 ora'))}</button><button class="btn btn-ghost" type="button" data-act="pause" data-v="today">${esc(L('Oggi'))}</button></div>`}</section>
       ${volumes?`<section class="card mobile-only" style="flex-direction:column;gap:12px">${volumes}</section>`:''}
       <div class="stats desktop-only">
-        <div class="card" style="padding:16px 18px"><div class="label">${esc(L('Spot oggi'))}</div><div class="row" style="gap:6px;align-items:baseline;margin-top:6px"><span class="stat-value">${r.audio_today??0}</span><span class="muted">/ ${esc(c.audio.daily_limit)} max</span></div><div class="progress" style="height:4px;margin-top:10px"><i style="width:${Math.min(100,(r.audio_today||0)/(+c.audio.daily_limit||20)*100)}%"></i></div></div>
+        <a class="card" href="#/storico" style="padding:16px 18px;text-decoration:none;color:inherit" aria-label="${esc(L('Apri lo storico degli spot'))}"><div class="label">${esc(L('Spot oggi'))}</div><div class="row" style="gap:6px;align-items:baseline;margin-top:6px"><span class="stat-value">${r.audio_today??0}</span><span class="muted">/ ${esc(c.audio.daily_limit)} max</span></div><div class="progress" style="height:4px;margin-top:10px"><i style="width:${Math.min(100,(r.audio_today||0)/(+c.audio.daily_limit||20)*100)}%"></i></div></a>
         <div class="card" style="padding:16px 18px"><div class="label">${esc(L('Musica'))}</div><div class="stat-value" style="font-size:22px;margin-top:8px">${esc(L(musicOn?'In riproduzione':'Ferma'))}</div><div class="stat-sub">${esc(Lf('{0} di {1} Sonos',playingSonos.length,(c.audio.players||[]).length||allSonos.length))}</div></div>
         <div class="card" style="padding:16px 18px"><div class="label">${esc(L('Schermi'))}</div><div class="stat-value" style="font-size:22px;margin-top:8px">${channels().filter(channelOnAir).length} ${esc(L(channels().filter(channelOnAir).length===1?'canale in onda':'canali in onda'))}</div><div class="stat-sub">${esc(channels().filter(channelOnAir).map(c=>c.name).join(', ')||L('nessuno'))}</div></div>
         <div class="card" style="padding:16px 18px"><div class="label">${esc(L('Prossimo cambio'))}</div><div class="mono" style="font-size:22px;color:var(--title);margin-top:8px">${esc(slot?slotEnd(slot):nextSlot?nextSlot.start:'—')}</div><div class="stat-sub">${esc(nextSlot?'→ '+slotTitle(nextSlot):slot?L('fine della musica'):L('nessun cambio'))}</div></div>
@@ -1013,6 +1061,101 @@ function pageContenuti(){
       <div class="chips" role="group" aria-label="${esc(L('Filtro'))}">${[['all','Tutti'],['audio','Audio'],['image','Foto'],['video','Video'],['unused','Non usati']].map(([k,l])=>`<button class="chip" type="button" aria-pressed="${f===k}" data-act="media-filter" data-v="${k}">${esc(L(l))} ${count(k)}</button>`).join('')}</div></div>
     ${shown.length?`<ul class="media-grid">${cards}</ul>`:`<div class="empty">${esc(L(media.length?'Nessun contenuto con questo filtro.':'Ancora nessun contenuto: caricane uno.'))}</div>`}`;
 }
+/* ==========================================================================
+   Storico spot: dashboard con metriche
+   ========================================================================== */
+function isoDay(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
+function daysAgo(n){const d=new Date();d.setDate(d.getDate()-n);return isoDay(d)}
+function histRange(){
+  const h=S.hist,today=isoDay(new Date());
+  if(h.period==='today')return[today,today];
+  if(h.period==='30')return[daysAgo(29),today];
+  if(h.period==='month'){const d=new Date();return[isoDay(new Date(d.getFullYear(),d.getMonth(),1)),today]}
+  if(h.period==='custom')return[h.from||daysAgo(6),h.to||today];
+  return[daysAgo(6),today];
+}
+async function loadHistory(){
+  const [from,to]=histRange(),key=from+'|'+to;
+  S.hist.loading=key;
+  try{const r=await request(`api/spots/history?from=${from}&to=${to}&ts=${Date.now()}`,{cache:'no-store'});if(S.hist.loading!==key)return;S.hist.entries=r.entries||[];S.hist.key=key;S.hist.at=Date.now()}
+  catch(e){S.hist.error=e.message}
+  S.hist.loading=null;
+  if(S.route==='storico'&&!busy())render();
+}
+function entryZones(e){
+  const names=zones().filter(z=>(z.players||[]).some(p=>(e.players||[]).includes(p))).map(z=>z.name);
+  return names.length?names:(e.players||[]).map(sonosName);
+}
+function niceMax(v){if(v<=4)return 4;const p=Math.pow(10,Math.floor(Math.log10(v))),n=v/p;return [1,2,3,4,5,6,8,10].find(x=>x>=n)*p}
+function columnChart(items,{label,highlight}={}){
+  // Colonne: una sola serie, base comune, griglia leggera, valore solo sul massimo.
+  const max=niceMax(Math.max(1,...items.map(i=>i.v))*1.15),ticks=[0,max/2,max];
+  const peak=items.reduce((a,b)=>b.v>a.v?b:a,items[0]||{v:0});
+  const every=Math.ceil(items.length/12);
+  return `<div class="cols" role="img" aria-label="${esc(label)}"><div class="yax">${ticks.map(t=>`<span style="bottom:${t/max*100}%">${t}</span>`).join('')}</div>
+    <div class="plot">${ticks.slice(1).map(t=>`<div class="grid" style="bottom:${t/max*100}%"></div>`).join('')}<div class="bars">${items.map(i=>{const h=(i.v/max*100).toFixed(1);return `<div class="slot" tabindex="0" data-tip="${esc(i.tip)}"><div class="bar ${highlight&&!highlight(i)?'dim':''}" style="height:${h}%"></div>${i===peak&&i.v>0?`<span class="cap-label" style="--h:${h}%">${i.v}</span>`:''}</div>`}).join('')}</div></div>
+    <div class="xax">${items.map((i,n)=>`<span>${n%every===0?esc(i.x):''}</span>`).join('')}</div></div>`;
+}
+function rankBars(rows,total,empty){
+  if(!rows.length)return `<div class="empty">${esc(empty)}</div>`;
+  const max=Math.max(...rows.map(r=>r.v));
+  return `<ul class="hbars">${rows.map(r=>`<li data-tip="${esc(r.tip||'')}" tabindex="0"><span class="name" title="${esc(r.name)}">${esc(r.name)}</span><span class="track"><span class="fill" style="display:block;width:${(r.v/max*100).toFixed(1)}%"></span></span><span class="val">${r.v} <small>${total?Math.round(r.v/total*100)+'%':''}</small></span></li>`).join('')}</ul>`;
+}
+function pageStorico(){
+  const h=S.hist,[from,to]=histRange(),key=from+'|'+to;
+  if(h.key!==key&&h.loading!==key)setTimeout(loadHistory);
+  const all=h.key===key?h.entries:null;
+  const head=`<div class="page-head"><div><div class="label">${esc(L('Pubblicità audio'))}</div><h1>${esc(L('Storico spot'))}</h1></div><a class="btn btn-ghost" href="api/spots/history.csv?from=${from}&to=${to}" download>${icon('up',16)}${esc(L('Esporta CSV per Excel'))}</a></div>`;
+  const spotsAll=[...new Set([...(all||[]).map(e=>e.spot).filter(Boolean),...(cfg().audio.ads||[])])];
+  const filters=`<section class="card filters-row" aria-label="${esc(L('Filtri'))}">
+    <div class="field" style="flex:0 0 auto"><span>${esc(L('Periodo'))}</span><div class="chips">${[['today','Oggi'],['7','7 giorni'],['30','30 giorni'],['month','Questo mese'],['custom','Personalizzato']].map(([k,l])=>`<button class="chip" type="button" aria-pressed="${h.period===k}" data-act="hist-period" data-v="${k}">${esc(L(l))}</button>`).join('')}</div></div>
+    ${h.period==='custom'?`<label class="field" style="flex:0 0 auto"><span>${esc(L('Dal'))}</span><input class="inp" type="date" value="${esc(from)}" max="${esc(to)}" data-hist="from"></label><label class="field" style="flex:0 0 auto"><span>${esc(L('Al'))}</span><input class="inp" type="date" value="${esc(to)}" min="${esc(from)}" data-hist="to"></label>`:''}
+    <label class="field" style="flex:0 0 auto"><span>Spot</span><select class="inp" data-hist="spot"><option value="">${esc(L('Tutti gli spot'))}</option>${spotsAll.map(n=>`<option value="${esc(n)}" ${h.spot===n?'selected':''}>${esc(prettyName(n))}</option>`).join('')}</select></label>
+    <label class="field" style="flex:0 0 auto"><span>${esc(L('Zona'))}</span><select class="inp" data-hist="zone"><option value="">${esc(L('Tutte le zone'))}</option>${zones().map(z=>`<option value="${esc(z.id)}" ${h.zone===z.id?'selected':''}>${esc(z.name)}</option>`).join('')}</select></label>
+  </section>`;
+  if(!all)return head+filters+`<div class="empty" role="status">${esc(h.error?L('Storico non disponibile')+': '+h.error:L('Caricamento dello storico…'))}</div>`;
+  const zf=h.zone&&zoneById(h.zone);
+  const list=all.filter(e=>(!h.spot||e.spot===h.spot)&&(!zf||(e.players||[]).some(p=>(zf.players||[]).includes(p))));
+  const aired=list.filter(e=>e.status!=='failed'),played=list.filter(e=>e.status==='played'),stopped=list.filter(e=>e.status==='stopped'),failed=list.filter(e=>e.status==='failed');
+  const nDays=Math.round((new Date(to)-new Date(from))/864e5)+1;
+  const minutes=played.reduce((a,e)=>a+(+e.duration||0),0)/60;
+  const rate=list.length?Math.round(played.length/list.length*100):null;
+  const manual=aired.filter(e=>e.trigger==='manual').length;
+  const today=isoDay(new Date()),todayCount=aired.filter(e=>e.time.slice(0,10)===today).length;
+  const long=S.lang==='de'?DAYS_LONG_DE:DAYS_LONG_IT;
+  // Spot per giorno (giorni senza spot inclusi, così le pause si vedono).
+  const perDay=[];for(let i=0;i<nDays;i++){const d=new Date(from+'T12:00:00');d.setDate(d.getDate()+i);const k=isoDay(d),day=list.filter(e=>e.time.slice(0,10)===k);const ok=day.filter(e=>e.status!=='failed').length;perDay.push({x:nDays>8?String(d.getDate()):days()[(d.getDay()+6)%7],v:ok,k,tip:`${long[(d.getDay()+6)%7]} ${d.getDate()}/${d.getMonth()+1}\n${Lf('{0} spot in onda',ok)}${day.length-ok?'\n'+Lf('{0} non riusciti',day.length-ok):''}`})}
+  // Spot per ora del giorno.
+  const hours=Array.from({length:24},(_,i)=>aired.filter(e=>+e.time.slice(11,13)===i).length);
+  let h0=hours.findIndex(v=>v>0),h1=23-[...hours].reverse().findIndex(v=>v>0);if(h0<0){h0=10;h1=22}h0=Math.min(h0,10);h1=Math.max(h1,22);
+  const perHour=[];for(let i=h0;i<=h1;i++)perHour.push({x:String(i).padStart(2,'0'),v:hours[i],tip:`${String(i).padStart(2,'0')}:00–${String(i).padStart(2,'0')}:59\n${Lf('{0} spot in onda',hours[i])}`});
+  const nowHour=new Date().getHours();
+  // Classifiche per spot e per zona.
+  const bySpot={};aired.forEach(e=>{bySpot[e.spot]=(bySpot[e.spot]||0)+1});
+  const spotRows=Object.entries(bySpot).sort((a,b)=>b[1]-a[1]).map(([n,v])=>{const sec=aired.filter(e=>e.spot===n).reduce((a,e)=>a+(+e.duration||0),0);return{name:prettyName(n),v,tip:`${prettyName(n)}\n${Lf('{0} passaggi',v)} · ${Lf('{0} min in onda',Math.round(sec/60))}`}});
+  const byZone={};aired.forEach(e=>entryZones(e).forEach(z=>{byZone[z]=(byZone[z]||0)+1}));
+  const zoneRows=Object.entries(byZone).sort((a,b)=>b[1]-a[1]).map(([n,v])=>({name:n,v,tip:`${n}\n${Lf('{0} spot ascoltati',v)}`}));
+  const st=h.status||'all',limit=h.limit||50;
+  const rows=list.filter(e=>st==='all'||e.status===st);
+  const statusBadge=e=>`<span class="status ${esc(e.status)}">${e.status==='played'?icon('check',13):e.status==='stopped'?icon('stop',13):icon('warn',13)}${esc(L({played:'Trasmesso',stopped:'Interrotto',failed:'Non riuscito'}[e.status]||e.status))}</span>`;
+  const table=`<div class="table-wrap"><table class="hist"><thead><tr><th scope="col">${esc(L('Data e ora'))}</th><th scope="col">Spot</th><th scope="col">${esc(L('Zone'))}</th><th scope="col">${esc(L('Tipo'))}</th><th scope="col">${esc(L('Durata'))}</th><th scope="col">${esc(L('Esito'))}</th></tr></thead><tbody>${rows.slice(0,limit).map(e=>`<tr><td class="num">${esc(e.time.slice(8,10)+'/'+e.time.slice(5,7)+' '+e.time.slice(11,16))}</td><td>${esc(e.spot?prettyName(e.spot):'—')}</td><td>${esc(entryZones(e).join(', ')||'—')}</td><td>${esc(L(e.trigger==='manual'?'Prova manuale':'Automatico'))}</td><td class="num">${e.duration?esc(durLabel(e.duration)):'—'}</td><td>${statusBadge(e)}${e.reason?`<div class="tiny muted" style="margin-top:4px">${esc(e.reason)}</div>`:''}</td></tr>`).join('')}</tbody></table></div>
+    ${rows.length>limit?`<div style="margin-top:12px"><button class="btn btn-ghost btn-sm" type="button" data-act="hist-more">${esc(Lf('Mostra altri ({0} rimanenti)',rows.length-limit))}</button></div>`:''}${!rows.length?`<div class="empty">${esc(L('Nessuno spot in questo periodo.'))}</div>`:''}`;
+  return head+filters+`
+    <div class="kpis">
+      <div class="card kpi hero-kpi"><div class="label">${esc(L('Spot in onda'))}</div><div class="v">${aired.length}</div><div class="stat-sub">${esc(nDays===1?L('nel giorno scelto'):Lf('in {0} giorni',nDays))}</div></div>
+      <div class="card kpi"><div class="label">${esc(L('Media al giorno'))}</div><div class="v">${(aired.length/nDays).toLocaleString(S.lang,{maximumFractionDigits:1})}</div><div class="stat-sub">${esc(Lf('limite {0} al giorno',cfg().audio.daily_limit))}</div></div>
+      <div class="card kpi"><div class="label">${esc(L('Minuti in onda'))}</div><div class="v">${Math.round(minutes)} <small>min</small></div><div class="stat-sub">${esc(L('solo spot ascoltati per intero'))}</div></div>
+      <div class="card kpi"><div class="label">${esc(L('Trasmessi per intero'))}</div><div class="v">${rate==null?'—':rate+'%'}</div><div class="stat-sub">${esc(Lf('{0} interrotti · {1} non riusciti',stopped.length,failed.length))}</div></div>
+      <div class="card kpi"><div class="label">${esc(L('Oggi'))}</div><div class="v">${to>=today?todayCount:'—'} <small>/ ${esc(cfg().audio.daily_limit)}</small></div><div class="stat-sub">${esc(Lf('{0} prove manuali nel periodo',manual))}</div></div>
+    </div>
+    ${nDays>1?`<section class="card"><div class="chart-cap"><h2>${esc(L('Spot in onda per giorno'))}</h2><span class="small muted">${esc(from.split('-').reverse().join('/')+' – '+to.split('-').reverse().join('/'))}</span></div>${columnChart(perDay,{label:L('Spot in onda per giorno')})}</section>`:''}
+    <div class="grid-3">
+      <section class="card"><div class="chart-cap"><h2>${esc(L('Per ora del giorno'))}</h2><span class="small muted">${esc(L('quando passano gli spot'))}</span></div>${columnChart(perHour,{label:L('Spot in onda per ora del giorno'),highlight:i=>!(to>=today)||+i.x<=nowHour})}</section>
+      <section class="card"><div class="chart-cap"><h2>${esc(L('Per spot'))}</h2><span class="small muted">${esc(L('passaggi e quota'))}</span></div>${rankBars(spotRows,aired.length,L('Nessuno spot in questo periodo.'))}</section>
+      <section class="card"><div class="chart-cap"><h2>${esc(L('Per zona'))}</h2><span class="small muted">${esc(L('dove sono stati ascoltati'))}</span></div>${rankBars(zoneRows,aired.length,L('Nessuno spot in questo periodo.'))}</section>
+    </div>
+    <section class="card"><div class="chart-cap"><h2>${esc(L('Tutti i passaggi'))}</h2><div class="chips" role="group" aria-label="${esc(L('Esito'))}">${[['all','Tutti',list.length],['played','Trasmessi',played.length],['stopped','Interrotti',stopped.length],['failed','Non riusciti',failed.length]].map(([k,l,n])=>`<button class="chip" type="button" aria-pressed="${st===k}" data-act="hist-status" data-v="${k}">${esc(L(l))} ${n}</button>`).join('')}</div></div>${table}</section>`;
+}
 function logKind(l){const m=String(l.message).toLowerCase();if(/spot/.test(m))return'spot';if(/music|playlist|radio|fascia|sonos/.test(m))return'music';if(/tv|iptv|canale|schermo|player/.test(m))return'tv';return'other'}
 function pageRegistro(){
   const f=S.filter.log,logs=(S.state.logs||[]).filter(l=>f==='all'||(f==='error'?['error','warning'].includes(l.level):logKind(l)===f));
@@ -1051,7 +1194,7 @@ function pageAltro(){
   const link=(href,label,ic,meta='')=>`<a href="${href}" class="card row" style="justify-content:space-between;text-decoration:none;color:var(--text);padding:16px"><span class="row">${ic}<strong>${esc(label)}</strong></span><span class="small muted">${meta}</span></a>`;
   return `<h1 style="margin:0;font:700 32px var(--display);color:var(--title)">${esc(L('Altro'))}</h1>
     <div class="label">${esc(L('Zone'))}</div><div class="col" style="gap:8px">${zones().map(z=>link('#/zona/'+encodeURIComponent(z.id),z.name,`<span class="dot ${zoneStatus(z)}"></span>`,esc(zoneMeta(z)))).join('')}${link('#/zone',L('Tutte le zone'),icon('grid'))}</div>
-    <div class="col" style="gap:8px">${link('#/registro',L('Registro'),icon('list'))}${link('#/impostazioni',L('Impostazioni'),icon('gear'))}${link('#/guidata/1',L('Configurazione guidata'),icon('wand'))}</div>`;
+    <div class="col" style="gap:8px">${link('#/storico',L('Storico spot'),icon('chart'))}${link('#/registro',L('Registro'),icon('list'))}${link('#/impostazioni',L('Impostazioni'),icon('gear'))}${link('#/guidata/1',L('Configurazione guidata'),icon('wand'))}</div>`;
 }
 
 /* ==========================================================================
@@ -1194,6 +1337,9 @@ const ACTIONS={
   'media-filter':el=>{S.filter.media=el.dataset.v;render()},
   'media-del':el=>{S.confirm='media-del:'+el.dataset.v;render()},
   'media-del-yes':async el=>{try{await request('api/media/'+encodeURIComponent(el.dataset.v),{method:'DELETE'});S.confirm=null;toast('File eliminato');await load()}catch(e){toast(e.message,true)}},
+  'hist-period':el=>{S.hist.period=el.dataset.v;S.hist.limit=50;render()},
+  'hist-status':el=>{S.hist.status=el.dataset.v;S.hist.limit=50;render()},
+  'hist-more':()=>{S.hist.limit=(S.hist.limit||50)+100;render()},
   'log-filter':el=>{S.filter.log=el.dataset.v;render()},
   'user-new':()=>{const bp=cfg().browser_player;bp.users=bp.users||[];let n=bp.users.length+1;while(bp.users.some(u=>u.username==='tv'+n))n++;bp.users.push({username:'tv'+n,channel_id:channels()[0]?.id||'',fit:'contain',enabled:true,password:''});render()},
   'user-reset':el=>{S.sel.reset=+el.dataset.v;render();document.getElementById('pw-'+el.dataset.v)?.focus()},
@@ -1241,6 +1387,7 @@ document.addEventListener('change',e=>{
   if(t.dataset.seqAdd){const ch=channelById(t.dataset.seqAdd),o=t.selectedOptions[0];if(!o?.value)return;ch.playlist=ch.playlist||[];ch.playlist.push(o.dataset.kind==='image'?{name:o.value,kind:'image',duration:12,fit:'smart',effect:'fade'}:{name:o.value,kind:'video',fit:'smart'});render();return}
   if(t.dataset.seqItem){const it=channelById(t.dataset.seqItem).playlist[+t.dataset.i];it[t.dataset.k]=t.type==='number'?Math.max(2,+t.value||12):t.value;render();return}
   if(t.dataset.collage){const it=channelById(t.dataset.collage).playlist[+t.dataset.i];it.images=it.images||[];if(t.checked){if(it.images.length>=6){t.checked=false;return toast('Massimo 6 fotografie per collage',true)}it.images.push(t.value)}else it.images=it.images.filter(x=>x!==t.value);render();return}
+  if(t.dataset.hist){S.hist[t.dataset.hist]=t.value;S.hist.limit=50;render();return}
   if(t.matches('[data-filter-zone]')){S.sel.zoneFilter=t.value;render();return}
   if(t.matches('[data-upload]')){uploadFiles([...t.files]);t.value='';return}
 });
@@ -1256,6 +1403,10 @@ document.addEventListener('drop',e=>{
 });
 document.addEventListener('dragend',()=>{if(S.dragging){S.dragging=null;render()}});
 document.addEventListener('focusout',()=>setTimeout(()=>{if(S.pending&&!busy())render()},50));
+function showTip(el){const tip=$('tip'),text=el.dataset.tip;if(!text){tip.hidden=true;return}tip.textContent=text;tip.hidden=false;const r=el.getBoundingClientRect(),w=tip.offsetWidth,hh=tip.offsetHeight;tip.style.left=Math.max(8,Math.min(r.left+r.width/2-w/2,innerWidth-w-8))+'px';tip.style.top=(r.top-hh-8<8?r.bottom+8:r.top-hh-8)+'px'}
+document.addEventListener('mouseover',e=>{const el=e.target.closest?.('[data-tip]');if(el)showTip(el);else $('tip').hidden=true});
+document.addEventListener('focusin',e=>{const el=e.target.closest?.('[data-tip]');if(el)showTip(el);else $('tip').hidden=true});
+window.addEventListener('scroll',()=>{$('tip').hidden=true},{passive:true});
 window.addEventListener('hashchange',()=>{parseRoute();S.confirm=null;closePop();render();$('main').focus({preventScroll:true});window.scrollTo(0,0)});
 window.addEventListener('beforeunload',e=>{if(isDirty()){e.preventDefault();e.returnValue=''}});
 function afterRender(){}
@@ -1275,7 +1426,7 @@ const DE=new Map([
 ['Offline','Offline'],['offline','offline'],['Suona','Spielt'],['In pausa','Pausiert'],['Nessun dispositivo','Kein Gerät'],['Volume','Lautstärke'],['Riprova collegamento','Verbindung erneut prüfen'],['riprova','erneut'],['Gestisci zone','Zonen verwalten'],['Nessun Sonos trovato in Home Assistant.','Keine Sonos in Home Assistant gefunden.'],
 ['Da sistemare','Zu erledigen'],['Tutto in ordine.','Alles in Ordnung.'],['Attività','Aktivität'],['Tutto il registro','Ganzes Protokoll'],['Nessuna attività','Keine Aktivität'],
 ['{0} non raggiungibile','{0} nicht erreichbar'],['Escluso dagli spot finché non torna online.','Von Spots ausgeschlossen, bis er wieder online ist.'],['Sequenza TV da inviare: {0}','TV-Sequenz senden: {0}'],['Le TV mostrano ancora la versione precedente.','Die Fernseher zeigen noch die vorherige Version.'],['Genera e invia alle TV','Erzeugen und an die TVs senden'],['Errore nel canale {0}','Fehler im Kanal {0}'],['Riprova','Erneut versuchen'],['Nessun accesso Player TV','Kein TV-Player-Zugang'],['Serve per aprire il canale dal browser della TV.','Nötig, um den Kanal im TV-Browser zu öffnen.'],['Crea accesso TV','TV-Zugang anlegen'],['La pubblicità è attiva ma non ha spot da trasmettere.','Werbung ist aktiv, aber ohne Spots.'],['Scegli gli spot','Spots auswählen'],['Nessun Sonos per gli spot','Kein Sonos für Spots'],['Attiva gli spot almeno in una zona.','Spots in mindestens einer Zone aktivieren.'],['Apri le zone','Zonen öffnen'],['Fascia fuori orario: {0}','Zeitraum außerhalb der Öffnungszeit: {0}'],['Una parte della fascia è fuori dall’orario di apertura e non suonerà.','Ein Teil des Zeitraums liegt außerhalb der Öffnungszeit und wird nicht gespielt.'],['Correggi','Korrigieren'],['Indirizzo locale da controllare','Lokale Adresse prüfen'],['Sonos e TV usano {0}: serve l’indirizzo IP numerico.','Sonos und TV verwenden {0}: nötig ist die numerische IP-Adresse.'],['Apri impostazioni','Einstellungen öffnen'],
-['Schermi','Bildschirme'],['Schermo principale','Hauptbildschirm'],['spot','Spot'],['Sorgente musicale','Musikquelle'],['Pronto','Bereit'],['FFmpeg non trovato: serve per generare i canali TV (sul PC di prova va installato a parte).','FFmpeg nicht gefunden: wird zum Erzeugen der TV-Kanäle benötigt (auf dem Test-PC separat installieren).'],['In preparazione','Wird vorbereitet'],['Da aggiornare','Zu aktualisieren'],['Errore','Fehler'],['Da generare','Zu erzeugen'],
+['Schermi','Bildschirme'],['Schermo principale','Hauptbildschirm'],['spot','Spot'],['Sorgente musicale','Musikquelle'],['Pronto','Bereit'],['Storico spot','Spot-Verlauf'],['Apri lo storico degli spot','Spot-Verlauf öffnen'],['Esporta CSV per Excel','CSV für Excel exportieren'],['Filtri','Filter'],['Periodo','Zeitraum'],['7 giorni','7 Tage'],['30 giorni','30 Tage'],['Questo mese','Dieser Monat'],['Personalizzato','Benutzerdefiniert'],['Dal','Vom'],['Al','Bis'],['Tutti gli spot','Alle Spots'],['Storico non disponibile','Verlauf nicht verfügbar'],['Caricamento dello storico…','Verlauf wird geladen…'],['{0} spot in onda','{0} Spots gesendet'],['{0} non riusciti','{0} fehlgeschlagen'],['{0} passaggi','{0} Ausstrahlungen'],['{0} min in onda','{0} Min. gesendet'],['{0} spot ascoltati','{0} Spots gehört'],['Trasmesso','Gesendet'],['Interrotto','Abgebrochen'],['Non riuscito','Fehlgeschlagen'],['Data e ora','Datum und Uhrzeit'],['Tipo','Art'],['Durata','Dauer'],['Esito','Ergebnis'],['Prova manuale','Manueller Test'],['Automatico','Automatisch'],['Mostra altri ({0} rimanenti)','Weitere anzeigen ({0} übrig)'],['Nessuno spot in questo periodo.','Keine Spots in diesem Zeitraum.'],['Spot in onda','Gesendete Spots'],['nel giorno scelto','am gewählten Tag'],['in {0} giorni','in {0} Tagen'],['Media al giorno','Durchschnitt pro Tag'],['limite {0} al giorno','Limit {0} pro Tag'],['Minuti in onda','Sendeminuten'],['solo spot ascoltati per intero','nur vollständig gehörte Spots'],['Trasmessi per intero','Vollständig gesendet'],['{0} interrotti · {1} non riusciti','{0} abgebrochen · {1} fehlgeschlagen'],['{0} prove manuali nel periodo','{0} manuelle Tests im Zeitraum'],['Spot in onda per giorno','Gesendete Spots pro Tag'],['Per ora del giorno','Nach Tageszeit'],['quando passano gli spot','wann die Spots laufen'],['Spot in onda per ora del giorno','Gesendete Spots nach Tageszeit'],['Per spot','Nach Spot'],['passaggi e quota','Ausstrahlungen und Anteil'],['Per zona','Nach Zone'],['dove sono stati ascoltati','wo sie gehört wurden'],['Tutti i passaggi','Alle Ausstrahlungen'],['Trasmessi','Gesendet'],['Interrotti','Abgebrochen'],['Non riusciti','Fehlgeschlagen'],['FFmpeg non trovato: serve per generare i canali TV (sul PC di prova va installato a parte).','FFmpeg nicht gefunden: wird zum Erzeugen der TV-Kanäle benötigt (auf dem Test-PC separat installieren).'],['In preparazione','Wird vorbereitet'],['Da aggiornare','Zu aktualisieren'],['Errore','Fehler'],['Da generare','Zu erzeugen'],
 ['Apri','Öffnen'],['Chiudi','Schließen'],['Modifica','Bearbeiten'],['suona','spielt'],['ferma','gestoppt'],['spot in onda','Spot läuft'],['Nessun dispositivo assegnato','Kein Gerät zugewiesen'],['Abbiamo preparato una zona per ogni Sonos. Rinominale, uniscile o assegna le TV, poi salva.','Für jeden Sonos wurde eine Zone vorbereitet. Umbenennen, zusammenlegen oder TVs zuweisen, dann speichern.'],['Conferma queste zone','Diese Zonen bestätigen'],['Premi "Nuova zona" per aggiungere un luogo del locale.','„Neue Zone“ drücken, um einen Bereich hinzuzufügen.'],['Nessuna zona: premi "Nuova zona".','Keine Zonen: „Neue Zone“ drücken.'],
 ['Nome della zona','Name der Zone'],['Sonos in questa zona','Sonos in dieser Zone'],['Nessun Sonos trovato','Keine Sonos gefunden'],['Canali TV in questa zona','TV-Kanäle in dieser Zone'],['Schermo principale (LAN/DLNA)','Hauptbildschirm (LAN/DLNA)'],['Eliminare la zona {0}? Sonos e TV non vengono toccati.','Zone {0} löschen? Sonos und TVs bleiben unverändert.'],['Elimina','Löschen'],['Elimina zona','Zone löschen'],['Zona','Zone'],['Zona {0}','Zone {0}'],['Zona non trovata.','Zone nicht gefunden.'],['Torna alle zone','Zurück zu den Zonen'],
 ['Musica attiva in {0}','Musik aktiv in {0}'],['Nessuna musica adesso','Gerade keine Musik'],['poi','dann'],['Prossima fascia alle {0}: {1}','Nächster Zeitraum um {0}: {1}'],['Nessuna altra fascia oggi','Heute kein weiterer Zeitraum'],['Questa zona non è in nessuna fascia musicale','Diese Zone ist in keinem Musikzeitraum'],['Programma','Programm'],['Segue il palinsesto generale: aggiungi la zona a una fascia per farla suonare.','Folgt dem allgemeinen Programm: Zone zu einem Zeitraum hinzufügen, damit sie spielt.'],['Modifica nel palinsesto','Im Programm bearbeiten'],['Volume della zona','Lautstärke der Zone'],

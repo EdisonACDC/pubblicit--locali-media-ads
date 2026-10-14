@@ -460,6 +460,44 @@ def find_ffmpeg():
         os.environ["PATH"] = f"{links}{os.pathsep}{os.environ.get('PATH', '')}"
 
 
+def demo_history(app):
+    """Storico finto degli ultimi 30 giorni, solo per vedere la dashboard in locale."""
+    import random
+    from datetime import datetime, timedelta
+    rng = random.Random(7)
+    spots = ["Carellas_Ristorante_Spot_DE_Femminile.mp3", "Carellas_Ristorante_Spot_DE_Maschile.mp3"]
+    durations = {spots[0]: 61.1, spots[1]: 54.1}
+    now = datetime.now().astimezone()
+    entries, index = [], 0
+    for back in range(30, -1, -1):
+        day = (now - timedelta(days=back)).replace(hour=10, minute=0, second=0, microsecond=0)
+        if day.weekday() == 6:
+            continue
+        count = 0
+        moment = day
+        busy = rng.uniform(0.35, 0.8)  # giorni più o meno pieni
+        while moment.hour < 23 and count < 20 and moment <= now:
+            if rng.random() < busy:
+                spot = spots[index % 2]
+                index += 1
+                roll = rng.random()
+                status = "played" if roll < 0.9 else "stopped" if roll < 0.96 else "failed"
+                players = ["media_player.sonos_sala", "media_player.sonos_terrazza"]
+                if rng.random() < 0.4:
+                    players.append("media_player.sonos_bar")
+                entries.append({
+                    "id": f"demo{len(entries):05d}", "time": (moment + timedelta(seconds=rng.randint(0, 40))).isoformat(timespec="seconds"),
+                    "spot": spot, "players": players, "trigger": "manual" if rng.random() < 0.04 else "automatic",
+                    "status": status, "duration": durations[spot] if status != "failed" else None,
+                    "reason": "Sonos Bar non raggiungibile" if status == "failed" else "",
+                })
+                count += status != "failed"
+            moment += timedelta(minutes=30)
+    with app.spot_history.lock:
+        app.spot_history.entries = entries + app.spot_history.entries
+        app.spot_history._save()
+
+
 def make_sim_handler(virtual):
     page = (DEV_DIR / "simulator.html").read_bytes()
 
@@ -532,6 +570,10 @@ def main():
         app.store.update(demo_config())
         app.store.log("info", "Dati di esempio caricati dal simulatore (utente TV: tv-sala / carellas)")
 
+    # Storico di esempio se non ci sono ancora giorni passati da mostrare nella dashboard.
+    today = __import__("datetime").date.today().isoformat()
+    if not args.empty and not any(e.get("time", "")[:10] < today for e in app.spot_history.entries):
+        demo_history(app)
     app.scheduler.start()
     servers = [
         ThreadingHTTPServer((args.host, app.PLAYER_PORT), app.PlayerHandler),

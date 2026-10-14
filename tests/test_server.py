@@ -1992,12 +1992,12 @@ class CarellasServerTest(unittest.TestCase):
         # Tavole A–E del mock: Oggi, Palinsesto, Zone, Configurazione guidata, telefono.
         for page in ("function pageOggi()", "function pagePalinsesto()", "function pageZona()",
                      "function pageGuidata()", "function pageContenuti()", "function pageRegistro()",
-                     "function pageImpostazioni()", "class=\"tabbar\""):
+                     "function pageImpostazioni()", "function pageStorico()", "class=\"tabbar\""):
             self.assertIn(page, html)
         # Percorsi relativi: funzionano anche dietro Home Assistant Ingress.
         for path in ("'api/state", "'api/config'", "'api/test/audio'", "'api/audio/stop'", "'api/audio/skip'",
                      "'api/audio/pause'", "'api/music/start'", "'api/music/stop'", "'api/music/refresh'",
-                     "'api/sonos/volume'", "'api/iptv/rebuild'", "'api/upload/chunk?'"):
+                     "'api/sonos/volume'", "'api/iptv/rebuild'", "'api/upload/chunk?'", "`api/spots/history?", "api/spots/history.csv?"):
             self.assertIn(path, html)
         self.assertNotIn("fetch('/api", html)
         # Niente dialoghi bloccanti del browser: conferme dentro la pagina.
@@ -2007,6 +2007,74 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("Ungespeicherte Änderungen", html)
         for label in ("Ken Burns diagonale", "Diagonaler Ken-Burns-Effekt", "Panoramica verso l’alto", "Schwenk nach oben"):
             self.assertIn(label, html)
+
+    def test_spot_history_records_played_stopped_and_failed_spots(self):
+        ad = "history-test.mp3"
+        (self.app.MEDIA_DIR / ad).write_bytes(b"audio")
+        self.app.store.update({"audio": {"players": ["media_player.sala"], "ads": [ad], "transition_seconds": 0}})
+        before = len(self.app.spot_history.entries)
+        try:
+            with mock.patch.object(self.app, "probe_media_duration", return_value=21.5), \
+                    mock.patch.object(self.app.time, "sleep"), \
+                    mock.patch.object(self.app.audio_stop_event, "wait", return_value=False):
+                self.app.play_audio(ad, manual=True)
+            played = self.app.spot_history.entries[-1]
+            self.assertEqual(len(self.app.spot_history.entries), before + 1)
+            self.assertEqual((played["spot"], played["status"], played["trigger"], played["duration"]),
+                             (ad, "played", "manual", 21.5))
+            self.assertEqual(played["players"], ["media_player.sala"])
+            # Uno spot fermato a metà resta nello storico come interrotto.
+            with mock.patch.object(self.app, "probe_media_duration", return_value=21.5), \
+                    mock.patch.object(self.app.time, "sleep"), \
+                    mock.patch.object(self.app.audio_stop_event, "wait", return_value=True):
+                self.app.play_audio(ad, manual=False)
+            stopped = self.app.spot_history.entries[-1]
+            self.assertEqual((stopped["status"], stopped["trigger"]), ("stopped", "automatic"))
+            # Anche una prova non riuscita viene registrata, con il motivo.
+            with mock.patch.object(self.app, "play_audio", side_effect=RuntimeError("Sonos spento")):
+                self.request("/api/test/audio", "POST", {"name": ad})
+                failed = None
+                for _ in range(100):
+                    failed = next((e for e in self.app.spot_history.entries if e.get("reason") == "Sonos spento"), None)
+                    if failed:
+                        break
+                    self.app.time.sleep(0.02)
+            self.assertEqual((failed["status"], failed["spot"], failed["trigger"]), ("failed", ad, "manual"))
+            # Lo storico sopravvive a un riavvio dell'add-on.
+            with self.app.spot_history.lock:  # attende la fine della scrittura su disco
+                reloaded = {e["id"]: e for e in self.app.SpotHistory(self.app.SPOT_HISTORY_FILE).entries}
+            for entry in (played, stopped, failed):
+                self.assertEqual(reloaded.get(entry["id"]), entry)
+        finally:
+            (self.app.MEDIA_DIR / ad).unlink()
+
+    def test_spot_history_api_filters_by_day_and_exports_csv(self):
+        history = self.app.spot_history
+        saved = list(history.entries)
+        history.entries = [
+            {"id": "a", "time": "2026-10-01T12:00:00+02:00", "spot": "uno.mp3", "players": ["media_player.sala"],
+             "trigger": "automatic", "status": "played", "duration": 20.5, "reason": ""},
+            {"id": "b", "time": "2026-10-02T13:30:00+02:00", "spot": "due.mp3", "players": ["media_player.bar"],
+             "trigger": "manual", "status": "failed", "duration": None, "reason": "Sonos spento"},
+        ]
+        zones = self.app.store.config.get("zones", [])
+        self.app.store.config["zones"] = [{"id": "sala", "name": "Sala", "players": ["media_player.sala"],
+                                           "iptv_channels": [], "main_tv": False}]
+        try:
+            _, payload = self.request("/api/spots/history?from=2026-10-02&to=2026-10-02")
+            self.assertEqual([item["id"] for item in payload["entries"]], ["b"])
+            _, payload = self.request("/api/spots/history")
+            self.assertEqual([item["id"] for item in payload["entries"]], ["b", "a"])
+            with urllib.request.urlopen(self.base + "/api/spots/history.csv?from=2026-10-01&to=2026-10-31") as response:
+                self.assertIn("attachment", response.headers.get("Content-Disposition"))
+                text = response.read().decode("utf-8")
+            lines = text.lstrip("﻿").splitlines()
+            self.assertEqual(lines[0], "Data;Ora;Spot;Zone;Tipo;Durata (s);Esito;Note")
+            self.assertEqual(lines[1], "2026-10-01;12:00:00;uno.mp3;Sala;Automatico;20,5;Trasmesso;")
+            self.assertEqual(lines[2], "2026-10-02;13:30:00;due.mp3;bar;Prova manuale;;Non riuscito;Sonos spento")
+        finally:
+            history.entries = saved
+            self.app.store.config["zones"] = zones
 
     def test_classic_interface_stays_available(self):
         request = urllib.request.Request(self.base + "/classic")

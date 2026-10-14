@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import copy
+import csv
+import io
 import base64
 import hashlib
 import hmac
@@ -26,7 +28,7 @@ try:
     import websocket
 except ModuleNotFoundError:  # Il pacchetto viene installato nell'immagine dell'add-on.
     websocket = None
-from datetime import datetime
+from datetime import datetime, timedelta
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -40,6 +42,7 @@ IPTV_DIR = DATA_DIR / "iptv"
 UPLOAD_DIR = DATA_DIR / "uploads"
 CONFIG_FILE = DATA_DIR / "carellas_media_ads.json"
 RUNTIME_FILE = DATA_DIR / "carellas_media_ads_runtime.json"
+SPOT_HISTORY_FILE = DATA_DIR / "carellas_spot_history.json"
 SONOS_CATALOG_FILE = DATA_DIR / "carellas_sonos_catalog.json"
 DEFAULT_FILE = APP_DIR / "default_config.json"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
@@ -363,8 +366,71 @@ class HomeAssistant:
         return self.websocket_command(payload)
 
 
+class SpotHistory:
+    """Storico degli spot andati in onda, salvato su disco per i resoconti agli inserzionisti."""
+
+    MAX_DAYS = 400
+    MAX_ENTRIES = 50000
+
+    def __init__(self, path):
+        self.path = path
+        self.lock = threading.Lock()
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            self.entries = [item for item in data.get("entries", []) if isinstance(item, dict)]
+        except (FileNotFoundError, json.JSONDecodeError, AttributeError):
+            self.entries = []
+
+    def _save(self):
+        cutoff = (datetime.now().astimezone() - timedelta(days=self.MAX_DAYS)).isoformat(timespec="seconds")
+        self.entries = [item for item in self.entries if item.get("time", "") >= cutoff][-self.MAX_ENTRIES:]
+        temporary = self.path.with_suffix(".tmp")
+        try:
+            temporary.write_text(json.dumps({"entries": self.entries}, ensure_ascii=False), encoding="utf-8")
+            os.replace(temporary, self.path)
+        except OSError as error:
+            temporary.unlink(missing_ok=True)
+            store.log("warning", f"Storico spot non salvato: {error}")
+
+    def add(self, spot, players, manual, status="played", duration=None, reason=""):
+        entry = {
+            "id": uuid.uuid4().hex[:12],
+            "time": now_iso(),
+            "spot": spot or "",
+            "players": list(players or []),
+            "trigger": "manual" if manual else "automatic",
+            "status": status,
+            "duration": round(float(duration), 1) if duration else None,
+            "reason": str(reason)[:300],
+        }
+        with self.lock:
+            self.entries.append(entry)
+            self._save()
+        return entry["id"]
+
+    def update(self, entry_id, **fields):
+        with self.lock:
+            for item in reversed(self.entries):
+                if item.get("id") == entry_id:
+                    item.update(fields)
+                    self._save()
+                    return True
+        return False
+
+    def query(self, start=None, end=None):
+        """Voci dal giorno ``start`` al giorno ``end`` compresi (AAAA-MM-GG), le più recenti per prime."""
+        with self.lock:
+            items = list(self.entries)
+        if start:
+            items = [item for item in items if item.get("time", "")[:10] >= start]
+        if end:
+            items = [item for item in items if item.get("time", "")[:10] <= end]
+        return list(reversed(items))
+
+
 store = Store()
 ha = HomeAssistant()
+spot_history = SpotHistory(SPOT_HISTORY_FILE)
 upload_lock = threading.Lock()
 audio_playback_lock = threading.Lock()
 audio_stop_event = threading.Event()
@@ -1084,6 +1150,7 @@ def play_audio(filename=None, manual=False, players=None):
                 "media_content_id": media_url(filename),
             })
             scheduler.record_audio_play()
+            history_id = spot_history.add(filename, players, manual, duration=duration)
             store.log(
                 "success",
                 f"Spot sincronizzato su {len(players)} Sonos selezionati: "
@@ -1093,6 +1160,7 @@ def play_audio(filename=None, manual=False, players=None):
             # precedenza la dissolvenza iniziava prima della fine e tagliava la
             # traccia; ora il ripristino parte solo dopo la durata completa.
             if audio_stop_event.wait(duration + SONOS_SPOT_TAIL_GUARD_SECONDS):
+                spot_history.update(history_id, status="stopped")
                 stopped = True
                 break
             set_sonos_volume_levels(quiet_levels)
@@ -1952,6 +2020,7 @@ class Scheduler(threading.Thread):
             play_audio()
         except Exception as error:
             store.log("error", f"Spot audio non riuscito: {error}")
+            spot_history.add(None, store.config["audio"].get("players", []), False, status="failed", reason=error)
         finally:
             self.busy.release()
 
@@ -2205,6 +2274,40 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def send_spot_csv(self, entries, start, end):
+        """Storico spot per Excel: separatore ';' e BOM UTF-8, come si aspetta Excel in IT/DE."""
+        zone_of = {}
+        for zone in store.config.get("zones", []):
+            for player in zone.get("players", []):
+                zone_of.setdefault(player, zone.get("name", player))
+
+        def place(player):
+            return zone_of.get(player) or player.removeprefix("media_player.").replace("_", " ")
+
+        labels = {"played": "Trasmesso", "stopped": "Interrotto", "failed": "Non riuscito"}
+        buffer = io.StringIO()
+        writer = csv.writer(buffer, delimiter=";", lineterminator="\r\n")
+        writer.writerow(["Data", "Ora", "Spot", "Zone", "Tipo", "Durata (s)", "Esito", "Note"])
+        for item in reversed(entries):
+            moment = item.get("time", "")
+            duration = item.get("duration")
+            writer.writerow([
+                moment[:10], moment[11:19], item.get("spot", ""),
+                ", ".join(dict.fromkeys(place(p) for p in item.get("players", []))),
+                "Prova manuale" if item.get("trigger") == "manual" else "Automatico",
+                str(duration).replace(".", ",") if duration is not None else "",
+                labels.get(item.get("status"), item.get("status", "")), item.get("reason", ""),
+            ])
+        data = ("﻿" + buffer.getvalue()).encode("utf-8")
+        name = f"storico-spot_{start or 'inizio'}_{end or datetime.now().date().isoformat()}.csv"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/csv; charset=utf-8")
+        self.send_header("Content-Disposition", f'attachment; filename="{name}"')
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
     def send_iptv_stream(self, channel_id):
         output = iptv.output(channel_id)
         if not output.is_file():
@@ -2316,6 +2419,17 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == "/api/iptv/status":
                 self.send_json({"channels": iptv.runtime_status()})
+                return
+            if path in ("/api/spots/history", "/api/spots/history.csv"):
+                query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+                day = r"\d{4}-\d{2}-\d{2}"
+                start = next((v for v in query.get("from", []) if re.fullmatch(day, v)), None)
+                end = next((v for v in query.get("to", []) if re.fullmatch(day, v)), None)
+                entries = spot_history.query(start, end)
+                if path.endswith(".csv"):
+                    self.send_spot_csv(entries, start, end)
+                else:
+                    self.send_json({"entries": entries, "from": start, "to": end})
                 return
             if path == "/iptv/channels.m3u":
                 lines = ["#EXTM3U"]
@@ -2695,6 +2809,8 @@ class Handler(BaseHTTPRequestHandler):
                         play_audio(body.get("name"), True, players or None)
                     except Exception as error:
                         # Prima l'errore di una prova manuale andava perso nel thread.
+                        spot_history.add(body.get("name"), players or store.config["audio"].get("players", []),
+                                         True, status="failed", reason=error)
                         store.log("error", f"Prova spot non riuscita: {error}")
 
                 threading.Thread(target=manual_spot, daemon=True).start()
