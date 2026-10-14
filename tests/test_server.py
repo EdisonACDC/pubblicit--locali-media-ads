@@ -120,7 +120,7 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("Visualizza password", html)
         self.assertIn("Passwort anzeigen", html)
         self.assertIn("$('language').style.display=name?'flex':'none'", html)
-        dashboard = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        dashboard = (Path(__file__).parents[1] / "carellas_media_ads/app/index_classic.html").read_text(encoding="utf-8")
         self.assertIn('id="playerUsers"', dashboard)
         self.assertIn('id="playerUserSelect"', dashboard)
         self.assertIn('onchange="selectPlayerUser(this.value)"', dashboard)
@@ -307,7 +307,7 @@ class CarellasServerTest(unittest.TestCase):
                 self.assertIn(fragment, graph, name)
 
     def test_dashboard_lists_new_effects_in_both_languages(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index_classic.html").read_text(encoding="utf-8")
         for label in (
             "Ken Burns diagonale", "Ken Burns inverso", "Panoramica verso destra",
             "Panoramica verso sinistra", "Panoramica verso il basso", "Panoramica verso l’alto",
@@ -564,7 +564,7 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual([item["entity_id"] for item in payload["entities"]], ["media_player.sala"])
 
     def test_editor_preserves_unsaved_settings_and_shows_sequence_order(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index_classic.html").read_text(encoding="utf-8")
         self.assertIn("if(dirty&&!force)return", html)
         self.assertIn("Ordine di riproduzione, da sinistra a destra", html)
         self.assertIn("Sequenza realmente generata", html)
@@ -575,7 +575,7 @@ class CarellasServerTest(unittest.TestCase):
         self.assertNotIn('id="audioDriver"', html)
 
     def test_desktop_sonos_picker_and_ingress_music_controls(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index_classic.html").read_text(encoding="utf-8")
         self.assertIn('id="audioPlayers" class="speaker-picker"', html)
         self.assertIn('id="musicPlayers" class="speaker-picker"', html)
         self.assertIn("speakerValues('musicPlayers')", html)
@@ -598,7 +598,7 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("function filterSonosSourceOptions()", html)
 
     def test_dashboard_is_responsive_on_phone(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index_classic.html").read_text(encoding="utf-8")
         self.assertIn("@media(max-width:700px)", html)
         self.assertIn("overflow-x:hidden", html)
         self.assertIn(".speaker-option span{min-width:0;max-width:100%;flex:1;overflow:hidden}", html)
@@ -608,7 +608,7 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn(".savebar{position:static", html)
 
     def test_apple_time_fields_do_not_open_unstable_native_picker(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index_classic.html").read_text(encoding="utf-8")
         self.assertIn("function stabilizeAppleTimeInputs", html)
         self.assertIn("function normalizeClockInput", html)
         self.assertIn("input.type='text'", html)
@@ -616,7 +616,7 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("stableTimeObserver.observe", html)
 
     def test_language_switch_is_always_visible_and_persists_immediately(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index_classic.html").read_text(encoding="utf-8")
         self.assertIn('class="language-control"', html)
         self.assertIn('id="language" aria-label="Lingua / Sprache"', html)
         self.assertEqual(html.count('id="language"'), 1)
@@ -624,25 +624,25 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("JSON.stringify({language:lang})", html)
 
     def test_audio_duration_is_automatic_in_the_interface(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index_classic.html").read_text(encoding="utf-8")
         self.assertIn("Automatica: viene letta direttamente dal file audio", html)
         self.assertIn("formatDuration(m.duration)", html)
         self.assertNotIn('id="spotDuration" type="number"', html)
 
     def test_stop_spot_button_is_available_on_dashboard_and_audio_page(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index_classic.html").read_text(encoding="utf-8")
         self.assertEqual(html.count('onclick="stopAudio()"'), 2)
         self.assertIn("api/audio/stop", html)
 
     def test_audio_frequency_and_repeat_controls_are_unambiguous(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index_classic.html").read_text(encoding="utf-8")
         self.assertIn("Riproduci uno spot ogni (minuti)", html)
         self.assertIn("A ogni intervallo viene riprodotto un solo spot", html)
         self.assertIn("Uno alla volta, nell’ordine della lista", html)
         self.assertNotIn("Quante volte consecutive", html)
 
     def test_complete_german_ui_and_audio_rotation_summary_are_available(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index_classic.html").read_text(encoding="utf-8")
         self.assertIn("Sonos-Audiowerbung", html)
         self.assertIn("Geplante Playlists und Radios", html)
         self.assertIn("IPTV-Kanäle für mehrere Fernseher", html)
@@ -1276,7 +1276,7 @@ class CarellasServerTest(unittest.TestCase):
         self.assertFalse(engine.music_active)
 
     def test_music_slot_editor_is_available_on_phone(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index_classic.html").read_text(encoding="utf-8")
         self.assertIn("Orari di accensione musica", html)
         self.assertIn("Aggiungi playlist o radio", html)
         self.assertIn("Durata (minuti)", html)
@@ -1299,7 +1299,7 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("sonos_playlist_source", html)
 
     def test_upload_refreshes_library_without_discarding_unsaved_settings(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index_classic.html").read_text(encoding="utf-8")
         self.assertIn("async function refreshMediaLibrary()", html)
         self.assertIn("preserveMediaChoices()", html)
         self.assertIn("api/state?media_refresh=", html)
@@ -1401,7 +1401,7 @@ class CarellasServerTest(unittest.TestCase):
         self.assertTrue(payload["ok"])
 
     def test_library_audio_uses_ingress_relative_player(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index_classic.html").read_text(encoding="utf-8")
         self.assertIn("function libraryMediaUrl(name)", html)
         self.assertIn('<audio class="library-audio" controls', html)
         self.assertNotIn("state.runtime.media_base_url+'/media/'", html)
@@ -1864,6 +1864,155 @@ class CarellasServerTest(unittest.TestCase):
             self.assertEqual(response.status, 204)
             self.assertEqual(response.headers.get("Access-Control-Allow-Origin"), "*")
             self.assertIn("POST", response.headers.get("Access-Control-Allow-Methods"))
+
+    def test_state_exposes_sonos_details_including_offline_configured_speakers(self):
+        states = [
+            {"entity_id": "media_player.sala", "state": "playing", "attributes": {
+                "friendly_name": "Sonos Sala", "volume_level": 0.31, "media_title": "Dinner Jazz",
+                "group_members": ["media_player.sala", "media_player.terrazza"],
+            }},
+            {"entity_id": "media_player.bar", "state": "unavailable", "attributes": {"friendly_name": "Sonos Bar"}},
+            {"entity_id": "media_player.tv", "state": "on", "attributes": {"friendly_name": "TV"}},
+        ]
+        old_players = self.app.store.config["audio"]["players"]
+        self.app.store.config["audio"]["players"] = ["media_player.sala", "media_player.bar"]
+        try:
+            with mock.patch.object(self.app.ha, "states", return_value=states):
+                _, payload = self.request("/api/state")
+        finally:
+            self.app.store.config["audio"]["players"] = old_players
+        sonos = {item["entity_id"]: item for item in payload["sonos"]}
+        self.assertEqual(set(sonos), {"media_player.sala", "media_player.bar"})
+        self.assertEqual(sonos["media_player.sala"]["volume"], 31)
+        self.assertEqual(sonos["media_player.sala"]["media_title"], "Dinner Jazz")
+        self.assertEqual(sonos["media_player.sala"]["group_members"], ["media_player.sala", "media_player.terrazza"])
+        self.assertFalse(sonos["media_player.bar"]["available"])
+        for key in ("next_spot", "next_spot_in_seconds", "spot_playing", "audio_paused_until", "audio_waiting"):
+            self.assertIn(key, payload["runtime"])
+
+    def test_next_spot_countdown_pause_and_skip(self):
+        audio = self.app.store.config["audio"]
+        saved = {key: audio.get(key) for key in ("enabled", "ads", "mode", "interval_minutes", "schedule", "only_when_playing")}
+        audio.update(enabled=True, ads=["a.mp3", "b.mp3"], mode="rotate", interval_minutes=30, schedule=[], only_when_playing=False)
+        scheduler = self.app.scheduler
+        try:
+            scheduler.audio_index = 0
+            scheduler.audio_paused_until = 0.0
+            scheduler.last_audio = self.app.time.monotonic() - 10 * 60
+            status = scheduler.audio_status()
+            self.assertEqual(status["next_spot"], "a.mp3")
+            self.assertAlmostEqual(status["next_spot_in_seconds"], 20 * 60, delta=5)
+            self.assertIsNone(status["audio_waiting"])
+            # Saltare non riproduce nulla: riparte l'intervallo e passa allo spot successivo.
+            self.assertEqual(scheduler.skip_audio(), "a.mp3")
+            status = scheduler.audio_status()
+            self.assertEqual(status["next_spot"], "b.mp3")
+            self.assertAlmostEqual(status["next_spot_in_seconds"], 30 * 60, delta=5)
+            status, payload = self.request("/api/audio/pause", "POST", {"minutes": 60})
+            self.assertEqual(payload["audio_waiting"], "paused")
+            self.assertIsNotNone(payload["audio_paused_until"])
+            with mock.patch.object(self.app, "play_audio") as play:
+                scheduler.last_audio = self.app.time.monotonic() - 3600
+                scheduler.audio_tick()
+            play.assert_not_called()
+            self.request("/api/audio/pause", "POST", {"minutes": 0})
+            self.assertIsNone(scheduler.audio_status()["audio_paused_until"])
+        finally:
+            audio.update(saved)
+            scheduler.audio_paused_until = 0.0
+            scheduler.audio_index = 0
+
+    def test_zone_spot_test_uses_only_the_zone_speakers(self):
+        with mock.patch.object(self.app, "play_audio") as play:
+            self.request("/api/test/audio", "POST", {"name": "spot.mp3", "players": ["media_player.terrazza", "x"]})
+            for _ in range(50):
+                if play.called:
+                    break
+                self.app.time.sleep(0.02)
+        play.assert_called_once_with("spot.mp3", True, ["media_player.terrazza"])
+
+    def test_failed_manual_spot_is_written_to_the_log(self):
+        with mock.patch.object(self.app, "play_audio", side_effect=RuntimeError("Nessun altoparlante selezionato")):
+            self.request("/api/test/audio", "POST", {"name": "spot.mp3"})
+            for _ in range(50):
+                if any("Prova spot non riuscita" in log["message"] for log in self.app.store.logs):
+                    break
+                self.app.time.sleep(0.02)
+        self.assertTrue(any("Prova spot non riuscita: Nessun altoparlante selezionato" in log["message"]
+                            for log in self.app.store.logs))
+
+    def test_zones_are_normalized_and_saved(self):
+        self.app.store.update({"zones": [
+            {"name": "Sala", "players": ["media_player.sala", 3, "switch.x"], "iptv_channels": ["TV Sala"], "main_tv": True},
+            {"id": "bar", "name": " Bar ", "players": ["media_player.bar"]},
+        ]})
+        try:
+            zones = self.app.store.config["zones"]
+            self.assertEqual(zones[0], {"id": "sala", "name": "Sala", "players": ["media_player.sala"],
+                                        "main_tv": True, "iptv_channels": ["tv-sala"]})
+            self.assertEqual(zones[1]["name"], "Bar")
+            self.assertFalse(zones[1]["main_tv"])
+            with self.assertRaises(RuntimeError):
+                self.app.store.update({"zones": [{"name": "Sala"}, {"name": "sala"}]})
+        finally:
+            self.app.store.update({"zones": []})
+
+    def test_sonos_volume_and_zone_music_stop_endpoints(self):
+        self.calls.clear()
+        self.request("/api/sonos/volume", "POST", {"entity_id": "media_player.sala", "volume": 140})
+        self.assertIn(("media_player", "volume_set", {"entity_id": "media_player.sala", "volume_level": 1.0}), self.calls)
+        self.calls.clear()
+        self.request("/api/music/stop", "POST", {"players": ["media_player.bar"]})
+        self.assertIn(("media_player", "media_stop", {"entity_id": ["media_player.bar"]}), self.calls)
+        music = self.app.store.config["music"]
+        saved_slots, saved_players = music.get("slots", []), music.get("players", [])
+        music["players"], music["slots"] = [], [{"id": "s1", "players": ["media_player.terrazza"]}]
+        try:
+            self.calls.clear()
+            self.request("/api/music/stop", "POST", {"all": True})
+            self.assertIn(("media_player", "media_stop", {"entity_id": ["media_player.terrazza"]}), self.calls)
+        finally:
+            music["slots"], music["players"] = saved_slots, saved_players
+
+    def test_music_start_can_test_a_single_saved_slot(self):
+        music = self.app.store.config["music"]
+        saved = music.get("slots", [])
+        music["slots"] = [{"id": "pranzo", "content_id": "FV:2/1", "players": ["media_player.sala"]}]
+        try:
+            with mock.patch.object(self.app, "start_music") as start:
+                self.request("/api/music/start", "POST", {"slot_id": "pranzo"})
+            start.assert_called_once_with(music["slots"][0])
+            with self.assertRaises(urllib.error.HTTPError):
+                self.request("/api/music/start", "POST", {"slot_id": "inesistente"})
+        finally:
+            music["slots"] = saved
+
+    def test_new_interface_has_all_mock_screens_and_uses_existing_api(self):
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        # Tavole A–E del mock: Oggi, Palinsesto, Zone, Configurazione guidata, telefono.
+        for page in ("function pageOggi()", "function pagePalinsesto()", "function pageZona()",
+                     "function pageGuidata()", "function pageContenuti()", "function pageRegistro()",
+                     "function pageImpostazioni()", "class=\"tabbar\""):
+            self.assertIn(page, html)
+        # Percorsi relativi: funzionano anche dietro Home Assistant Ingress.
+        for path in ("'api/state", "'api/config'", "'api/test/audio'", "'api/audio/stop'", "'api/audio/skip'",
+                     "'api/audio/pause'", "'api/music/start'", "'api/music/stop'", "'api/music/refresh'",
+                     "'api/sonos/volume'", "'api/iptv/rebuild'", "'api/upload/chunk?'"):
+            self.assertIn(path, html)
+        self.assertNotIn("fetch('/api", html)
+        # Niente dialoghi bloccanti del browser: conferme dentro la pagina.
+        self.assertNotIn("confirm(", html.replace("S.confirm", "").replace("'confirm-no'", ""))
+        self.assertIn("beforeunload", html)
+        self.assertIn("Modifiche non salvate", html)
+        self.assertIn("Ungespeicherte Änderungen", html)
+        for label in ("Ken Burns diagonale", "Diagonaler Ken-Burns-Effekt", "Panoramica verso l’alto", "Schwenk nach oben"):
+            self.assertIn(label, html)
+
+    def test_classic_interface_stays_available(self):
+        request = urllib.request.Request(self.base + "/classic")
+        with urllib.request.urlopen(request) as response:
+            html = response.read().decode("utf-8")
+        self.assertIn('id="audioPlayers"', html)
 
     def test_overnight_schedule(self):
         schedule = [{"days": [6], "start": "22:00", "end": "02:00", "enabled": True}]

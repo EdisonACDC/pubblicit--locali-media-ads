@@ -399,6 +399,58 @@ def load_app(data_dir, media_dir):
     return app
 
 
+def demo_config():
+    """Configurazione di esempio: orari, fasce musicali, spot, un canale TV e un utente TV."""
+    weekdays, week = [0, 1, 2, 3, 4], [0, 1, 2, 3, 4, 5]
+    return {
+        "media_base_url": "http://127.0.0.1:8099",
+        "zones": [
+            {"id": "sala", "name": "Sala", "players": ["media_player.sonos_sala"], "iptv_channels": ["tv-sala"], "main_tv": False},
+            {"id": "bar", "name": "Bar", "players": ["media_player.sonos_bar"], "iptv_channels": [], "main_tv": False},
+            {"id": "terrazza", "name": "Terrazza", "players": ["media_player.sonos_terrazza"], "iptv_channels": [], "main_tv": False},
+            {"id": "bagni", "name": "Bagni", "players": ["media_player.sonos_bagni"], "iptv_channels": [], "main_tv": False},
+        ],
+        "audio": {
+            "enabled": True, "players": ["media_player.sonos_sala", "media_player.sonos_terrazza"],
+            "ads": ["Carellas_Ristorante_Spot_DE_Femminile.mp3", "Carellas_Ristorante_Spot_DE_Maschile.mp3"],
+            "mode": "rotate", "interval_minutes": 30, "daily_limit": 20, "volume": 35,
+            "only_when_playing": True, "schedule": [{"days": week, "start": "10:00", "end": "23:00", "enabled": True}],
+        },
+        "music": {
+            "enabled": True, "schedule": [{"days": week, "start": "10:00", "end": "23:00", "enabled": True}],
+            "slots": [
+                {"id": "pranzo", "name": "Pranzo italiano", "title": "Pranzo italiano", "enabled": True,
+                 "content_id": "FV:2/14", "content_type": "favorite_item_id",
+                 "players": ["media_player.sonos_sala", "media_player.sonos_terrazza"], "volume": 25,
+                 "start": "10:00", "duration_minutes": 240, "end": "14:00", "days": week},
+                {"id": "pomeriggio", "name": "Radio Italia Live", "title": "Radio Italia Live", "enabled": True,
+                 "content_id": "FV:2/11", "content_type": "favorite_item_id",
+                 "players": ["media_player.sonos_sala", "media_player.sonos_bar"], "volume": 20,
+                 "start": "14:00", "duration_minutes": 180, "end": "17:00", "days": weekdays},
+                {"id": "sera", "name": "Dinner Jazz", "title": "Dinner Jazz", "enabled": True,
+                 "content_id": "FV:2/12", "content_type": "favorite_item_id",
+                 "players": ["media_player.sonos_sala", "media_player.sonos_bar", "media_player.sonos_terrazza"],
+                 "volume": 25, "start": "17:00", "duration_minutes": 360, "end": "23:00", "days": week},
+            ],
+        },
+        "iptv": {"channels": [{
+            "id": "tv-sala", "name": "TV Sala", "enabled": True,
+            "playlist": [
+                {"name": "Demo_Carellas_SmartTV_DLNA.mp4", "kind": "video", "fit": "smart"},
+                {"name": "Demo_Carellas_01_Benvenuti.jpg", "kind": "image", "duration": 15, "fit": "smart", "effect": "ken_burns"},
+                {"name": "Demo_Carellas_02_Cucina.jpg", "kind": "image", "duration": 15, "fit": "smart", "effect": "zoom_in"},
+                {"name": "Demo_Carellas_03_Genuss.jpg", "kind": "image", "duration": 15, "fit": "smart", "effect": "fade"},
+            ],
+            "schedule": [{"days": week, "start": "10:00", "end": "23:00", "enabled": True}],
+            "power_on_at_start": True, "power_off_at_end": True, "wol_mac": "AA:BB:CC:DD:EE:01",
+            "power_on_entity": "", "power_off_entity": "script.spegni_tv_sala",
+        }]},
+        "browser_player": {"enabled": True, "users": [
+            {"username": "tv-sala", "password": "carellas", "channel_id": "tv-sala", "fit": "contain", "enabled": True},
+        ]},
+    }
+
+
 def make_sim_handler(virtual):
     page = (DEV_DIR / "simulator.html").read_bytes()
 
@@ -434,6 +486,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--data", default=str(DEV_DIR / ".local-data"), help="cartella dei dati locali")
     parser.add_argument("--reset", action="store_true", help="cancella configurazione e dati locali prima di partire")
+    parser.add_argument("--empty", action="store_true", help="al primo avvio (o con --reset) parte senza dati di esempio")
     parser.add_argument("--host", default="127.0.0.1", help="usa 0.0.0.0 per aprirlo da telefono o TV in rete")
     args = parser.parse_args()
 
@@ -442,6 +495,7 @@ def main():
         shutil.rmtree(root)
     data_dir, media_dir = root / "data", root / "media"
     data_dir.mkdir(parents=True, exist_ok=True)
+    first_run = not (data_dir / "carellas_media_ads.json").exists()
     prepare_media(media_dir)
 
     # Tempi Sonos accorciati: il simulatore risponde subito.
@@ -464,8 +518,9 @@ def main():
             return estimate_duration(source)
 
     app.probe_media_duration = probe
-    if not app.store.config.get("media_base_url"):
-        app.store.config["media_base_url"] = f"http://{args.host if args.host != '0.0.0.0' else '127.0.0.1'}:{app.PORT}"
+    if first_run and not args.empty:
+        app.store.update(demo_config())
+        app.store.log("info", "Dati di esempio caricati dal simulatore (utente TV: tv-sala / carellas)")
 
     app.scheduler.start()
     servers = [
