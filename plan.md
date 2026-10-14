@@ -166,4 +166,4 @@ Senza FFmpeg gli spot audio funzionano (durata stimata) ma i canali TV non si po
 
 Scrivi qui sotto indicando il codice del task, ad esempio `UI-004: il conto alla rovescia è troppo piccolo`.
 
--
+- ✅ `UI-011`: la password dell'utente TV deve potersi vedere e manca il pulsante per salvarla o annullare la modifica. **Risolto**: icona a occhio per mostrarla o nasconderla, pulsanti "Salva password" / "Salva nuova password" e "Annulla" sotto il campo, controllo dei 6 caratteri prima del salvataggio. Verificato: con la nuova password l'accesso al Player TV funziona, con la vecchia viene rifiutato.
