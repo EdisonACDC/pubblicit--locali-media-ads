@@ -2048,6 +2048,25 @@ class CarellasServerTest(unittest.TestCase):
         finally:
             (self.app.MEDIA_DIR / ad).unlink()
 
+    def test_automatic_spot_failure_records_the_selected_spot(self):
+        audio = self.app.store.config["audio"]
+        saved = {key: audio.get(key) for key in ("enabled", "ads", "mode", "players", "schedule", "only_when_playing")}
+        audio.update(enabled=True, ads=["rotazione.mp3"], mode="rotate", players=["media_player.sala"],
+                     schedule=[], only_when_playing=False)
+        scheduler = self.app.scheduler
+        try:
+            scheduler.audio_paused_until = 0.0
+            scheduler.last_audio = self.app.time.monotonic() - 3600
+            # Tutti i Sonos risultano non disponibili: lo spot è già stato scelto ma non parte.
+            with mock.patch.object(self.app, "available_sonos_players", return_value=[]),                     mock.patch.object(scheduler, "audio_today", return_value=0):
+                scheduler.audio_tick()
+            failed = self.app.spot_history.entries[-1]
+            self.assertEqual((failed["status"], failed["spot"], failed["trigger"]), ("failed", "rotazione.mp3", "automatic"))
+            self.assertIn("Nessun altoparlante Sonos disponibile", failed["reason"])
+        finally:
+            audio.update(saved)
+            scheduler.audio_index = 0
+
     def test_spot_history_api_filters_by_day_and_exports_csv(self):
         history = self.app.spot_history
         saved = list(history.entries)

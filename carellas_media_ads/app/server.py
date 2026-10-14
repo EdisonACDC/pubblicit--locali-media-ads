@@ -1086,6 +1086,8 @@ def play_audio(filename=None, manual=False, players=None):
         filename = scheduler.pick_audio(ads, cfg.get("mode", "rotate"))
     if not filename:
         raise RuntimeError("Nessuno spot audio configurato")
+    # Lo storico deve indicare lo spot scelto anche se la trasmissione fallisce dopo.
+    scheduler.last_spot_attempt = filename
 
     players = available_sonos_players(players)
     if not players:
@@ -1857,6 +1859,7 @@ class Scheduler(threading.Thread):
         super().__init__(name="carellas-scheduler")
         self.last_audio = time.monotonic()
         self.audio_paused_until = 0.0
+        self.last_spot_attempt = None
         self.audio_index = 0
         self.tv_index = 0
         self.tv_next = 0.0
@@ -2016,11 +2019,13 @@ class Scheduler(threading.Thread):
         if not self.busy.acquire(blocking=False):
             return
         self.last_audio = time.monotonic()
+        self.last_spot_attempt = None
         try:
             play_audio()
         except Exception as error:
             store.log("error", f"Spot audio non riuscito: {error}")
-            spot_history.add(None, store.config["audio"].get("players", []), False, status="failed", reason=error)
+            spot_history.add(self.last_spot_attempt, store.config["audio"].get("players", []), False,
+                             status="failed", reason=error)
         finally:
             self.busy.release()
 
