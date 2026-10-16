@@ -2462,6 +2462,138 @@ class CarellasServerTest(unittest.TestCase):
         config = (Path(__file__).parents[1] / "carellas_media_ads/config.yaml").read_text(encoding="utf-8")
         self.assertIn("8103/tcp: 8103", config)
 
+    def test_website_event_dates(self):
+        from datetime import date
+        text = self.app.plain_text(
+            '[et_pb_text _builder_version="4.18.1"]<p><strong>2</strong>4.12. geschlossen</p>'
+            "<p>25.12. Mittags 11:30-15:00 Uhr</p><p>Preis 48,80€ · Tel. 09341-7030</p>[/et_pb_text]")
+        self.assertEqual(self.app.event_dates(text, date(2026, 10, 6)), [date(2026, 12, 24), date(2026, 12, 25)])
+        # Con l'anno scritto vale quello; senza anno, una data già passata da settimane è dell'anno dopo.
+        self.assertEqual(self.app.event_dates("Freitag, 30.10.2026 / 17:30", date(2026, 4, 13)), [date(2026, 10, 30)])
+        self.assertEqual(self.app.event_dates("Am 6.1. Dreikönig", date(2026, 12, 20)), [date(2027, 1, 6)])
+        self.assertEqual(self.app.event_dates("Ab Herbst 2021 buchbar, 200 Personen", date(2021, 8, 6)), [])
+
+    def test_website_events_on_tv_channel(self):
+        from datetime import date
+        saved_iptv = json.loads(json.dumps(self.app.store.config.get("iptv", {})))
+        saved_social = json.loads(json.dumps(self.app.store.config.get("social", {})))
+        posts = [
+            {"id": 1050, "link": "https://carellas.de/events/italienischer-abend/", "modified": "2026-10-06T11:47:15",
+             "title": {"rendered": "La Dolce Vita &#8211; Giro Pizza &#038; Pasta"},
+             "content": {"rendered": '<p>Freitag, 30.10.2026 / 17:30 Uhr</p><a href="https://carellas.de/f/Flyer-2026.pdf">FLYER</a>'},
+             "_embedded": {"wp:featuredmedia": [{"source_url": "https://carellas.de/f/Homepage.jpg"}]}},
+            {"id": 1236, "link": "https://carellas.de/events/weihnachten/", "modified": "2026-10-06T11:46:45",
+             "title": {"rendered": "Alles Rund um Weihnachten"},
+             "content": {"rendered": "<p>25.12. Mittags Buffet</p>"},
+             "_embedded": {"wp:featuredmedia": [{"source_url": "https://carellas.de/f/Weihnachten.jpg"}]}},
+            {"id": 900, "link": "https://carellas.de/events/sommerfest/", "modified": "2026-06-01T10:00:00",
+             "title": {"rendered": "Sommerfest"}, "content": {"rendered": "<p>Samstag, 20.06.2026</p>"}},
+            {"id": 191, "link": "https://carellas.de/events/events-in-tauberbischofsheim/", "modified": "2021-08-06T14:00:53",
+             "title": {"rendered": "Events in Tauberbischofsheim"}, "content": {"rendered": "<p>Ab Herbst 2021</p>"}},
+        ]
+        importer = self.app.WebsiteEventsImporter()
+        calls = []
+
+        def fake_get(url, params):
+            calls.append((url, params))
+            return [{"id": 11, "slug": "events"}] if url.endswith("/categories") else posts
+
+        def fake_slides(event):
+            return [f"Evento_{event['id']}_x_immagine.jpg"], True
+
+        try:
+            self.app.store.update({
+                "iptv": {"channels": [{"id": "ingresso", "name": "TV Ingresso", "enabled": True, "playlist": [
+                    {"name": "benvenuti.jpg", "kind": "image", "duration": 12},
+                    {"name": "Instagram_1.mp4", "kind": "video", "fit": "smart"}]}]},
+                "social": {"website_events": {"enabled": True, "channel_id": "ingresso", "seconds": 20}},
+            })
+            settings = self.app.events_settings()
+            self.assertEqual((settings["url"], settings["category"], settings["keep"]), ("https://carellas.de", "events", 5))
+            with mock.patch.object(importer, "_get", side_effect=fake_get):
+                events = importer.fetch_events(settings, today=date(2026, 10, 16))
+            self.assertEqual(calls[0][0], "https://carellas.de/wp-json/wp/v2/categories")
+            self.assertEqual(calls[1][1]["categories"], 11)
+            # Solo gli eventi futuri, dal più vicino; i titoli senza codici HTML.
+            self.assertEqual([(e["id"], e["date"]) for e in events], [("1050", "2026-10-30"), ("1236", "2026-12-25")])
+            self.assertEqual(events[0]["title"], "La Dolce Vita – Giro Pizza & Pasta")
+            self.assertEqual(events[0]["flyer"], "https://carellas.de/f/Flyer-2026.pdf")
+            self.assertEqual(events[1]["flyer"], "")
+
+            with mock.patch.object(importer, "fetch_events", return_value=events), \
+                    mock.patch.object(importer, "slides", side_effect=fake_slides), \
+                    mock.patch.object(self.app.iptv, "build_async") as build:
+                status = importer.check(force=True)
+            self.assertEqual(status["last_error"], "")
+            self.assertEqual([e["title"] for e in status["events"]], ["La Dolce Vita – Giro Pizza & Pasta", "Alles Rund um Weihnachten"])
+            playlist = self.app.store.config["iptv"]["channels"][0]["playlist"]
+            self.assertEqual([item["name"] for item in playlist],
+                             ["benvenuti.jpg", "Instagram_1.mp4", "Evento_1050_x_immagine.jpg", "Evento_1236_x_immagine.jpg"])
+            self.assertEqual(playlist[2], {"name": "Evento_1050_x_immagine.jpg", "kind": "image", "duration": 20,
+                                           "fit": "smart", "effect": "fade"})
+            build.assert_called_once_with("ingresso")
+            # Evento passato: sparisce, e gli eventi restano nel loro punto del canale (niente rigenerazioni inutili).
+            playlist.insert(2, playlist.pop(0))
+            with mock.patch.object(importer, "fetch_events", return_value=events[1:]), \
+                    mock.patch.object(importer, "slides", side_effect=fake_slides), \
+                    mock.patch.object(self.app.iptv, "build_async"):
+                importer.check(force=True)
+            self.assertEqual([item["name"] for item in self.app.store.config["iptv"]["channels"][0]["playlist"]],
+                             ["Instagram_1.mp4", "Evento_1236_x_immagine.jpg", "benvenuti.jpg"])
+            with mock.patch.object(importer, "fetch_events", return_value=events[1:]), \
+                    mock.patch.object(importer, "slides", side_effect=fake_slides), \
+                    mock.patch.object(self.app.iptv, "build_async") as build:
+                importer.check(force=True)
+            build.assert_not_called()
+            # Sito irraggiungibile: errore visibile, il canale non viene svuotato.
+            with mock.patch.object(importer, "fetch_events", side_effect=RuntimeError("Sito non raggiungibile: timeout")):
+                status = importer.check(force=True)
+            self.assertEqual(status["last_error"], "Sito non raggiungibile: timeout")
+            self.assertIn("Evento_1236_x_immagine.jpg",
+                          [item["name"] for item in self.app.store.config["iptv"]["channels"][0]["playlist"]])
+        finally:
+            self.app.store.config["iptv"] = saved_iptv
+            self.app.store.config["social"] = saved_social
+
+    def test_website_event_slides_from_image_and_flyer(self):
+        event = {"id": "1050", "title": "La Dolce Vita", "date": "2026-10-30", "modified": "2026-10-06T11:47:15",
+                 "flyer": "https://carellas.de/f/Flyer.pdf", "image": "https://carellas.de/f/Homepage.jpg", "link": ""}
+        importer = self.app.WebsiteEventsImporter()
+        composed = []
+
+        def fake_run(command, **kwargs):
+            # pdftoppm finto: crea le due pagine del volantino.
+            Path(command[-1] + "-1.png").write_bytes(b"p")
+            Path(command[-1] + "-2.png").write_bytes(b"p")
+
+        def fake_compose(pages, target):
+            composed.append([page.name for page in pages])
+            target.write_bytes(b"jpg")
+
+        with mock.patch.object(self.app.shutil, "which", return_value="/usr/bin/pdftoppm"), \
+                mock.patch.object(importer, "_download", side_effect=lambda url, target: target.write_bytes(b"x")), \
+                mock.patch.object(self.app.subprocess, "run", side_effect=fake_run), \
+                mock.patch.object(self.app, "compose_event_slide", side_effect=fake_compose):
+            names, created = importer.slides(event)
+            again, created_again = importer.slides(event)
+        try:
+            self.assertTrue(created)
+            self.assertEqual(len(names), 2)
+            self.assertTrue(names[0].startswith("Evento_1050_") and names[0].endswith("_immagine.jpg"))
+            self.assertTrue(names[1].endswith("_volantino.jpg"))
+            self.assertEqual(composed, [["immagine.jpg"], ["pagina-1.png", "pagina-2.png"]])
+            # La seconda volta i file ci sono già: niente nuovi download.
+            self.assertEqual((again, created_again), (names, False))
+            self.assertEqual(list(self.app.DATA_DIR.glob("evento-*")), [])
+        finally:
+            for name in names:
+                (self.app.MEDIA_DIR / name).unlink(missing_ok=True)
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        self.assertIn('id="set-eventi"', html)
+        self.assertIn('data-bind="social.website_events.channel_id"', html)
+        self.assertIn("command('api/social/events/check',{})", html)
+        self.assertIn("['Eventi dal sito','Events von der Website']", html)
+
     def test_overnight_schedule(self):
         schedule = [{"days": [6], "start": "22:00", "end": "02:00", "enabled": True}]
         self.assertTrue(self.app.is_schedule_active(schedule, datetime(2026, 9, 13, 23, 0)))

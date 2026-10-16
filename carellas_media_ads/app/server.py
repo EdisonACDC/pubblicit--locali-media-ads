@@ -18,6 +18,7 @@ import re
 import shutil
 import secrets
 import subprocess
+import tempfile
 import threading
 import time
 import traceback
@@ -201,6 +202,8 @@ class Store:
             self.config["language"] = "it"
         social = self.config.setdefault("social", {})
         social.setdefault("instagram", {"enabled": False, "channel_id": "", "keep": 3, "interval_minutes": 15})
+        social.setdefault("website_events", {"enabled": False, "url": "https://carellas.de", "category": "events",
+                                             "channel_id": "", "seconds": 15, "keep": 5, "interval_minutes": 60})
         player = self.config.setdefault("browser_player", {})
         player.setdefault("enabled", True)
         player.setdefault("public_url", "")
@@ -2257,6 +2260,8 @@ class Scheduler(threading.Thread):
         store.log("info", "Motore Carellas Media Ads avviato")
         if not instagram.is_alive():
             instagram.start()
+        if not website_events.is_alive():
+            website_events.start()
         while True:
             try:
                 today = datetime.now().date()
@@ -2480,6 +2485,270 @@ class InstagramImporter(threading.Thread):
 
 
 instagram = InstagramImporter()
+
+
+# Eventi dal sito del ristorante (WordPress): ogni evento futuro della categoria scelta diventa
+# una pagina sulla TV, con le prime due pagine del volantino PDF o, se manca, l'immagine dell'evento.
+EVENTS_PREFIX = "Evento_"
+EVENTS_MAX_FILE = 40 * 1024 * 1024
+EVENTS_DEFAULT_URL = "https://carellas.de"
+
+
+def events_settings():
+    raw = store.config.get("social", {}).get("website_events", {})
+
+    def number(key, default, low, high):
+        try:
+            return max(low, min(int(raw.get(key, default)), high))
+        except (TypeError, ValueError):
+            return default
+
+    url = str(raw.get("url") or EVENTS_DEFAULT_URL).strip().rstrip("/")
+    if not re.match(r"^https?://[^/\s]+", url):
+        url = EVENTS_DEFAULT_URL
+    return {
+        "enabled": raw.get("enabled") is True,
+        "url": url,
+        "category": re.sub(r"[^a-z0-9_-]", "", str(raw.get("category") or "events").lower()) or "events",
+        "channel_id": safe_channel_id(raw.get("channel_id", "")) if raw.get("channel_id") else "",
+        "seconds": number("seconds", 15, 5, 60),
+        "keep": number("keep", 5, 1, 10),
+        "interval_minutes": number("interval_minutes", 60, 15, 1440),
+    }
+
+
+def event_dates(text, reference):
+    """Date trovate nel testo dell'evento: 30.10.2026, 30.10.26 oppure 25.12. (anno dedotto)."""
+    text = re.sub(r"\[/?[a-z_]+[^\]]*\]", " ", text)
+    found = []
+    for match in re.finditer(r"(?<![\d.,])(\d{1,2})\.\s?(\d{1,2})\.(?:\s?(\d{4}|\d{2})(?!\d))?", text):
+        day, month, year = int(match.group(1)), int(match.group(2)), match.group(3)
+        try:
+            if year:
+                moment = datetime(int(year) + (2000 if len(year) == 2 else 0), month, day).date()
+            else:
+                moment = datetime(reference.year, month, day).date()
+                if moment < reference - timedelta(days=7):
+                    moment = datetime(reference.year + 1, month, day).date()
+        except ValueError:
+            continue
+        found.append(moment)
+    return sorted(set(found))
+
+
+def plain_text(markup):
+    # I tag di blocco separano le parole, quelli in linea no (es. <strong>2</strong>4.12. resta 24.12.).
+    text = re.sub(r"</?(?:p|br|div|li|ul|ol|h[1-6]|tr|td|th|table|section|article)[^>]*>", " ", str(markup or ""), flags=re.I)
+    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", "", text))).strip()
+
+
+def compose_event_slide(pages, target):
+    """Pagina TV 1920x1080: le immagini intere e affiancate, sopra la prima sfocata come sfondo.
+    Un'immagine già orizzontale (come quelle del sito) riempie tutto lo schermo."""
+    pages = list(pages)[:2]
+    box_width, box_height = (1920, 1080) if len(pages) == 1 else (900, 1000)
+    command = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"]
+    for page in pages:
+        command += ["-i", str(page)]
+    parts = ["[0:v]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,"
+             "boxblur=24:2,eq=brightness=-0.22,format=rgb24[bg]"]
+    for index in range(len(pages)):
+        gap = 36 if index < len(pages) - 1 else 0
+        parts.append(f"[{index}:v]scale={box_width}:{box_height}:force_original_aspect_ratio=decrease,format=rgba,"
+                     f"pad=iw+{gap}:{box_height}:0:(oh-ih)/2:color=0x00000000[p{index}]")
+    if len(pages) > 1:
+        parts.append("".join(f"[p{index}]" for index in range(len(pages))) + f"hstack=inputs={len(pages)}[row]")
+        row = "[row]"
+    else:
+        row = "[p0]"
+    parts.append(f"[bg]{row}overlay=(W-w)/2:(H-h)/2:format=rgb[out]")
+    temporary = target.with_name(f".{target.stem}.tmp.jpg")
+    command += ["-filter_complex", ";".join(parts), "-map", "[out]", "-frames:v", "1", "-q:v", "3", str(temporary)]
+    try:
+        subprocess.run(command, check=True, timeout=120, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        os.replace(temporary, target)
+    except subprocess.CalledProcessError as error:
+        raise RuntimeError(f"Pagina dell'evento non creata: {error.stderr.decode('utf-8', 'replace')[-200:]}") from None
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+class WebsiteEventsImporter(threading.Thread):
+    def __init__(self):
+        super().__init__(daemon=True, name="website-events")
+        self.lock = threading.Lock()
+        self.next_check = 0.0
+        self.state = {"last_check": "", "last_error": "", "events": []}
+
+    @staticmethod
+    def _get(url, params):
+        request = urllib.request.Request(f"{url}?{urllib.parse.urlencode(params)}",
+                                         headers={"User-Agent": "CarellasMediaAds", "Accept": "application/json"})
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                return json.loads(response.read() or b"[]")
+        except urllib.error.HTTPError as error:
+            raise RuntimeError(f"Il sito ha risposto {error.code}: {error.reason}") from None
+        except urllib.error.URLError as error:
+            raise RuntimeError(f"Sito non raggiungibile: {error.reason}") from None
+        except ValueError:
+            raise RuntimeError("Il sito non ha restituito l'elenco degli eventi (serve WordPress)") from None
+
+    @staticmethod
+    def _download(url, target):
+        if not re.match(r"^https?://", str(url)):
+            raise RuntimeError("Indirizzo del file non valido")
+        request = urllib.request.Request(url, headers={"User-Agent": "CarellasMediaAds"})
+        with urllib.request.urlopen(request, timeout=60) as response, target.open("wb") as handle:
+            size = 0
+            while True:
+                chunk = response.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > EVENTS_MAX_FILE:
+                    raise RuntimeError("File dell'evento troppo grande")
+                handle.write(chunk)
+
+    def public_status(self):
+        with self.lock:
+            return copy.deepcopy(self.state)
+
+    def fetch_events(self, settings, today=None):
+        """Eventi futuri della categoria, dal più vicino; quelli senza data o già passati non vanno in TV."""
+        today = today or datetime.now().date()
+        api = f"{settings['url']}/wp-json/wp/v2"
+        categories = self._get(f"{api}/categories", {"slug": settings["category"], "_fields": "id,slug"})
+        if not isinstance(categories, list) or not categories:
+            raise RuntimeError(f"Categoria «{settings['category']}» non trovata sul sito")
+        posts = self._get(f"{api}/posts", {
+            "categories": categories[0].get("id"), "per_page": "20", "_embed": "wp:featuredmedia",
+            "_fields": "id,link,modified,title,content,featured_media,_links,_embedded",
+        })
+        events = []
+        for post in posts if isinstance(posts, list) else []:
+            content = str((post.get("content") or {}).get("rendered", ""))
+            try:
+                reference = datetime.fromisoformat(str(post.get("modified", ""))[:19]).date()
+            except ValueError:
+                reference = today
+            upcoming = [day for day in event_dates(plain_text(content), reference) if day >= today]
+            if not upcoming:
+                continue
+            flyer = next((link for link in re.findall(r'href="([^"]+?\.pdf)"', content, re.I)), "")
+            media = ((post.get("_embedded") or {}).get("wp:featuredmedia") or [{}])[0] or {}
+            events.append({
+                "id": str(post.get("id", "")),
+                "title": plain_text((post.get("title") or {}).get("rendered", ""))[:120],
+                "link": str(post.get("link", "")),
+                "date": upcoming[0].isoformat(),
+                "modified": str(post.get("modified", "")),
+                "flyer": html.unescape(flyer),
+                "image": str(media.get("source_url", "")),
+            })
+        events.sort(key=lambda item: item["date"])
+        return events[:settings["keep"]]
+
+    def slides(self, event):
+        """Pagine TV dell'evento: l'immagine a tutto schermo e poi il volantino (prime due pagine affiancate).
+        Si creano una volta sola; se l'evento viene modificato sul sito cambiano nome e si rifanno."""
+        signature = hashlib.sha1(f"{event['modified']}|{event['flyer']}|{event['image']}".encode()).hexdigest()[:8]
+        stem = f"{EVENTS_PREFIX}{safe_channel_id(event['id'])}_{signature}"
+        wanted = []
+        if event["image"]:
+            wanted.append(("immagine", MEDIA_DIR / safe_name(f"{stem}_immagine.jpg")))
+        if event["flyer"] and shutil.which("pdftoppm"):
+            wanted.append(("volantino", MEDIA_DIR / safe_name(f"{stem}_volantino.jpg")))
+        names, created = [], False
+        for kind, target in wanted:
+            if not target.exists():
+                work = Path(tempfile.mkdtemp(prefix="evento-", dir=str(DATA_DIR)))
+                try:
+                    if kind == "immagine":
+                        suffix = Path(urllib.parse.urlsplit(event["image"]).path).suffix.lower()
+                        image = work / f"immagine{suffix if suffix in ALLOWED['image'] else '.jpg'}"
+                        self._download(event["image"], image)
+                        pages = [image]
+                    else:
+                        self._download(event["flyer"], work / "volantino.pdf")
+                        subprocess.run([shutil.which("pdftoppm"), "-png", "-r", "110", "-f", "1", "-l", "2",
+                                        str(work / "volantino.pdf"), str(work / "pagina")], check=True, timeout=120,
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        pages = sorted(work.glob("pagina-*.png"), key=lambda item: int(item.stem.rsplit("-", 1)[1]))
+                        if not pages:
+                            raise RuntimeError("volantino senza pagine")
+                    compose_event_slide(pages, target)
+                    created = True
+                except Exception as error:
+                    store.log("warning", f"Evento «{event['title']}»: {kind} non usato ({error})")
+                    continue
+                finally:
+                    shutil.rmtree(work, ignore_errors=True)
+            names.append(target.name)
+        if not names:
+            raise RuntimeError(f"L'evento «{event['title']}» non ha né immagine né volantino PDF utilizzabili")
+        return names, created
+
+    def check(self, force=False):
+        settings = events_settings()
+        if not force and (not settings["enabled"] or time.time() < self.next_check):
+            return self.public_status()
+        self.next_check = time.time() + settings["interval_minutes"] * 60
+        shown, message = [], ""
+        try:
+            channel = iptv.channel(settings["channel_id"]) if settings["channel_id"] else None
+            if not channel:
+                raise RuntimeError("Scegli il canale TV per gli eventi del sito")
+            names = []
+            for event in self.fetch_events(settings):
+                event_names, created = self.slides(event)
+                if created:
+                    store.log("success", f"Nuovo evento dal sito sulla TV: {event['title']} ({event['date']})")
+                names += event_names
+                shown.append({key: event[key] for key in ("title", "date", "link")})
+            self._update_channel(channel.get("id", ""), names, settings["seconds"])
+        except Exception as error:
+            message = str(error)
+            store.log("warning", f"Eventi dal sito: {message}")
+        with self.lock:
+            self.state = {"last_check": now_iso(), "last_error": message,
+                          "events": shown if not message else self.state.get("events", [])}
+        return self.public_status()
+
+    def _update_channel(self, channel_id, names, seconds):
+        """Gli eventi restano nel punto del canale dove sono già; quelli passati spariscono da soli."""
+        channels = copy.deepcopy(store.config.get("iptv", {}).get("channels", []))
+        channel = next((item for item in channels if safe_channel_id(item.get("id", "")) == safe_channel_id(channel_id)), None)
+        if not channel:
+            return
+        playlist = channel.get("playlist") or []
+        is_event = [str(item.get("name", "")).startswith(EVENTS_PREFIX) for item in playlist]
+        others = [item for item, flag in zip(playlist, is_event) if not flag]
+        position = is_event.index(True) if True in is_event else len(playlist)
+        position -= sum(is_event[:position])
+        items = [{"name": name, "kind": "image", "duration": seconds, "fit": "smart", "effect": "fade"} for name in names]
+        updated = others[:position] + items + others[position:]
+        if updated != playlist:
+            channel["playlist"] = updated
+            store.update({"iptv": {"channels": channels}})
+            iptv.build_async(channel_id)
+            store.log("info", f"Eventi del sito aggiornati nel canale {channel.get('name', channel_id)}")
+        # Le pagine di eventi passati o modificati non servono più a nessun canale.
+        used = {item.get("name") for ch in store.config.get("iptv", {}).get("channels", []) for item in ch.get("playlist") or []}
+        for path in MEDIA_DIR.glob(f"{EVENTS_PREFIX}*.jpg"):
+            if path.name not in used:
+                path.unlink(missing_ok=True)
+
+    def run(self):
+        while True:
+            try:
+                self.check()
+            except Exception:
+                store.log("error", traceback.format_exc(limit=2))
+            time.sleep(30)
+
+
+website_events = WebsiteEventsImporter()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -2817,6 +3086,7 @@ class Handler(BaseHTTPRequestHandler):
                         "remote_port": REMOTE_PORT,
                         "remote_user": self.remote_user,
                         "instagram": instagram.public_status(),
+                        "website_events": website_events.public_status(),
                         "iptv_status": iptv.runtime_status(),
                     },
                     "ha_error": error,
@@ -3004,6 +3274,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path == "/api/social/instagram/check":
                 self.send_json({"ok": True, **instagram.check(force=True)})
+                return
+            if path == "/api/social/events/check":
+                self.send_json({"ok": True, **website_events.check(force=True)})
                 return
             if path == "/api/upload/chunk":
                 self.receive_upload_chunk()
