@@ -1987,6 +1987,19 @@ class CarellasServerTest(unittest.TestCase):
         finally:
             music["slots"] = saved
 
+    def test_zones_page_has_music_and_spot_table(self):
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        page = html[html.index("function pageZone()"):html.index("function zoneEditor(")]
+        # Una riga per zona con gli stessi interruttori della pagina della singola zona.
+        self.assertIn("L('Musica e spot per zona')", page)
+        self.assertIn("sw(ms>0,'zone-music'", page)
+        self.assertIn("sw(zoneAudioOn(z),'zone-audio'", page)
+        self.assertIn("${gridHtml}", page)
+        for label in ("['Musica e spot per zona','Musik und Spots pro Zone']",
+                      "['Nessun Sonos in questa zona','Kein Sonos in dieser Zone']",
+                      "['{0} di {1} fasce','{0} von {1} Zeiträumen']"):
+            self.assertIn(label, html)
+
     def test_new_interface_has_all_mock_screens_and_uses_existing_api(self):
         html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
         # Tavole A–E del mock: Oggi, Palinsesto, Zone, Configurazione guidata, telefono.
