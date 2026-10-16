@@ -812,14 +812,6 @@ function pageZona(){
     <section class="card" style="padding:6px 20px"><details ${S.sel.adv===z.id?'open':''} data-adv="${esc(z.id)}"><summary style="min-height:52px;display:flex;align-items:center;gap:10px"><span class="muted">${icon('right',16)}</span><h2 style="font:600 17px var(--sans)">${esc(L('Impostazioni avanzate dei dispositivi'))}</h2><span class="small muted desktop-only">${esc(L('Wake-on-LAN, accensione e spegnimento, orari dello schermo, zona'))}</span></summary>
       <div class="col" style="padding:4px 0 18px">${ch?channelAdvanced(ch):''}${z.main_tv?mainTvSettings():''}${zoneEditor(z)}</div></details></section>`;
 }
-// Ogni TV accede al Player con il suo utente: qui si sceglie quale canale mostra.
-function tvTargets(ch){
-  const users=cfg().browser_player?.users||[],here=users.filter(u=>u.channel_id===ch.id).map(u=>u.username);
-  const rows=users.map((u,i)=>`<li class="row" style="justify-content:space-between;gap:10px"><span class="row" style="gap:8px">${icon('tv',16)}<strong>${esc(u.username)}</strong>${u.enabled===false?`<span class="tiny muted">${esc(L('accesso disattivato'))}</span>`:''}</span><select class="inp" style="width:auto;min-height:36px" data-bind="browser_player.users.${i}.channel_id" aria-label="${esc(Lf('Canale mostrato da {0}',u.username))}">${channels().map(c=>`<option value="${esc(c.id)}" ${c.id===u.channel_id?'selected':''}>${esc(c.name)}</option>`).join('')}</select></li>`).join('');
-  return `<section class="card col" style="gap:12px"><div class="card-head"><div><h2 style="font:600 17px var(--sans)">${esc(L('Su quali TV va questo canale'))}</h2><div class="small muted">${esc(here.length?Lf('Lo mostrano: {0}',here.join(', ')):L('Nessuna TV mostra ancora questo canale.'))}</div></div><button class="btn btn-ghost btn-sm" type="button" data-act="tv-add-here" data-v="${esc(ch.id)}">${icon('plus',14)}${esc(L('Aggiungi una TV'))}</button></div>
-    ${users.length?`<ul class="list" style="gap:8px">${rows}</ul>`:''}
-    <div class="small muted">${esc(L('Ogni TV accede al Player con il suo utente e mostra il canale scelto qui.'))} <a href="#/impostazioni/utenti">${esc(L('Password e accessi'))}</a></div></section>`;
-}
 function sequenceEditor(ch){
   const items=ch.playlist||[],st=channelStatus(ch),changed=st.state!=='ready'||isDirty()&&JSON.stringify(ch.playlist)!==JSON.stringify((JSON.parse(S.saved).iptv?.channels||[]).find(x=>x.id===ch.id)?.playlist);
   const sel=S.sel.seq?.[ch.id];
@@ -849,6 +841,14 @@ function seqItemEditor(ch,it,i){
 }
 function scheduleRow(path,row,label){
   return `<div class="field"><span>${esc(label)}</span><div class="row"><input class="inp time" value="${esc(row.start)}" data-time="${path}.start" aria-label="${esc(L('Dalle'))}"> – <input class="inp time" value="${esc(row.end)}" data-time="${path}.end" aria-label="${esc(L('Alle'))}"></div><div class="chips" style="margin-top:6px">${days().map((d,i)=>`<button class="chip" type="button" aria-pressed="${(row.days||[]).includes(i)}" data-act="toggle-day" data-path="${path}.days" data-v="${i}">${d}</button>`).join('')}</div></div>`;
+}
+// Ogni TV accede al Player con il suo utente: qui si sceglie quale canale mostra.
+function tvTargets(ch){
+  const users=cfg().browser_player?.users||[],here=users.filter(u=>u.channel_id===ch.id).map(u=>u.username);
+  const rows=users.map((u,i)=>`<li class="row" style="justify-content:space-between;gap:10px"><span class="row" style="gap:8px">${icon('tv',16)}<strong>${esc(u.username)}</strong>${u.enabled===false?`<span class="tiny muted">${esc(L('accesso disattivato'))}</span>`:''}</span><select class="inp" style="width:auto;min-height:36px" data-bind="browser_player.users.${i}.channel_id" aria-label="${esc(Lf('Canale mostrato da {0}',u.username))}">${channels().map(c=>`<option value="${esc(c.id)}" ${c.id===u.channel_id?'selected':''}>${esc(c.name)}</option>`).join('')}</select></li>`).join('');
+  return `<section class="card col" style="gap:12px"><div class="card-head"><div><h2 style="font:600 17px var(--sans)">${esc(L('Su quali TV va questo canale'))}</h2><div class="small muted">${esc(here.length?Lf('Lo mostrano: {0}',here.join(', ')):L('Nessuna TV mostra ancora questo canale.'))}</div></div><button class="btn btn-ghost btn-sm" type="button" data-act="tv-add-here" data-v="${esc(ch.id)}">${icon('plus',14)}${esc(L('Aggiungi una TV'))}</button></div>
+    ${users.length?`<ul class="list" style="gap:8px">${rows}</ul>`:''}
+    <div class="small muted">${esc(L('Ogni TV accede al Player con il suo utente e mostra il canale scelto qui.'))} <a href="#/impostazioni/utenti">${esc(L('Password e accessi'))}</a></div></section>`;
 }
 function channelAdvanced(ch){
   const i=channels().indexOf(ch),p=`iptv.channels.${i}`,row=(ch.schedule||[])[0]||{start:'10:00',end:'23:00',days:[0,1,2,3,4,5,6]};
