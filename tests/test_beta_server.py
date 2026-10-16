@@ -1293,6 +1293,10 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(menu["page_images"], ["segreto.png"])  # nomi ripuliti con safe_name
         self.assertEqual(menu["logo_mode"], "background")  # di serie il logo fa da sfondo alle pagine
         self.assertEqual(self.app.menu_settings({"menu": {"logo_mode": "both"}})["logo_mode"], "both")
+        # Senza scelta si usa il logo Carellas incluso nell'add-on; "none" lo toglie.
+        self.assertEqual(menu["logo"], "")
+        self.assertEqual(self.app.menu_settings({"menu": {"logo": "none"}})["logo"], "none")
+        self.assertTrue(self.app.MENU_DEFAULT_LOGO.is_file())
         parse = self.app.parse_menu_line
         self.assertEqual(parse("Bruschetta al pomodoro 6,50"), {"name": "Bruschetta al pomodoro", "price": "6,50 €"})
         self.assertEqual(parse("Tagliere misto ....... € 14"), {"name": "Tagliere misto", "price": "€ 14"})
@@ -1322,8 +1326,9 @@ class CarellasServerTest(unittest.TestCase):
             Path(command[-1]).write_bytes(b"png")
 
         try:
-            for mode, faded, small in (("background", 3, 0), ("top", 0, 3), ("both", 3, 3)):
-                menu = self.app.menu_settings({"menu": {"enabled": True, "logo": "logo-test.png", "logo_mode": mode, "pages": [
+            for logo, mode, faded, small in (("logo-test.png", "background", 3, 0), ("logo-test.png", "top", 0, 3),
+                                             ("logo-test.png", "both", 3, 3), ("", "background", 3, 0), ("none", "both", 0, 0)):
+                menu = self.app.menu_settings({"menu": {"enabled": True, "logo": logo, "logo_mode": mode, "pages": [
                     {"title": "A", "text": "x 1"}, {"title": "B", "text": "y 2"}, {"title": "C", "text": "z 3"},
                 ]}})
                 with mock.patch.object(self.app, "menu_fonts", return_value=(font, font)),                         mock.patch.object(self.app.subprocess, "run", side_effect=run):

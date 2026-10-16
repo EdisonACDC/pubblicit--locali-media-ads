@@ -1408,6 +1408,8 @@ MENU_FONT_BOLD_CANDIDATES = [
 MENU_COLORS = {"page": "0xFBF7EE", "ink": "0x2F3A26", "accent": "0x6E7F1D", "background": "0x2F3A26"}
 MENU_PRICE = re.compile(r"^(?P<name>.*?)[\s.·…_-]*\s(?P<price>(?:€\s?)?\d{1,4}(?:[.,]\d{1,2})?(?:\s?€)?)$")
 MENU_MAX_PDF = 50 * 1024 * 1024
+# Logo Carellas Ristorante (PNG trasparente) usato quando non se ne sceglie un altro.
+MENU_DEFAULT_LOGO = APP_DIR / "menu_logo.png"
 
 
 def menu_settings(channel):
@@ -1433,7 +1435,8 @@ def menu_settings(channel):
         "pages": pages,
         "page_images": images,
         "background": safe_name(raw["background"]) if raw.get("background") else "",
-        "logo": safe_name(raw["logo"]) if raw.get("logo") else "",
+        # "" = logo Carellas predefinito, "none" = nessun logo, altrimenti un'immagine della libreria.
+        "logo": "none" if raw.get("logo") == "none" else (safe_name(raw["logo"]) if raw.get("logo") else ""),
         # Il logo come sfondo sbiadito di ogni pagina, in alto, oppure entrambi.
         "logo_mode": raw.get("logo_mode") if raw.get("logo_mode") in {"background", "top", "both"} else "background",
     }
@@ -1534,7 +1537,7 @@ def render_menu_frame(menu, target, preview=False, width=1280, height=720):
                 overlay(source, f"{x}+({w}-overlay_w)/2", f"{y}+({h}-overlay_h)/2",
                         f"scale={w}:{h}:force_original_aspect_ratio=decrease")
         else:
-            logo = MEDIA_DIR / menu["logo"] if menu["logo"] else None
+            logo = None if menu["logo"] == "none" else (MEDIA_DIR / menu["logo"] if menu["logo"] else MENU_DEFAULT_LOGO)
             pages = menu["pages"] or [{"title": "Menu", "text": ""}]
             for index, (x, y, w, h) in enumerate(cells):
                 page = pages[index] if index < len(pages) else {"title": "", "text": ""}
