@@ -145,6 +145,14 @@ def password_matches(password, encoded):
         return False
 
 
+def with_scheme(url, scheme):
+    """Completa un indirizzo scritto senza protocollo: 'tv.esempio.com' -> 'https://tv.esempio.com'."""
+    value = str(url or "").strip().rstrip("/")
+    if value and "://" not in value:
+        value = f"{scheme}://{value}"
+    return value
+
+
 class Store:
     def __init__(self):
         DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -191,7 +199,9 @@ class Store:
             self.config["language"] = "it"
         player = self.config.setdefault("browser_player", {})
         player.setdefault("enabled", True)
-        player.setdefault("public_url", "")
+        # Un dominio scritto senza https:// verrebbe aperto come pagina interna del pannello.
+        player["public_url"] = with_scheme(player.get("public_url", ""), "https")
+        self.config["media_base_url"] = with_scheme(self.config.get("media_base_url", ""), "http")
         if not player.get("session_secret"):
             player["session_secret"] = secrets.token_urlsafe(48)
         normalized_users = []
