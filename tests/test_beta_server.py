@@ -1382,14 +1382,39 @@ class CarellasServerTest(unittest.TestCase):
             self.app.render_menu_frame({**menu, "logo": "none"}, Path(self.temp.name) / "g3.png", group=2)
         first, last = captured
         self.assertIn("P1", first[1])
-        self.assertIn("1/3", first[1])  # indicatore del gruppo
         self.assertIn("P7", last[1])
-        self.assertIn("3/3", last[1])
         self.assertNotIn("P1", last[1])
+        # Un quadratino per schermata sotto le pagine, quello attuale nel colore del logo.
+        self.assertEqual(first[0].count(":y=710:w=8:h=8:"), 3)
+        self.assertIn(f":y=710:w=8:h=8:color={self.app.MENU_COLORS['accent']}", first[0])
+        self.assertNotIn("1/3", first[1])
         # L'ultimo gruppo ha una sola pagina, centrata e larga come le altre.
         _, cells = self.app.menu_layout(60, 3)
         middle_x = cells[1][0]
         self.assertIn(f"drawbox=x={middle_x}:y={cells[1][1]}:w={cells[1][2]}", last[0])
+
+    def test_menu_page_too_long_is_split_into_readable_pages(self):
+        drinks = "\n".join(f"Bevanda numero {number} con descrizione 0,5 l {number},50" for number in range(1, 41))
+        menu = self.app.menu_settings({"menu": {"enabled": True, "logo": "none", "ad_percent": 60, "pages": [
+            {"title": "Antipasti", "text": "Bruschetta 6,50"},
+            {"title": "Getränke", "text": drinks},
+        ]}})
+        pages = self.app.expand_menu_pages(menu)
+        titles = [page["title"] for page in pages]
+        self.assertEqual(titles[0], "Antipasti")
+        extra = [title for title in titles if title.startswith("Getränke (")]
+        self.assertGreaterEqual(len(extra), 2)
+        self.assertEqual(extra[0], f"Getränke (1/{len(extra)})")
+        # Nessuna riga persa e ogni pagina sta nel riquadro alla misura leggibile.
+        lines = [line for page in pages[1:] for line in page["text"].splitlines()]
+        self.assertEqual(lines, drinks.splitlines())
+        _, cells = self.app.menu_layout(60, min(3, len(pages)))
+        width, height = cells[0][2], cells[0][3]
+        for page in pages[1:]:
+            area = height - 12 - self.app.menu_text_top(menu, page["title"], width, height)
+            size, _ = self.app.fit_menu_items([self.app.parse_menu_line(line) for line in page["text"].splitlines()], width - 24, area)
+            self.assertGreaterEqual(size, self.app.MENU_MIN_READABLE)
+        self.assertEqual(len(self.app.menu_groups(menu)), -(-len(pages) // 3))
 
     def test_menu_changes_channel_signature_only_when_enabled(self):
         channel = {"id": "sala", "playlist": [{"name": "a.jpg", "kind": "image"}]}
