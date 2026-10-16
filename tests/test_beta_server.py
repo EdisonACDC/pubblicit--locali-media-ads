@@ -1182,6 +1182,30 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(len(joins), 1)
         self.assertEqual(joins[0][2]["group_members"], ["media_player.bar"])
 
+    def test_main_screen_has_original_tv_settings(self):
+        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        page = html[html.index("function mainTvSettings()"):html.index("function pagePalinsesto()")]
+        # Come nel pannello originale: più fasce orarie, secondi e prova per contenuto,
+        # adattamento dell'immagine, prova di accensione e spegnimento, indirizzo dello schermo LAN.
+        self.assertIn("rows.map((r,i)=>", page)
+        self.assertIn('data-act="row-add" data-path="tv.schedule"', page)
+        self.assertIn("data-tv-duration=", page)
+        self.assertIn('data-act="tv-test-item"', page)
+        self.assertIn('data-bind="tv.fit"', page)
+        self.assertIn('data-act="tv-power" data-on="1"', page)
+        self.assertIn("+'/screen'", page)
+        self.assertIn("'tv-test-item':el=>", html)
+        self.assertIn("if(t.dataset.tvDuration!==undefined)", html)
+        self.assertIn("['Adattamento immagine','Bildanpassung']", html)
+        # Stessa grafica della sequenza dei canali: schede con anteprima, ordine e pulsanti.
+        self.assertIn('<ol class="seq">${items}</ol>', page)
+        self.assertIn("mediaThumb(it)", page)
+        self.assertIn("data-tv-add", page)
+        self.assertIn("${mainTvPreview()}", page)
+        self.assertIn(":z.main_tv?`${mainTvPreview()}<dl class=\"facts\">", html)
+        self.assertIn("'tv-move':el=>", html)
+        self.assertIn("if(t.dataset.tvAdd!==undefined)", html)
+
     def test_sonos_701_stops_briefly_and_retries_once(self):
         calls = []
         attempts = 0
