@@ -1114,6 +1114,21 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(volume[2]["entity_id"], ["media_player.bar"])
         self.assertEqual(volume[2]["volume_level"], 0.25)
 
+    def test_settings_menu_and_channel_tv_targets(self):
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        # Ogni sezione delle Impostazioni ha il suo indirizzo, raggiungibile dal menu laterale e dalla tendina.
+        for key in ("collegamento", "canali", "player", "utenti", "schermo", "lingua"):
+            self.assertIn(f"['{key}',", html)
+            self.assertIn(f'id="set-{key}"', html)
+        self.assertIn('href="#/impostazioni/${k}" data-set-key="${k}"', html)
+        self.assertIn("data-settings-jump", html)
+        self.assertIn("setTimeout(()=>scrollToSetting(S.param),0)", html)
+        # Nella zona: su quali TV (utenti del Player) va il canale, con la scelta del canale per ogni TV.
+        self.assertIn("${ch?tvTargets(ch):''}", html)
+        self.assertIn('data-bind="browser_player.users.${i}.channel_id"', html)
+        self.assertIn("'tv-add-here':el=>", html)
+        self.assertIn("['Su quali TV va questo canale','Auf welchen TVs läuft dieser Kanal']", html)
+
     def test_music_scheduler_repairs_group_without_restarting_source(self):
         original = json.loads(json.dumps(self.app.store.config["music"]))
         slot = {
