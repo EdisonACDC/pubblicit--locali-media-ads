@@ -4,7 +4,8 @@ FROM ${BUILD_FROM}
 WORKDIR /app
 COPY app /app
 COPY run.sh /run.sh
-RUN apk add --no-cache ffmpeg \
+# font-dejavu: testi delle pagine del menu; poppler-utils (pdftoppm): menu caricati in PDF.
+RUN apk add --no-cache ffmpeg font-dejavu poppler-utils \
     && python3 -m pip install --no-cache-dir websocket-client==1.8.0 \
     && python3 -c "import websocket; print('websocket-client', websocket.__version__)" \
     && cat /app/bundled_media/Carellas_Ristorante_Spot_DE_Femminile.mp3.part.* > /app/bundled_media/Carellas_Ristorante_Spot_DE_Femminile.mp3 \
