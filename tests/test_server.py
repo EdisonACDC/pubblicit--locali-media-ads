@@ -1172,6 +1172,16 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(attempts, 2)
         self.assertIn(("media_player", "media_stop", {"entity_id": "media_player.sala"}), calls)
 
+    def test_player_settings_show_local_link_like_stable(self):
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        # Come nello stabile: oltre al dominio pubblico si vede il link locale IP:porta del Player TV.
+        self.assertIn("r.player_local_url&&r.player_local_url!==r.player_url", html)
+        self.assertIn("['Link locale (rete del locale, da usare anche in Cloudflare)',", html)
+        # La mappa DE resta un elenco valido: ogni riga tranne l'ultima finisce con la virgola.
+        block = html[html.index("const DE=new Map(["):html.index("]);", html.index("const DE=new Map(["))].splitlines()[1:]
+        rows = [line.rstrip() for line in block if line.strip()]
+        self.assertTrue(all(line.endswith(",") for line in rows[:-1]))
+
     def test_sonos_source_retries_701_then_succeeds(self):
         calls = []
         attempts = 0
