@@ -2008,6 +2008,20 @@ class CarellasServerTest(unittest.TestCase):
         for label in ("Ken Burns diagonale", "Diagonaler Ken-Burns-Effekt", "Panoramica verso l’alto", "Schwenk nach oben"):
             self.assertIn(label, html)
 
+    def test_today_page_shows_real_sonos_state(self):
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        # Fascia attiva ma Sonos fermi: la pagina lo dice e propone di riavviare la musica.
+        self.assertIn("function musicStoppedNow()", html)
+        self.assertIn("if(musicStoppedNow())list.push(", html)
+        self.assertIn("const musicOn=(r.music_active&&musicPlayersNow().some(sonosPlaying))", html)
+        # La TV in onda non fa risultare "Suona" una zona con i Sonos fermi.
+        self.assertIn("const st=zoneSonosStatus(z),tv=zoneTvOnAir(z)", html)
+        # Il conteggio usa i Sonos della musica, non quelli degli spot.
+        self.assertIn("Lf('{0} di {1} Sonos',playingSonos.length,musicSonos.length)", html)
+        for label in ("['TV in onda','TV läuft']", "['Riavvia la musica','Musik neu starten']",
+                      "['Musica ferma: {0}','Musik gestoppt: {0}']"):
+            self.assertIn(label, html)
+
     def test_spot_history_records_played_stopped_and_failed_spots(self):
         ad = "history-test.mp3"
         (self.app.MEDIA_DIR / ad).write_bytes(b"audio")

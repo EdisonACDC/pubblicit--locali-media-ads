@@ -527,10 +527,26 @@ function zoneVolumeSlider(z,label,cls,style=''){
   return `<label class="${cls}" style="${style}">${esc(label)} <span class="mono" style="color:var(--text)" data-out="zvol-${esc(z.id)}">${v}</span><input type="range" min="0" max="100" value="${v}" aria-label="${esc(L('Volume')+' '+z.name)}" data-zone-volume="${esc(z.id)}"></label>`;
 }
 function zoneById(id){return zones().find(z=>z.id===id)}
-function zoneStatus(z){
+function sonosPlaying(id){return ['on','spot'].includes(sonosStatus(id))}
+function zoneSonosStatus(z){
   const st=(z.players||[]).map(sonosStatus);
-  if(st.includes('off'))return'off';if(st.includes('spot'))return'spot';if(st.includes('on'))return'on';
-  if((z.iptv_channels||[]).some(id=>channelOnAir(channelById(id))))return'on';return'idle';
+  if(st.includes('off'))return'off';if(st.includes('spot'))return'spot';if(st.includes('on'))return'on';return'idle';
+}
+function zoneTvOnAir(z){return (z.iptv_channels||[]).some(id=>channelOnAir(channelById(id)))}
+function zoneStatus(z){
+  const st=zoneSonosStatus(z);
+  return st==='idle'&&zoneTvOnAir(z)?'on':st;
+}
+// Sonos che adesso dovrebbero suonare: quelli della fascia in corso (o della musica senza fasce).
+function musicPlayersNow(){
+  const c=cfg(),s=currentSlot();
+  if(s)return (s.players||[]).length?s.players:(c.music.players||[]);
+  return rt().music_active?(c.music.players||[]):[];
+}
+// Fascia in corso ma Sonos fermi (per esempio dopo "Ferma tutto" o uno stop dall'app Sonos).
+function musicStoppedNow(){
+  const p=musicPlayersNow();
+  return p.length>0&&!p.some(sonosPlaying)&&p.some(id=>sonosStatus(id)!=='off');
 }
 function zoneMeta(z){
   const parts=[];if((z.players||[]).length)parts.push('Sonos');if((z.iptv_channels||[]).length||z.main_tv)parts.push('TV');
@@ -584,6 +600,7 @@ function issues(){
   const list=[],c=cfg();
   const offline=[...new Set([...(c.audio.players||[]),...zones().flatMap(z=>z.players||[])])].filter(id=>sonosStatus(id)==='off');
   offline.forEach(id=>list.push({lvl:'warn',title:Lf('{0} non raggiungibile',sonosName(id)),text:L('Escluso dagli spot finché non torna online.'),act:'sonos-refresh',arg:id,label:L('Riprova collegamento')}));
+  if(musicStoppedNow())list.push({lvl:'warn',title:Lf('Musica ferma: {0}',currentSlot()?slotTitle(currentSlot()):L('Musica')),text:L('La fascia è in corso ma i Sonos non suonano (fermati a mano o dall’app Sonos).'),act:'music-start',arg:'',label:L('Riavvia la musica')});
   channels().forEach(ch=>{const st=channelStatus(ch).state;if(st==='outdated'||st==='not_built')list.push({lvl:'gold',icon:'refresh',title:Lf('Sequenza TV da inviare: {0}',ch.name),text:L('Le TV mostrano ancora la versione precedente.'),act:'build',arg:ch.id,label:L('Genera e invia alle TV')});if(st==='error')list.push({lvl:'warn',title:Lf('Errore nel canale {0}',ch.name),text:buildError(channelStatus(ch).message),act:'build',arg:ch.id,label:L('Riprova')})});
   if(channels().length&&c.browser_player?.enabled!==false&&!(c.browser_player?.users||[]).length)list.push({lvl:'gold',icon:'user',title:L('Nessun accesso Player TV'),text:L('Serve per aprire il canale dal browser della TV.'),href:'#/impostazioni',label:L('Crea accesso TV')});
   if(c.audio.enabled&&!(c.audio.ads||[]).length)list.push({lvl:'warn',title:L('Nessuno spot scelto'),text:L('La pubblicità è attiva ma non ha spot da trasmettere.'),href:'#/guidata/3',label:L('Scegli gli spot')});
@@ -677,18 +694,22 @@ function updateLive(){
 }
 function pageOggi(){
   const c=cfg(),r=rt(),slot=currentSlot(),day=todayIdx(),now=nowMin(),spot=nextSpotInfo();
-  const playingSonos=(c.audio.players||[]).filter(id=>['on','spot'].includes(sonosStatus(id)));
   const allSonos=[...new Set([...(c.audio.players||[]),...(c.music.slots||[]).flatMap(s=>s.players||[])])];
+  // Il conteggio riguarda i Sonos della musica in corso, non quelli degli spot.
+  const musicSonos=[...new Set(musicPlayersNow().length?musicPlayersNow():allSonos)];
+  const playingSonos=musicSonos.filter(sonosPlaying);
+  const musicStopped=musicStoppedNow();
   const nextSlot=nextSlotAfter(day,now);
   const slotPct=slot?Math.max(0,Math.min(100,(now-toMin(slot.start))/slotDuration(slot)*100)):0;
   const paused=r.audio_paused_until;
   const appPlaying=!slot?sonosAll().filter(s=>s.available&&s.state==='playing'&&s.media_title&&!/\.(mp3|wav|m4a)$/i.test(s.media_title)):[];
-  const musicOn=r.music_active||appPlaying.length>0;
+  // Stato reale delle casse: dopo "Ferma tutto" la fascia resta attiva ma i Sonos sono fermi.
+  const musicOn=(r.music_active&&musicPlayersNow().some(sonosPlaying))||appPlaying.length>0;
   const musicCard=`<div><div class="label row" style="gap:8px"><span class="dot ${musicOn?'on':''}"></span>${esc(L(musicOn?'Musica · in riproduzione':'Musica · ferma'))}</div>
       <div class="row" style="gap:16px;flex-wrap:nowrap"><div class="icon-tile" style="color:var(--gold)">${icon('music',30)}</div><div style="min-width:0">
         <div class="big-title">${esc(slot?slotTitle(slot):appPlaying.length?appPlaying[0].media_title:r.music_active?L('Musica in riproduzione'):L('Nessuna musica in onda'))}</div>
         <div class="muted2">${slot?esc(namesOf(slot.players))+' · '+esc(L('volume'))+' '+esc(slot.volume??c.music.volume):appPlaying.length?esc(namesOf(appPlaying.map(x=>x.entity_id)))+' · '+esc(L('avviata dall’app Sonos, fuori dal palinsesto')):nextSlot?Lf('Prossima fascia alle {0}',nextSlot.start):esc(L('Nessuna fascia musicale più tardi oggi'))}</div></div></div>
-      ${slot?`<div><div class="progress"><i style="width:${slotPct}%"></i></div><div class="mono row" style="justify-content:space-between;font-size:12px;color:var(--muted);margin-top:6px"><span>${esc(slot.start)}</span><span>${esc(L('alle'))} ${esc(slotEnd(slot))}${nextSlot?' → '+esc(slotTitle(nextSlot)):''}</span></div></div>`:`<div class="row"><button class="btn btn-ghost btn-sm" type="button" data-act="music-start">${icon('play',14)}${esc(L('Avvia la musica del palinsesto'))}</button></div>`}
+      ${slot?`<div><div class="progress"><i style="width:${slotPct}%"></i></div><div class="mono row" style="justify-content:space-between;font-size:12px;color:var(--muted);margin-top:6px"><span>${esc(slot.start)}</span><span>${esc(L('alle'))} ${esc(slotEnd(slot))}${nextSlot?' → '+esc(slotTitle(nextSlot)):''}</span></div></div>${musicStopped?`<div class="row" style="gap:10px"><span class="small warn-text">${esc(L('I Sonos della fascia sono fermi.'))}</span><button class="btn btn-ghost btn-sm" type="button" data-act="music-start">${icon('play',14)}${esc(L('Riavvia la musica'))}</button></div>`:''}`:`<div class="row"><button class="btn btn-ghost btn-sm" type="button" data-act="music-start">${icon('play',14)}${esc(L('Avvia la musica del palinsesto'))}</button></div>`}
     </div>`;
   const ring=`<span data-live-ring>${ringHtml(spot)}</span>`;
   const spotCard=`<div><div class="label row" style="gap:8px"><span class="dot spot" style="border-radius:2px"></span>${esc(L(r.spot_playing?'Spot in onda adesso':'Prossimo spot'))}</div>
@@ -710,9 +731,10 @@ function pageOggi(){
       <div class="small muted2">TV</div><div class="tl-track" style="height:22px">${tvRows||`<div class="tiny muted">${esc(L('Nessun canale TV programmato'))}</div>`}</div>
     </div></div></section>`;
   const zoneCards=zones().map(z=>{
-    const st=zoneStatus(z),p=z.players?.[0],s=p&&sonosById(p),ch=channelById(z.iptv_channels?.[0]);
+    // L'etichetta descrive i Sonos; la TV in onda non deve far sembrare che la musica suoni.
+    const st=zoneSonosStatus(z),tv=zoneTvOnAir(z),p=z.players?.[0],s=p&&sonosById(p),ch=channelById(z.iptv_channels?.[0]);
     const imgs=(ch?.playlist||[]).filter(i=>i.kind==='image').slice(0,3);
-    return `<div class="card zone-card ${st==='off'?'offline':''}"><div class="row" style="justify-content:space-between"><a href="#/zona/${encodeURIComponent(z.id)}" style="color:var(--title);font-weight:600;text-decoration:none">${esc(z.name)}</a>${st==='off'?`<span class="tiny warn-text">▲ ${esc(L('Offline'))}</span>`:st==='on'||st==='spot'?`<span class="tiny ok-text">● ${esc(L(st==='spot'?'Spot':'Suona'))}</span>`:`<span class="tiny muted">${esc(L('In pausa'))}</span>`}</div>
+    return `<div class="card zone-card ${st==='off'?'offline':''}"><div class="row" style="justify-content:space-between"><a href="#/zona/${encodeURIComponent(z.id)}" style="color:var(--title);font-weight:600;text-decoration:none">${esc(z.name)}</a>${st==='off'?`<span class="tiny warn-text">▲ ${esc(L('Offline'))}</span>`:st==='on'||st==='spot'?`<span class="tiny ok-text">● ${esc(L(st==='spot'?'Spot':'Suona'))}</span>`:tv?`<span class="tiny muted">${esc(L('TV in onda'))}</span>`:`<span class="tiny muted">${esc(L('In pausa'))}</span>`}</div>
       <div class="small muted">${esc([namesOf(z.players)&&'Sonos '+namesOf(z.players),ch?.name].filter(Boolean).join(' · ')||L('Nessun dispositivo'))}</div>
       ${s&&s.available?zoneVolumeSlider(z,L('Volume'),'tiny muted','margin-top:6px'):''}
       ${st==='off'&&p?`<button class="btn btn-ghost btn-sm" type="button" data-act="sonos-refresh" data-v="${esc(p)}" style="margin-top:6px;align-self:flex-start">${esc(L('Riprova collegamento'))}</button>`:''}
@@ -732,7 +754,7 @@ function pageOggi(){
       ${volumes?`<section class="card mobile-only" style="flex-direction:column;gap:12px">${volumes}</section>`:''}
       <div class="stats desktop-only">
         <a class="card" href="#/storico" style="padding:16px 18px;text-decoration:none;color:inherit" aria-label="${esc(L('Apri lo storico degli spot'))}"><div class="label">${esc(L('Spot oggi'))}</div><div class="row" style="gap:6px;align-items:baseline;margin-top:6px"><span class="stat-value">${r.audio_today??0}</span><span class="muted">/ ${esc(c.audio.daily_limit)} max</span></div><div class="progress" style="height:4px;margin-top:10px"><i style="width:${Math.min(100,(r.audio_today||0)/(+c.audio.daily_limit||20)*100)}%"></i></div></a>
-        <div class="card" style="padding:16px 18px"><div class="label">${esc(L('Musica'))}</div><div class="stat-value" style="font-size:22px;margin-top:8px">${esc(L(musicOn?'In riproduzione':'Ferma'))}</div><div class="stat-sub">${esc(Lf('{0} di {1} Sonos',playingSonos.length,(c.audio.players||[]).length||allSonos.length))}</div></div>
+        <div class="card" style="padding:16px 18px"><div class="label">${esc(L('Musica'))}</div><div class="stat-value" style="font-size:22px;margin-top:8px">${esc(L(musicOn?'In riproduzione':'Ferma'))}</div><div class="stat-sub">${esc(Lf('{0} di {1} Sonos',playingSonos.length,musicSonos.length))}</div></div>
         <div class="card" style="padding:16px 18px"><div class="label">${esc(L('Schermi'))}</div><div class="stat-value" style="font-size:22px;margin-top:8px">${channels().filter(channelOnAir).length} ${esc(L(channels().filter(channelOnAir).length===1?'canale in onda':'canali in onda'))}</div><div class="stat-sub">${esc(channels().filter(channelOnAir).map(c=>c.name).join(', ')||L('nessuno'))}</div></div>
         <div class="card" style="padding:16px 18px"><div class="label">${esc(L('Prossimo cambio'))}</div><div class="mono" style="font-size:22px;color:var(--title);margin-top:8px">${esc(slot?slotEnd(slot):nextSlot?nextSlot.start:'—')}</div><div class="stat-sub">${esc(nextSlot?'→ '+slotTitle(nextSlot):slot?L('fine della musica'):L('nessun cambio'))}</div></div>
       </div>
@@ -1441,7 +1463,7 @@ const DE=new Map([
 ['Pausa pubblicità','Werbepause'],['In pausa fino alle {0}','Pausiert bis {0}'],['Riprendi adesso','Jetzt fortsetzen'],['1 ora','1 Stunde'],['Spot oggi','Spots heute'],['Musica','Musik'],['In riproduzione','Läuft'],['Ferma','Gestoppt'],['{0} di {1} Sonos','{0} von {1} Sonos'],['Schermi','Bildschirme'],['canale in onda','Kanal auf Sendung'],['canali in onda','Kanäle auf Sendung'],['nessuno','keine'],['Prossimo cambio','Nächster Wechsel'],['fine della musica','Ende der Musik'],['nessun cambio','kein Wechsel'],
 ['La giornata','Der Tag'],['Apri palinsesto','Programm öffnen'],['Nessuna fascia musicale oggi','Heute kein Musikzeitraum'],['Spot','Spot'],['Nessuno spot oggi','Heute keine Spots'],['Nessun canale TV programmato','Kein TV-Kanal geplant'],['{0} elementi','{0} Elemente'],
 ['Offline','Offline'],['offline','offline'],['Suona','Spielt'],['In pausa','Pausiert'],['Nessun dispositivo','Kein Gerät'],['Volume','Lautstärke'],['Riprova collegamento','Verbindung erneut prüfen'],['riprova','erneut'],['Gestisci zone','Zonen verwalten'],['Nessun Sonos trovato in Home Assistant.','Keine Sonos in Home Assistant gefunden.'],
-['Da sistemare','Zu erledigen'],['Tutto in ordine.','Alles in Ordnung.'],['Attività','Aktivität'],['Tutto il registro','Ganzes Protokoll'],['Nessuna attività','Keine Aktivität'],
+['Da sistemare','Zu erledigen'],['Tutto in ordine.','Alles in Ordnung.'],['TV in onda','TV läuft'],['I Sonos della fascia sono fermi.','Die Sonos dieses Zeitraums sind gestoppt.'],['Riavvia la musica','Musik neu starten'],['Musica ferma: {0}','Musik gestoppt: {0}'],['La fascia è in corso ma i Sonos non suonano (fermati a mano o dall’app Sonos).','Der Zeitraum läuft, aber die Sonos spielen nicht (von Hand oder in der Sonos-App gestoppt).'],['Attività','Aktivität'],['Tutto il registro','Ganzes Protokoll'],['Nessuna attività','Keine Aktivität'],
 ['{0} non raggiungibile','{0} nicht erreichbar'],['Escluso dagli spot finché non torna online.','Von Spots ausgeschlossen, bis er wieder online ist.'],['Sequenza TV da inviare: {0}','TV-Sequenz senden: {0}'],['Le TV mostrano ancora la versione precedente.','Die Fernseher zeigen noch die vorherige Version.'],['Genera e invia alle TV','Erzeugen und an die TVs senden'],['Errore nel canale {0}','Fehler im Kanal {0}'],['Riprova','Erneut versuchen'],['Nessun accesso Player TV','Kein TV-Player-Zugang'],['Serve per aprire il canale dal browser della TV.','Nötig, um den Kanal im TV-Browser zu öffnen.'],['Crea accesso TV','TV-Zugang anlegen'],['La pubblicità è attiva ma non ha spot da trasmettere.','Werbung ist aktiv, aber ohne Spots.'],['Scegli gli spot','Spots auswählen'],['Nessun Sonos per gli spot','Kein Sonos für Spots'],['Attiva gli spot almeno in una zona.','Spots in mindestens einer Zone aktivieren.'],['Apri le zone','Zonen öffnen'],['Fascia fuori orario: {0}','Zeitraum außerhalb der Öffnungszeit: {0}'],['Una parte della fascia è fuori dall’orario di apertura e non suonerà.','Ein Teil des Zeitraums liegt außerhalb der Öffnungszeit und wird nicht gespielt.'],['Correggi','Korrigieren'],['Indirizzo locale da controllare','Lokale Adresse prüfen'],['Sonos e TV usano {0}: serve l’indirizzo IP numerico.','Sonos und TV verwenden {0}: nötig ist die numerische IP-Adresse.'],['Apri impostazioni','Einstellungen öffnen'],
 ['Schermi','Bildschirme'],['Schermo principale','Hauptbildschirm'],['spot','Spot'],['Sorgente musicale','Musikquelle'],['Pronto','Bereit'],['Storico spot','Spot-Verlauf'],['Apri lo storico degli spot','Spot-Verlauf öffnen'],['Esporta CSV per Excel','CSV für Excel exportieren'],['Filtri','Filter'],['Periodo','Zeitraum'],['7 giorni','7 Tage'],['30 giorni','30 Tage'],['Questo mese','Dieser Monat'],['Personalizzato','Benutzerdefiniert'],['Dal','Vom'],['Al','Bis'],['Tutti gli spot','Alle Spots'],['Storico non disponibile','Verlauf nicht verfügbar'],['Caricamento dello storico…','Verlauf wird geladen…'],['{0} spot in onda','{0} Spots gesendet'],['{0} non riusciti','{0} fehlgeschlagen'],['{0} passaggi','{0} Ausstrahlungen'],['{0} min in onda','{0} Min. gesendet'],['{0} spot ascoltati','{0} Spots gehört'],['Trasmesso','Gesendet'],['Interrotto','Abgebrochen'],['Non riuscito','Fehlgeschlagen'],['Data e ora','Datum und Uhrzeit'],['Tipo','Art'],['Durata','Dauer'],['Esito','Ergebnis'],['Prova manuale','Manueller Test'],['Automatico','Automatisch'],['Mostra altri ({0} rimanenti)','Weitere anzeigen ({0} übrig)'],['Nessuno spot in questo periodo.','Keine Spots in diesem Zeitraum.'],['Spot in onda','Gesendete Spots'],['nel giorno scelto','am gewählten Tag'],['in {0} giorni','in {0} Tagen'],['Media al giorno','Durchschnitt pro Tag'],['limite {0} al giorno','Limit {0} pro Tag'],['Minuti in onda','Sendeminuten'],['solo spot ascoltati per intero','nur vollständig gehörte Spots'],['Trasmessi per intero','Vollständig gesendet'],['{0} interrotti · {1} non riusciti','{0} abgebrochen · {1} fehlgeschlagen'],['{0} prove manuali nel periodo','{0} manuelle Tests im Zeitraum'],['Spot in onda per giorno','Gesendete Spots pro Tag'],['Per ora del giorno','Nach Tageszeit'],['quando passano gli spot','wann die Spots laufen'],['Spot in onda per ora del giorno','Gesendete Spots nach Tageszeit'],['Per spot','Nach Spot'],['passaggi e quota','Ausstrahlungen und Anteil'],['Per zona','Nach Zone'],['dove sono stati ascoltati','wo sie gehört wurden'],['Tutti i passaggi','Alle Ausstrahlungen'],['Trasmessi','Gesendet'],['Interrotti','Abgebrochen'],['Non riusciti','Fehlgeschlagen'],['FFmpeg non trovato: serve per generare i canali TV (sul PC di prova va installato a parte).','FFmpeg nicht gefunden: wird zum Erzeugen der TV-Kanäle benötigt (auf dem Test-PC separat installieren).'],['In preparazione','Wird vorbereitet'],['Da aggiornare','Zu aktualisieren'],['Errore','Fehler'],['Da generare','Zu erzeugen'],
 ['Apri','Öffnen'],['Chiudi','Schließen'],['Modifica','Bearbeiten'],['suona','spielt'],['ferma','gestoppt'],['spot in onda','Spot läuft'],['Nessun dispositivo assegnato','Kein Gerät zugewiesen'],['Abbiamo preparato una zona per ogni Sonos. Rinominale, uniscile o assegna le TV, poi salva.','Für jeden Sonos wurde eine Zone vorbereitet. Umbenennen, zusammenlegen oder TVs zuweisen, dann speichern.'],['Conferma queste zone','Diese Zonen bestätigen'],['Premi "Nuova zona" per aggiungere un luogo del locale.','„Neue Zone“ drücken, um einen Bereich hinzuzufügen.'],['Nessuna zona: premi "Nuova zona".','Keine Zonen: „Neue Zone“ drücken.'],
