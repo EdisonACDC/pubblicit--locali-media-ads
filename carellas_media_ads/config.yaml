@@ -23,9 +23,11 @@ map:
 ports:
   8099/tcp: 8099
   8101/tcp: 8101
+  8103/tcp: 8103
 ports_description:
   8099/tcp: Pannello amministrativo e contenuti locali
   8101/tcp: Player TV protetto per browser
+  8103/tcp: Pannello con login per l'accesso da Internet
 webui: http://[HOST]:[PORT:8099]
 watchdog: http://[HOST]:[PORT:8099]/api/state
 options: {}
