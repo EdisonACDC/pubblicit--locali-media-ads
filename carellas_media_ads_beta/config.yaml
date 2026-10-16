@@ -1,28 +1,31 @@
 name: Carellas Media Ads Beta
-version: "0.5.0-beta.2"
+version: "0.6.0-beta.1"
 slug: carellas_media_ads_beta
-description: Beta Sonos/Alexa e IPTV 16:9 con sequenze, collage ed effetti.
+description: Beta del nuovo pannello per zone. Da provare con lo stabile fermo.
 url: https://github.com/EdisonACDC/pubblicit--locali-media-ads
 arch:
   - amd64
   - aarch64
   - armv7
 startup: application
-boot: auto
+boot: manual
 init: false
 stage: experimental
 ingress: true
 ingress_port: 8100
 panel_icon: mdi:bullhorn-variant
 panel_title: Carellas Media Ads Beta
+panel_admin: false
 homeassistant_api: true
 map:
   - type: media
     read_only: false
 ports:
   8100/tcp: 8100
+  8102/tcp: 8102
 ports_description:
-  8100/tcp: Accesso locale beta per audio e schermo Smart TV
+  8100/tcp: Pannello beta, API e contenuti locali (solo LAN)
+  8102/tcp: Player TV protetto della beta
 webui: http://[HOST]:[PORT:8100]
 watchdog: http://[HOST]:[PORT:8100]/api/state
 options: {}

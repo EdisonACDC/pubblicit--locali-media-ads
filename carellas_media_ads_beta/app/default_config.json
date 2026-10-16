@@ -3,17 +3,15 @@
   "media_base_url": "",
   "audio": {
     "enabled": false,
-    "driver": "sonos",
     "players": [],
     "ads": [],
     "mode": "rotate",
     "interval_minutes": 30,
     "repeat_count": 1,
-    "repeat_gap_seconds": 5,
-    "spot_duration_seconds": 65,
-    "resume_music_after_ad": true,
+    "repeat_gap_seconds": 0,
     "daily_limit": 20,
     "volume": 35,
+    "transition_seconds": 3,
     "only_when_playing": true,
     "schedule": []
   },
@@ -23,14 +21,22 @@
     "content_id": "",
     "content_type": "music",
     "volume": 25,
+    "transition_seconds": 3,
     "stop_at_end": true,
-    "schedule": []
+    "schedule": [],
+    "slots": []
   },
   "tv": {
     "enabled": false,
     "mode": "lan_screen",
     "player": "",
-    "playlist": [],
+    "playlist": [
+      {
+        "name": "Demo_Carellas_SmartTV_DLNA.mp4",
+        "kind": "video",
+        "duration": 18
+      }
+    ],
     "loop": true,
     "fit": "contain",
     "muted": true,
@@ -48,7 +54,13 @@
         "id": "carellas-demo",
         "name": "TV Demo Carellas",
         "enabled": false,
-        "playlist": [],
+        "playlist": [
+          {
+            "name": "Demo_Carellas_SmartTV_DLNA.mp4",
+            "kind": "video",
+            "duration": 18
+          }
+        ],
         "schedule": [],
         "power_on_at_start": false,
         "power_off_at_end": false,
@@ -57,5 +69,11 @@
         "power_off_entity": ""
       }
     ]
-  }
+  },
+  "browser_player": {
+    "enabled": true,
+    "public_url": "",
+    "users": []
+  },
+  "zones": []
 }
