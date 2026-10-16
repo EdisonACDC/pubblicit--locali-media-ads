@@ -1280,9 +1280,9 @@ class CarellasServerTest(unittest.TestCase):
         pages = self.app.expand_menu_pages(menu)
         titles = [page["title"] for page in pages]
         self.assertEqual(titles[0], "Antipasti")
-        extra = [title for title in titles if title.startswith("Getränke (")]
+        extra = [title for title in titles if title.startswith("Getränke")]
         self.assertGreaterEqual(len(extra), 2)
-        self.assertEqual(extra[0], f"Getränke (1/{len(extra)})")
+        self.assertEqual(set(extra), {"Getränke"})  # stesso titolo, senza numeri tra parentesi
         # Nessuna riga persa e ogni pagina sta nel riquadro alla misura leggibile.
         lines = [line for page in pages[1:] for line in page["text"].splitlines()]
         self.assertEqual(lines, drinks.splitlines())
