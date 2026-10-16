@@ -1229,11 +1229,11 @@ class CarellasServerTest(unittest.TestCase):
         groups = self.app.menu_groups(menu)
         self.assertEqual([[page["title"] for page in group] for group in groups],
                          [["P1", "P2", "P3"], ["P4", "P5", "P6"], ["P7"]])
-        playlist = self.app.menu_frames_playlist(["a.png", "b.png", "c.png"], 20, 70)
-        self.assertEqual(playlist.splitlines(), [
-            "file 'a.png'", "duration 20", "file 'b.png'", "duration 20", "file 'c.png'", "duration 20",
-            "file 'a.png'", "duration 20", "file 'a.png'",
-        ])
+        command = self.app.menu_cycle_command(["a.png", "b.png", "c.png"], 20, "cycle.mp4")
+        self.assertEqual(command.count("-loop"), 3)
+        self.assertEqual(command[command.index("-t") + 1], "20")
+        self.assertIn("[0:v][1:v][2:v]concat=n=3:v=1:a=0", command[command.index("-filter_complex") + 1])
+        self.assertEqual(command[-1], "cycle.mp4")
         font = Path(self.temp.name) / "font.ttf"
         font.write_bytes(b"font")
         captured = []

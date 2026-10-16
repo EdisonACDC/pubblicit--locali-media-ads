@@ -1436,16 +1436,16 @@ def menu_groups(menu):
     return [items[index:index + 3] for index in range(0, len(items), 3)]
 
 
-def menu_frames_playlist(names, seconds, total):
-    """Elenco per il concat di FFmpeg: i gruppi si alternano ogni 'seconds' fino a coprire 'total'."""
-    lines, elapsed, index = [], 0.0, 0
-    while elapsed < total:
-        lines += [f"file '{names[index % len(names)]}'", f"duration {seconds}"]
-        elapsed += seconds
-        index += 1
-    # Il concat di immagini vuole l'ultima immagine ripetuta senza durata.
-    lines.append(f"file '{names[(index - 1) % len(names)]}'")
-    return "\n".join(lines) + "\n"
+def menu_cycle_command(frames, seconds, target):
+    """Video corto in cui i gruppi di pagine si alternano ogni 'seconds': poi viene ripetuto sotto la pubblicità."""
+    command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
+    for frame in frames:
+        command += ["-loop", "1", "-framerate", "25", "-t", str(seconds), "-i", str(frame)]
+    joined = "".join(f"[{index}:v]" for index in range(len(frames)))
+    return command + [
+        "-filter_complex", f"{joined}concat=n={len(frames)}:v=1:a=0,format=yuv420p[v]", "-map", "[v]",
+        "-c:v", "libx264", "-preset", "superfast", "-crf", "22", "-pix_fmt", "yuv420p", str(target),
+    ]
 
 
 def menu_layout(ad_percent, page_count, width=1280, height=720, gap=12):
@@ -2001,10 +2001,9 @@ class IPTVEngine:
                     ads_duration = max(1.0, self._probe_duration(temporary))
                     loops = max(1, math.ceil(len(frames) * menu["page_seconds"] / ads_duration))
                     total = ads_duration * loops
-                    playlist = work / "menu-frames.txt"
-                    playlist.write_text(menu_frames_playlist([frame.name for frame in frames],
-                                                             menu["page_seconds"], total), encoding="utf-8")
-                    menu_input = ["-f", "concat", "-safe", "0", "-i", str(playlist)]
+                    cycle = work / "menu-cycle.mp4"
+                    subprocess.run(menu_cycle_command(frames, menu["page_seconds"], cycle), check=True, timeout=600)
+                    menu_input = ["-stream_loop", "-1", "-i", str(cycle)]
                 subprocess.run([
                     "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
                     "-stream_loop", str(loops - 1), "-i", str(temporary), *menu_input,
