@@ -760,6 +760,17 @@ def _schedule_intervals(schedule):
     return intervals
 
 
+DAY_NAMES_IT = ["il lunedì", "il martedì", "il mercoledì", "il giovedì", "il venerdì", "il sabato", "la domenica"]
+
+
+def sonos_label(entity_id):
+    """Nome breve di un Sonos per i messaggi: media_player.sonos_sala -> Sala."""
+    name = str(entity_id).split(".", 1)[-1]
+    if name.startswith("sonos_"):
+        name = name[len("sonos_"):]
+    return name.replace("_", " ").strip().capitalize() or str(entity_id)
+
+
 def validate_music_slots(music):
     """Rifiuta fasce incomplete o sovrapposte sugli stessi Sonos."""
     slots = [slot for slot in (music.get("slots") or []) if slot.get("enabled", True)]
@@ -785,16 +796,22 @@ def validate_music_slots(music):
             right_players = set(right.get("players") or global_players)
             if not left_players.intersection(right_players):
                 continue
-            overlap = any(
-                lday == rday and max(lstart, rstart) < min(lend, rend)
+            overlap = next((
+                (lday, max(lstart, rstart), min(lend, rend))
                 for lday, lstart, lend in left_intervals
                 for rday, rstart, rend in _slot_intervals(right)
-            )
+                if lday == rday and max(lstart, rstart) < min(lend, rend)
+            ), None)
             if overlap:
                 left_name = left.get("name") or f"Fascia {left_index + 1}"
                 right_name = right.get("name") or "Fascia successiva"
+                day, start, end = overlap
+                shared = ", ".join(sonos_label(player) for player in sorted(left_players & right_players))
+                # Il messaggio dice dove intervenire: giorno, orario e casse in comune.
                 raise RuntimeError(
-                    f"Le fasce ‘{left_name}’ e ‘{right_name}’ si sovrappongono sugli stessi Sonos"
+                    f"Le fasce ‘{left_name}’ e ‘{right_name}’ si sovrappongono {DAY_NAMES_IT[day]} "
+                    f"dalle {start // 60:02d}:{start % 60:02d} alle {end // 60 % 24:02d}:{end % 60:02d} su {shared}. "
+                    "Un Sonos suona una sola musica alla volta: cambia l’orario, i giorni o le casse di una delle due."
                 )
 
 
