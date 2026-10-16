@@ -597,28 +597,47 @@ function conflictText(k){
   return Lf('{0} dalle {1} alle {2} su {3}. Un Sonos suona una sola musica alla volta: cambia l’orario, i giorni o le casse di una delle due.',long[k.day],hhmm(k.from),hhmm(k.to),namesOf(k.players));
 }
 function slotsSnap(){return JSON.stringify(cfg().music.slots||[])}
-// Dopo ogni modifica di una fascia: se ora si accavalla con un'altra sugli stessi Sonos,
-// l'orario appena scelto viene spostato al primo minuto libero; se non si può, la modifica è annullata.
+// Fine dell'orario di apertura in cui inizia la fascia (la più presto tra i suoi giorni); senza orari generali è mezzanotte.
+function slotCloseTime(s){
+  const a=toMin(s.start);let close=1440;
+  if(!(cfg().music.schedule||[]).length)return close;
+  (s.days||[]).forEach(d=>{const w=openWindows(d).find(([x,y])=>a>=x&&a<y);if(w)close=Math.min(close,w[1])});
+  return close;
+}
+// Dopo ogni modifica di una fascia: l'orario scelto resta com'è e sono le altre fasce degli stessi Sonos ad adattarsi.
+// - una fascia che inizia prima finisce dove comincia quella modificata;
+// - le fasce che vengono dopo slittano in avanti a catena, con la stessa durata, fino all'orario di chiusura
+//   (l'ultima viene accorciata per finire alla chiusura).
+// Se una fascia resterebbe sotto i 15 minuti, o per giorni e casse, la modifica è annullata con la spiegazione.
 // before = slotsSnap() preso prima della modifica; field = 'start' o 'end' per gli orari, altrimenti nulla.
 function keepSlotsApart(before,s,field){
   const prev=slotConflicts(JSON.parse(before)).length;
   if(slotConflicts().length<=prev)return true;
+  let reason='';
   if(s&&(field==='start'||field==='end')){
-    const dur=slotDuration(s),end=slotEnd(s);let other=null;
-    for(let i=0;i<10&&slotConflicts().length>prev;i++){
-      const k=slotConflicts().find(k=>k.a===s||k.b===s);if(!k)break;
-      other=k.a===s?k.b:k.a;
-      if(field==='start'){s.start=hhmm(k.to);setSlotEnd(s,end)}else setSlotEnd(s,hhmm(k.from));
-      if(slotDuration(s)>=dur)break; // spostare l'orario non deve mai allungare la fascia
+    const fixed=new Set([s]),moved=[];
+    for(let i=0;i<50;i++){
+      const k=slotConflicts().find(k=>fixed.has(k.a)!==fixed.has(k.b));if(!k)break;
+      const anchor=fixed.has(k.a)?k.a:k.b,o=anchor===k.a?k.b:k.a;
+      const as=toMin(anchor.start),ae=as+slotDuration(anchor),os=toMin(o.start);
+      if(os<as){
+        if(as-os<15){reason=Lf('{0} resterebbe più corta di 15 minuti.',slotTitle(o));break}
+        o.duration_minutes=as-os;o.end=slotEnd(o);
+      }else{
+        const close=slotCloseTime(o);
+        if(ae>close-15){reason=Lf('{0} non ci sta più prima della chiusura delle {1}.',slotTitle(o),hhmm(close));break}
+        o.start=hhmm(ae);o.duration_minutes=Math.min(slotDuration(o),close-ae);o.end=slotEnd(o);
+      }
+      fixed.add(o);if(!moved.includes(o))moved.push(o);
     }
-    if(slotConflicts().length<=prev&&slotDuration(s)<dur){
-      toast(Lf('Orario adattato a {0}–{1} per non accavallarsi con {2} ({3}–{4}) sugli stessi Sonos.',s.start,slotEnd(s),slotTitle(other),other.start,slotEnd(other)));
+    if(!reason&&slotConflicts().length<=prev){
+      if(moved.length)toast(Lf('Fasce adattate: {0}',moved.map(o=>slotTitle(o)+' '+o.start+'–'+slotEnd(o)).join(', ')));
       return true;
     }
   }
   const k=slotConflicts().find(k=>!s||k.a===s||k.b===s)||slotConflicts()[0];
   cfg().music.slots=JSON.parse(before);
-  toast(Lf('Modifica annullata: {0} e {1} si accavallerebbero. {2}',slotTitle(k.a),slotTitle(k.b),conflictText(k)),true);
+  toast(reason?Lf('Modifica annullata: {0}',reason):Lf('Modifica annullata: {0} e {1} si accavallerebbero. {2}',slotTitle(k.a),slotTitle(k.b),conflictText(k)),true);
   return false;
 }
 // Nuovo blocco: primo orario libero nell'orario di apertura, senza accavallarsi con le altre fasce degli stessi Sonos.
@@ -1554,7 +1573,7 @@ const DE=new Map([
 ['Offline','Offline'],['offline','offline'],['Suona','Spielt'],['In pausa','Pausiert'],['Nessun dispositivo','Kein Gerät'],['Volume','Lautstärke'],['Riprova collegamento','Verbindung erneut prüfen'],['riprova','erneut'],['Gestisci zone','Zonen verwalten'],['Nessun Sonos trovato in Home Assistant.','Keine Sonos in Home Assistant gefunden.'],
 ['Da sistemare','Zu erledigen'],['Tutto in ordine.','Alles in Ordnung.'],['TV in onda','TV läuft'],['I Sonos della fascia sono fermi.','Die Sonos dieses Zeitraums sind gestoppt.'],['Riavvia la musica','Musik neu starten'],['Musica ferma: {0}','Musik gestoppt: {0}'],['La fascia è in corso ma i Sonos non suonano (fermati a mano o dall’app Sonos).','Der Zeitraum läuft, aber die Sonos spielen nicht (von Hand oder in der Sonos-App gestoppt).'],['Attività','Aktivität'],['Tutto il registro','Ganzes Protokoll'],['Nessuna attività','Keine Aktivität'],
 ['{0} non raggiungibile','{0} nicht erreichbar'],['Escluso dagli spot finché non torna online.','Von Spots ausgeschlossen, bis er wieder online ist.'],['Sequenza TV da inviare: {0}','TV-Sequenz senden: {0}'],['Le TV mostrano ancora la versione precedente.','Die Fernseher zeigen noch die vorherige Version.'],['Genera e invia alle TV','Erzeugen und an die TVs senden'],['Errore nel canale {0}','Fehler im Kanal {0}'],['Riprova','Erneut versuchen'],['Nessun accesso Player TV','Kein TV-Player-Zugang'],['Serve per aprire il canale dal browser della TV.','Nötig, um den Kanal im TV-Browser zu öffnen.'],['Crea accesso TV','TV-Zugang anlegen'],['La pubblicità è attiva ma non ha spot da trasmettere.','Werbung ist aktiv, aber ohne Spots.'],['Scegli gli spot','Spots auswählen'],['Nessun Sonos per gli spot','Kein Sonos für Spots'],['Attiva gli spot almeno in una zona.','Spots in mindestens einer Zone aktivieren.'],['Apri le zone','Zonen öffnen'],['Fascia fuori orario: {0}','Zeitraum außerhalb der Öffnungszeit: {0}'],['Una parte della fascia è fuori dall’orario di apertura e non suonerà.','Ein Teil des Zeitraums liegt außerhalb der Öffnungszeit und wird nicht gespielt.'],['Correggi','Korrigieren'],['Indirizzo locale da controllare','Lokale Adresse prüfen'],['Sonos e TV usano {0}: serve l’indirizzo IP numerico.','Sonos und TV verwenden {0}: nötig ist die numerische IP-Adresse.'],['Apri impostazioni','Einstellungen öffnen'],
-['Fasce sovrapposte: {0} e {1}','Überlappende Zeiträume: {0} und {1}'],['Orario adattato a {0}–{1} per non accavallarsi con {2} ({3}–{4}) sugli stessi Sonos.','Uhrzeit auf {0}–{1} angepasst, damit sie sich nicht mit {2} ({3}–{4}) auf denselben Sonos überschneidet.'],['Modifica annullata: {0} e {1} si accavallerebbero. {2}','Änderung verworfen: {0} und {1} würden sich überschneiden. {2}'],['Nessun orario libero per il nuovo blocco su questi Sonos: scegli tu orario, giorni o casse.','Keine freie Zeit für den neuen Block auf diesen Sonos: Uhrzeit, Tage oder Lautsprecher selbst wählen.'],['{0} dalle {1} alle {2} su {3}. Un Sonos suona una sola musica alla volta: cambia l’orario, i giorni o le casse di una delle due.','{0} von {1} bis {2} auf {3}. Ein Sonos spielt nur eine Musik gleichzeitig: Uhrzeit, Tage oder Lautsprecher eines der beiden ändern.'],['Queste fasce suonano insieme sugli stessi Sonos: finché non le correggi le modifiche non si possono salvare.','Diese Zeiträume spielen gleichzeitig auf denselben Sonos: Bis sie korrigiert sind, lassen sich die Änderungen nicht speichern.'],
+['Fasce sovrapposte: {0} e {1}','Überlappende Zeiträume: {0} und {1}'],['Fasce adattate: {0}','Angepasste Zeiträume: {0}'],['Modifica annullata: {0}','Änderung verworfen: {0}'],['{0} resterebbe più corta di 15 minuti.','{0} wäre kürzer als 15 Minuten.'],['{0} non ci sta più prima della chiusura delle {1}.','{0} passt nicht mehr vor die Schließung um {1}.'],['Modifica annullata: {0} e {1} si accavallerebbero. {2}','Änderung verworfen: {0} und {1} würden sich überschneiden. {2}'],['Nessun orario libero per il nuovo blocco su questi Sonos: scegli tu orario, giorni o casse.','Keine freie Zeit für den neuen Block auf diesen Sonos: Uhrzeit, Tage oder Lautsprecher selbst wählen.'],['{0} dalle {1} alle {2} su {3}. Un Sonos suona una sola musica alla volta: cambia l’orario, i giorni o le casse di una delle due.','{0} von {1} bis {2} auf {3}. Ein Sonos spielt nur eine Musik gleichzeitig: Uhrzeit, Tage oder Lautsprecher eines der beiden ändern.'],['Queste fasce suonano insieme sugli stessi Sonos: finché non le correggi le modifiche non si possono salvare.','Diese Zeiträume spielen gleichzeitig auf denselben Sonos: Bis sie korrigiert sind, lassen sich die Änderungen nicht speichern.'],
 ['Schermi','Bildschirme'],['Schermo principale','Hauptbildschirm'],['spot','Spot'],['Sorgente musicale','Musikquelle'],['Pronto','Bereit'],['Storico spot','Spot-Verlauf'],['Apri lo storico degli spot','Spot-Verlauf öffnen'],['Esporta CSV per Excel','CSV für Excel exportieren'],['Filtri','Filter'],['Periodo','Zeitraum'],['7 giorni','7 Tage'],['30 giorni','30 Tage'],['Questo mese','Dieser Monat'],['Personalizzato','Benutzerdefiniert'],['Dal','Vom'],['Al','Bis'],['Tutti gli spot','Alle Spots'],['Storico non disponibile','Verlauf nicht verfügbar'],['Caricamento dello storico…','Verlauf wird geladen…'],['{0} spot in onda','{0} Spots gesendet'],['{0} non riusciti','{0} fehlgeschlagen'],['{0} passaggi','{0} Ausstrahlungen'],['{0} min in onda','{0} Min. gesendet'],['{0} spot ascoltati','{0} Spots gehört'],['Trasmesso','Gesendet'],['Interrotto','Abgebrochen'],['Non riuscito','Fehlgeschlagen'],['Data e ora','Datum und Uhrzeit'],['Tipo','Art'],['Durata','Dauer'],['Esito','Ergebnis'],['Prova manuale','Manueller Test'],['Automatico','Automatisch'],['Mostra altri ({0} rimanenti)','Weitere anzeigen ({0} übrig)'],['Nessuno spot in questo periodo.','Keine Spots in diesem Zeitraum.'],['Spot in onda','Gesendete Spots'],['nel giorno scelto','am gewählten Tag'],['in {0} giorni','in {0} Tagen'],['Media al giorno','Durchschnitt pro Tag'],['limite {0} al giorno','Limit {0} pro Tag'],['Minuti in onda','Sendeminuten'],['solo spot ascoltati per intero','nur vollständig gehörte Spots'],['Trasmessi per intero','Vollständig gesendet'],['{0} interrotti · {1} non riusciti','{0} abgebrochen · {1} fehlgeschlagen'],['{0} prove manuali nel periodo','{0} manuelle Tests im Zeitraum'],['Spot in onda per giorno','Gesendete Spots pro Tag'],['Per ora del giorno','Nach Tageszeit'],['quando passano gli spot','wann die Spots laufen'],['Spot in onda per ora del giorno','Gesendete Spots nach Tageszeit'],['Per spot','Nach Spot'],['passaggi e quota','Ausstrahlungen und Anteil'],['Per zona','Nach Zone'],['dove sono stati ascoltati','wo sie gehört wurden'],['Tutti i passaggi','Alle Ausstrahlungen'],['Trasmessi','Gesendet'],['Interrotti','Abgebrochen'],['Non riusciti','Fehlgeschlagen'],['FFmpeg non trovato: serve per generare i canali TV (sul PC di prova va installato a parte).','FFmpeg nicht gefunden: wird zum Erzeugen der TV-Kanäle benötigt (auf dem Test-PC separat installieren).'],['In preparazione','Wird vorbereitet'],['Da aggiornare','Zu aktualisieren'],['Errore','Fehler'],['Da generare','Zu erzeugen'],
 ['Apri','Öffnen'],['Chiudi','Schließen'],['Modifica','Bearbeiten'],['suona','spielt'],['ferma','gestoppt'],['spot in onda','Spot läuft'],['Nessun dispositivo assegnato','Kein Gerät zugewiesen'],['Abbiamo preparato una zona per ogni Sonos. Rinominale, uniscile o assegna le TV, poi salva.','Für jeden Sonos wurde eine Zone vorbereitet. Umbenennen, zusammenlegen oder TVs zuweisen, dann speichern.'],['Conferma queste zone','Diese Zonen bestätigen'],['Premi "Nuova zona" per aggiungere un luogo del locale.','„Neue Zone“ drücken, um einen Bereich hinzuzufügen.'],['Nessuna zona: premi "Nuova zona".','Keine Zonen: „Neue Zone“ drücken.'],
 ['Nome della zona','Name der Zone'],['Sonos in questa zona','Sonos in dieser Zone'],['Nessun Sonos trovato','Keine Sonos gefunden'],['Canali TV in questa zona','TV-Kanäle in dieser Zone'],['Schermo principale (LAN/DLNA)','Hauptbildschirm (LAN/DLNA)'],['Eliminare la zona {0}? Sonos e TV non vengono toccati.','Zone {0} löschen? Sonos und TVs bleiben unverändert.'],['Elimina','Löschen'],['Elimina zona','Zone löschen'],['Zona','Zone'],['Zona {0}','Zone {0}'],['Zona non trovata.','Zone nicht gefunden.'],['Torna alle zone','Zurück zu den Zonen'],

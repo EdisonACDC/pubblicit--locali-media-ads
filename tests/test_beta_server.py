@@ -1011,6 +1011,11 @@ class CarellasServerTest(unittest.TestCase):
         # Il controllo aspetta l'uscita dal campo orario e il nuovo blocco nasce in un orario libero.
         self.assertIn("e.target.matches('[data-slot-start],[data-slot-end]')", html)
         self.assertIn("if(!placeFreeSlot(s,open))", html)
+        # L'orario scelto resta: la fascia prima si accorcia, quelle dopo slittano a catena fino alla chiusura.
+        self.assertIn("function slotCloseTime(s)", html)
+        self.assertIn("o.duration_minutes=as-os;", html)
+        self.assertIn("o.start=hhmm(ae);o.duration_minutes=Math.min(slotDuration(o),close-ae);", html)
+        self.assertIn("['Fasce adattate: {0}','Angepasste Zeiträume: {0}']", html)
         self.assertIn("['Modifica annullata: {0} e {1} si accavallerebbero. {2}',", html)
 
     def test_music_slot_is_automatically_limited_by_general_opening_hours(self):
