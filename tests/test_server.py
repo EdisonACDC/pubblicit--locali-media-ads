@@ -1201,7 +1201,10 @@ class CarellasServerTest(unittest.TestCase):
         }})
         self.assertTrue(menu["enabled"])
         self.assertEqual(menu["ad_percent"], 80)  # limitata tra 30 e 80
-        self.assertEqual([page["title"] for page in menu["pages"]], ["Antipasti", "Pizze"])
+        self.assertEqual([page["title"] for page in menu["pages"]], ["Antipasti", "Pizze", "Extra"])
+        self.assertEqual(menu["page_seconds"], 15)
+        self.assertEqual(self.app.menu_settings({"menu": {"page_seconds": 2}})["page_seconds"], 5)
+        self.assertEqual(self.app.menu_settings({"menu": {"page_seconds": "abc"}})["page_seconds"], 15)
         self.assertEqual(menu["page_images"], ["segreto.png"])  # nomi ripuliti con safe_name
         self.assertEqual(menu["logo_mode"], "background")  # di serie il logo fa da sfondo alle pagine
         self.assertEqual(self.app.menu_settings({"menu": {"logo_mode": "both"}})["logo_mode"], "both")
@@ -1219,6 +1222,40 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(len(cells), 3)
         self.assertTrue(all(y == 444 and h == 264 for _, y, _, h in cells))
         self.assertLessEqual(cells[-1][0] + cells[-1][2], 1280)
+
+    def test_menu_with_more_than_three_pages_rotates_groups(self):
+        pages = [{"title": f"P{number}", "text": f"Piatto {number} 5,00"} for number in range(1, 8)]
+        menu = self.app.menu_settings({"menu": {"enabled": True, "pages": pages, "page_seconds": 20}})
+        groups = self.app.menu_groups(menu)
+        self.assertEqual([[page["title"] for page in group] for group in groups],
+                         [["P1", "P2", "P3"], ["P4", "P5", "P6"], ["P7"]])
+        playlist = self.app.menu_frames_playlist(["a.png", "b.png", "c.png"], 20, 70)
+        self.assertEqual(playlist.splitlines(), [
+            "file 'a.png'", "duration 20", "file 'b.png'", "duration 20", "file 'c.png'", "duration 20",
+            "file 'a.png'", "duration 20", "file 'a.png'",
+        ])
+        font = Path(self.temp.name) / "font.ttf"
+        font.write_bytes(b"font")
+        captured = []
+
+        def run(command, **kwargs):
+            captured.append((command[command.index("-filter_complex") + 1],
+                             sorted(item.read_text(encoding="utf-8") for item in Path(kwargs["cwd"]).glob("t*.txt"))))
+            Path(command[-1]).write_bytes(b"png")
+
+        with mock.patch.object(self.app, "menu_fonts", return_value=(font, font)),                 mock.patch.object(self.app.subprocess, "run", side_effect=run):
+            self.app.render_menu_frame({**menu, "logo": "none"}, Path(self.temp.name) / "g1.png", group=0)
+            self.app.render_menu_frame({**menu, "logo": "none"}, Path(self.temp.name) / "g3.png", group=2)
+        first, last = captured
+        self.assertIn("P1", first[1])
+        self.assertIn("1/3", first[1])  # indicatore del gruppo
+        self.assertIn("P7", last[1])
+        self.assertIn("3/3", last[1])
+        self.assertNotIn("P1", last[1])
+        # L'ultimo gruppo ha una sola pagina, centrata e larga come le altre.
+        _, cells = self.app.menu_layout(60, 3)
+        middle_x = cells[1][0]
+        self.assertIn(f"drawbox=x={middle_x}:y={cells[1][1]}:w={cells[1][2]}", last[0])
 
     def test_menu_changes_channel_signature_only_when_enabled(self):
         channel = {"id": "sala", "playlist": [{"name": "a.jpg", "kind": "image"}]}
@@ -1294,8 +1331,8 @@ class CarellasServerTest(unittest.TestCase):
             )
             with urllib.request.urlopen(req) as response:
                 payload = json.loads(response.read())
-        self.assertEqual(fake.call_args.args[0][:7], ["pdftoppm", "-png", "-r", "110", "-f", "1", "-l"])
-        self.assertEqual(len(payload["pages"]), 3)  # al massimo tre pagine
+        self.assertEqual(fake.call_args.args[0][:8], ["pdftoppm", "-png", "-r", "110", "-f", "1", "-l", "12"])
+        self.assertEqual(len(payload["pages"]), 4)  # tutte le pagine, fino a 12
         for name in payload["pages"]:
             self.assertTrue((self.app.MEDIA_DIR / name).is_file())
             (self.app.MEDIA_DIR / name).unlink()
@@ -1307,7 +1344,7 @@ class CarellasServerTest(unittest.TestCase):
     def test_zone_page_has_menu_editor(self):
         html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
         self.assertIn("${ch?menuEditor(ch):''}", html)
-        for snippet in ("sw(on,'menu-enable'", "data-bind=\"${p}.logo_mode\"", "data-bind=\"${p}.ad_percent\"", "data-menu-pdf=", "'menu-preview':async el=>",
+        for snippet in ("sw(on,'menu-enable'", "data-bind=\"${p}.page_seconds\"", "pages.length<12", "r.images||r.image", "data-bind=\"${p}.logo_mode\"", "data-bind=\"${p}.ad_percent\"", "data-menu-pdf=", "'menu-preview':async el=>",
                         "post('api/menu/preview',{menu:ch.menu})", "fetch('api/menu/pdf?filename='",
                         "['Menu sullo schermo','Menü auf dem Bildschirm']"):
             self.assertIn(snippet, html)
