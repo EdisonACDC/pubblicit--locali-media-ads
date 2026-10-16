@@ -65,6 +65,8 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(html.count('href="#/canale/${encodeURIComponent(ch.id)}"'), 2)
         self.assertIn("if(el){location.hash='#/canale/'+encodeURIComponent(ch.id);render()}", html)
         self.assertIn("['Nome e zona','Name und Zone']", html)
+        # Dal riquadro delle TV si apre il canale mostrato da ogni TV.
+        self.assertIn('href="#/canale/${encodeURIComponent(u.channel_id)}"', html)
 
     def test_state_and_ingress_path(self):
         status, payload = self.request("/api/hassio_ingress/example/api/state")
