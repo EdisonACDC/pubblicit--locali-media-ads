@@ -577,6 +577,7 @@ def main():
     app.scheduler.start()
     servers = [
         ThreadingHTTPServer((args.host, app.PLAYER_PORT), app.PlayerHandler),
+        ThreadingHTTPServer((args.host, app.REMOTE_PORT), app.RemoteAdminHandler),
         ThreadingHTTPServer((args.host, SIM_PORT), make_sim_handler(virtual)),
     ]
     for server in servers:
@@ -586,6 +587,7 @@ def main():
     print("\nCarellas Media Ads in locale (Home Assistant e Sonos virtuali)")
     print(f"  Pannello      http://{shown}:{app.PORT}")
     print(f"  Player TV     http://{shown}:{app.PLAYER_PORT}")
+    print(f"  Da Internet   http://{shown}:{app.REMOTE_PORT}  (login, spento finché non lo attivi)")
     print(f"  Simulatore    http://{shown}:{SIM_PORT}")
     print(f"  Dati locali   {root}")
     if shutil.which("ffprobe") is None:
