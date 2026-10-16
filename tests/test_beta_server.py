@@ -979,10 +979,24 @@ class CarellasServerTest(unittest.TestCase):
                 "players": ["media_player.sala"], "content_id": "FV:2/31",
             }],
         }
-        with self.assertRaisesRegex(RuntimeError, "si sovrappongono"):
+        # Il messaggio indica giorno, orario e casse in comune.
+        with self.assertRaisesRegex(RuntimeError, "si sovrappongono il lunedì dalle 11:30 alle 12:00 su Sala"):
             self.app.validate_music_slots(base)
         base["slots"][1]["players"] = ["media_player.terrazza"]
         self.app.validate_music_slots(base)
+
+    def test_time_fields_use_clock_and_overlaps_are_shown_before_saving(self):
+        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        # Tutti i campi orario sono orologi veri (type=time), nessuno resta testo libero.
+        self.assertNotIn('<input class="inp time"', html)
+        self.assertEqual(html.count('<input type="time" step="60" class="inp time"'), 5)
+        # Un orario incompleto non diventa 00:00.
+        self.assertIn("&&!t.value)return;", html)
+        # Le fasce sovrapposte compaiono nel Palinsesto e in "Da sistemare" prima del salvataggio.
+        self.assertIn("function slotConflicts()", html)
+        self.assertIn("slotConflicts().forEach(k=>list.push(", html)
+        self.assertIn("const conf=slotConflicts(),clash=", html)
+        self.assertIn("['Fasce sovrapposte: {0} e {1}','Überlappende Zeiträume: {0} und {1}']", html)
 
     def test_music_slot_is_automatically_limited_by_general_opening_hours(self):
         music = {
