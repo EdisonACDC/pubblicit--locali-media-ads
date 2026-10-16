@@ -2594,6 +2594,16 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("command('api/social/events/check',{})", html)
         self.assertIn("['Eventi dal sito','Events von der Website']", html)
 
+    def test_side_menu_zones_in_dropdown(self):
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        # Le zone del menu laterale stanno in una tendina chiusa di serie; il browser ricorda se è aperta.
+        self.assertIn('data-act="side-zones" aria-expanded="${sideZonesOpen}"', html)
+        self.assertIn("localStorage.getItem('carellas.sideZones')==='1'", html)
+        self.assertIn("'side-zones':()=>{sideZonesOpen=!sideZonesOpen;", html)
+        # Con la tendina chiusa resta visibile la zona aperta.
+        self.assertIn("(cur?`<div class=\"zone-list\">${cur}</div>`:'')", html)
+        self.assertIn("['{0} offline','{0} offline']", html)
+
     def test_overnight_schedule(self):
         schedule = [{"days": [6], "start": "22:00", "end": "02:00", "enabled": True}]
         self.assertTrue(self.app.is_schedule_active(schedule, datetime(2026, 9, 13, 23, 0)))
