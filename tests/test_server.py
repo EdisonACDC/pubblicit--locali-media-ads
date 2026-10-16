@@ -65,6 +65,11 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(html.count('href="#/canale/${encodeURIComponent(ch.id)}"'), 2)
         self.assertIn("if(el){location.hash='#/canale/'+encodeURIComponent(ch.id);render()}", html)
         self.assertIn("['Nome e zona','Name und Zone']", html)
+        # Foto e video si caricano direttamente nella sequenza del canale e vengono aggiunti subito.
+        self.assertIn('data-seq-upload="${esc(ch.id)}"', html)
+        self.assertIn("if(t.dataset.seqUpload!==undefined)", html)
+        self.assertIn("if(r&&r.complete)done.push({name:r.name,kind})", html)
+        self.assertIn("  return done;", html)
         # Dal riquadro delle TV si apre il canale mostrato da ogni TV.
         self.assertIn('href="#/canale/${encodeURIComponent(u.channel_id)}"', html)
 
