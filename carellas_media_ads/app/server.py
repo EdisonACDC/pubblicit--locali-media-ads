@@ -1398,6 +1398,8 @@ def menu_settings(channel):
         "page_images": images,
         "background": safe_name(raw["background"]) if raw.get("background") else "",
         "logo": safe_name(raw["logo"]) if raw.get("logo") else "",
+        # Il logo come sfondo sbiadito di ogni pagina, in alto, oppure entrambi.
+        "logo_mode": raw.get("logo_mode") if raw.get("logo_mode") in {"background", "top", "both"} else "background",
     }
 
 
@@ -1503,7 +1505,11 @@ def render_menu_frame(menu, target, preview=False, width=1280, height=720):
                 chain(f"drawbox=x={x}:y={y}:w={w}:h={h}:color={MENU_COLORS['page']}:t=fill")
                 chain(f"drawbox=x={x + 4}:y={y + 4}:w={w - 8}:h={h - 8}:color={MENU_COLORS['accent']}:t=2")
                 cursor = y + 10
-                if logo and logo.is_file():
+                if logo and logo.is_file() and menu["logo_mode"] in {"background", "both"}:
+                    overlay(logo, f"{x}+({w}-overlay_w)/2", f"{y}+({h}-overlay_h)/2",
+                            f"scale=w={int(w * 0.82)}:h={int(h * 0.82)}:force_original_aspect_ratio=decrease,"
+                            "format=rgba,colorchannelmixer=aa=0.13")
+                if logo and logo.is_file() and menu["logo_mode"] in {"top", "both"}:
                     logo_height = max(14, int(h * 0.16)) // 2 * 2
                     overlay(logo, f"{x}+({w}-overlay_w)/2", str(cursor),
                             f"scale=w={w - 24}:h={logo_height}:force_original_aspect_ratio=decrease")

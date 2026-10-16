@@ -1203,6 +1203,8 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(menu["ad_percent"], 80)  # limitata tra 30 e 80
         self.assertEqual([page["title"] for page in menu["pages"]], ["Antipasti", "Pizze"])
         self.assertEqual(menu["page_images"], ["segreto.png"])  # nomi ripuliti con safe_name
+        self.assertEqual(menu["logo_mode"], "background")  # di serie il logo fa da sfondo alle pagine
+        self.assertEqual(self.app.menu_settings({"menu": {"logo_mode": "both"}})["logo_mode"], "both")
         parse = self.app.parse_menu_line
         self.assertEqual(parse("Bruschetta al pomodoro 6,50"), {"name": "Bruschetta al pomodoro", "price": "6,50 €"})
         self.assertEqual(parse("Tagliere misto ....... € 14"), {"name": "Tagliere misto", "price": "€ 14"})
@@ -1220,6 +1222,28 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(plain, self.app.iptv.channel_signature({**channel, "menu": {"enabled": False, "pages": [{"title": "X"}]}}))
         with_menu = {**channel, "menu": {"enabled": True, "pages": [{"title": "Antipasti", "text": "Bruschetta 6,50"}]}}
         self.assertNotEqual(plain, self.app.iptv.channel_signature(with_menu))
+
+    def test_menu_logo_is_a_faded_background_on_every_page(self):
+        font = Path(self.temp.name) / "font.ttf"
+        font.write_bytes(b"font")
+        (self.app.MEDIA_DIR / "logo-test.png").write_bytes(b"png")
+        graphs = []
+
+        def run(command, **kwargs):
+            graphs.append(command[command.index("-filter_complex") + 1])
+            Path(command[-1]).write_bytes(b"png")
+
+        try:
+            for mode, faded, small in (("background", 3, 0), ("top", 0, 3), ("both", 3, 3)):
+                menu = self.app.menu_settings({"menu": {"enabled": True, "logo": "logo-test.png", "logo_mode": mode, "pages": [
+                    {"title": "A", "text": "x 1"}, {"title": "B", "text": "y 2"}, {"title": "C", "text": "z 3"},
+                ]}})
+                with mock.patch.object(self.app, "menu_fonts", return_value=(font, font)),                         mock.patch.object(self.app.subprocess, "run", side_effect=run):
+                    self.app.render_menu_frame(menu, Path(self.temp.name) / f"logo-{mode}.png")
+                self.assertEqual(graphs[-1].count("colorchannelmixer=aa=0.13"), faded, mode)
+                self.assertEqual(graphs[-1].count("force_original_aspect_ratio=decrease") - faded, small, mode)
+        finally:
+            (self.app.MEDIA_DIR / "logo-test.png").unlink(missing_ok=True)
 
     def test_menu_frame_draws_pages_with_text_files(self):
         font = Path(self.temp.name) / "font.ttf"
@@ -1278,7 +1302,7 @@ class CarellasServerTest(unittest.TestCase):
     def test_zone_page_has_menu_editor(self):
         html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
         self.assertIn("${ch?menuEditor(ch):''}", html)
-        for snippet in ("sw(on,'menu-enable'", "data-bind=\"${p}.ad_percent\"", "data-menu-pdf=", "'menu-preview':async el=>",
+        for snippet in ("sw(on,'menu-enable'", "data-bind=\"${p}.logo_mode\"", "data-bind=\"${p}.ad_percent\"", "data-menu-pdf=", "'menu-preview':async el=>",
                         "post('api/menu/preview',{menu:ch.menu})", "fetch('api/menu/pdf?filename='",
                         "['Menu sullo schermo','Menü auf dem Bildschirm']"):
             self.assertIn(snippet, html)
