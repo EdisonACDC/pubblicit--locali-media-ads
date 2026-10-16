@@ -2718,11 +2718,18 @@ def instagram_settings():
         interval = int(raw.get("interval_minutes", 15))
     except (TypeError, ValueError):
         interval = 15
+    try:
+        photo_seconds = int(raw.get("photo_seconds", 10))
+    except (TypeError, ValueError):
+        photo_seconds = 10
     return {
         "enabled": raw.get("enabled") is True,
         "channel_id": safe_channel_id(raw.get("channel_id", "")) if raw.get("channel_id") else "",
         "keep": max(1, min(keep, 10)),
         "interval_minutes": max(5, min(interval, 240)),
+        # Anche i post con foto e i caroselli (foto e video del carosello, nell'ordine del post).
+        "include_photos": raw.get("include_photos") is not False,
+        "photo_seconds": max(2, min(photo_seconds, 60)),
     }
 
 
@@ -2826,20 +2833,33 @@ class InstagramImporter(threading.Thread):
                 raise RuntimeError("Scegli il canale TV per i video di Instagram")
             token = self._refresh_if_needed(info)
             data = self._get(f"{INSTAGRAM_API}/me/media", {
-                "fields": "id,media_type,media_product_type,media_url,timestamp", "limit": "25", "access_token": token,
+                "fields": "id,media_type,media_url,timestamp,children{id,media_type,media_url}",
+                "limit": "25", "access_token": token,
             })
-            videos = [item for item in data.get("data", []) if item.get("media_type") == "VIDEO" and item.get("media_url")]
-            videos.sort(key=lambda item: str(item.get("timestamp", "")), reverse=True)
-            names = []
-            for video in videos[:settings["keep"]]:
-                name = safe_name(f"{INSTAGRAM_PREFIX}{video.get('id', '')}.mp4")
+            posts = sorted(data.get("data", []), key=lambda item: str(item.get("timestamp", "")), reverse=True)
+            entries, selected = [], 0
+            for post in posts:
+                parts = (post.get("children") or {}).get("data", []) if post.get("media_type") == "CAROUSEL_ALBUM" else [post]
+                media = [part for part in parts if part.get("media_url") and part.get("media_type") in {"VIDEO", "IMAGE"}]
+                if not settings["include_photos"]:
+                    media = [part for part in media if part.get("media_type") == "VIDEO"]
+                if not media:
+                    continue
+                entries += media
+                selected += 1
+                if selected >= settings["keep"]:
+                    break
+            items = []
+            for part in entries:
+                kind = "video" if part["media_type"] == "VIDEO" else "image"
+                name = safe_name(f"{INSTAGRAM_PREFIX}{part.get('id', '')}{'.mp4' if kind == 'video' else '.jpg'}")
                 target = MEDIA_DIR / name
                 if not target.exists():
-                    self._download(video["media_url"], target)
+                    self._download(part["media_url"], target)
                     imported.append(name)
-                    store.log("success", f"Nuovo video di Instagram scaricato: {name}")
-                names.append(name)
-            self._update_channel(channel.get("id", ""), names)
+                    store.log("success", f"Nuovo contenuto di Instagram scaricato: {name}")
+                items.append((name, kind))
+            self._update_channel(channel.get("id", ""), items, settings["photo_seconds"])
             message = ""
         except Exception as error:
             message = str(error)
@@ -2851,22 +2871,25 @@ class InstagramImporter(threading.Thread):
             }
         return self.public_status()
 
-    def _update_channel(self, channel_id, names):
-        """Nel canale restano solo gli ultimi video di Instagram; gli altri contenuti non vengono toccati."""
+    def _update_channel(self, channel_id, items, photo_seconds=10):
+        """Nel canale restano solo gli ultimi post di Instagram, in fondo; gli altri contenuti non vengono toccati."""
         channels = copy.deepcopy(store.config.get("iptv", {}).get("channels", []))
         channel = next((item for item in channels if safe_channel_id(item.get("id", "")) == safe_channel_id(channel_id)), None)
         if not channel:
             return
         playlist = channel.get("playlist") or []
-        kept = [item for item in playlist if not str(item.get("name", "")).startswith(INSTAGRAM_PREFIX) or item.get("name") in names]
-        present = {item.get("name") for item in kept}
-        updated = kept + [{"name": name, "kind": "video", "fit": "smart"} for name in names if name not in present]
+        others = [item for item in playlist if not str(item.get("name", "")).startswith(INSTAGRAM_PREFIX)]
+        updated = others + [
+            {"name": name, "kind": "video", "fit": "smart"} if kind == "video"
+            else {"name": name, "kind": "image", "duration": photo_seconds, "fit": "smart", "effect": "fade"}
+            for name, kind in items
+        ]
         if updated == playlist:
             return
         channel["playlist"] = updated
         store.update({"iptv": {"channels": channels}})
         iptv.build_async(channel_id)
-        store.log("info", f"Video di Instagram aggiornati nel canale {channel.get('name', channel_id)}")
+        store.log("info", f"Contenuti di Instagram aggiornati nel canale {channel.get('name', channel_id)}")
 
     def run(self):
         while True:
