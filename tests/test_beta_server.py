@@ -1339,6 +1339,18 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(parse("Tagliere misto ....... € 14"), {"name": "Tagliere misto", "price": "€ 14"})
         self.assertEqual(parse("Dal forno a legna"), {"name": "Dal forno a legna", "price": ""})
         self.assertIsNone(parse("   "))
+        self.assertEqual(parse("Bruschetta Pugliese | 8,80"), {"name": "Bruschetta Pugliese", "price": "8,80 €"})
+        # Le righe lunghe vanno a capo e la misura scende finché tutto sta nella pagina.
+        lines = self.app.wrap_menu_text("Weißbrotscheiben mit marinierten Tomatenwürfeln und Grana Padano", 20)
+        self.assertTrue(all(len(line) <= 20 for line in lines))
+        self.assertEqual(" ".join(lines), "Weißbrotscheiben mit marinierten Tomatenwürfeln und Grana Padano")
+        items = [parse("Piatto con una descrizione molto lunga che non entra in una riga sola 12,50")] * 6
+        size, rows = self.app.fit_menu_items(items, 380, 220)
+        used = sum(len(row_lines) for _, row_lines in rows) * size * self.app.MENU_LINE_HEIGHT
+        self.assertLessEqual(used, 220)
+        self.assertTrue(all(len(line) * size * self.app.MENU_CHAR_WIDTH <= 380 for _, row_lines in rows for line in row_lines))
+        self.assertEqual(self.app.menu_settings({"menu": {}})["ad_fit"], "cover")  # pubblicità a tutta larghezza
+        self.assertIn("crop=1280:432", self.app.menu_ad_filter("cover", 1280, 432))
         ad_height, cells = self.app.menu_layout(60, 3)
         self.assertEqual(ad_height, 432)
         self.assertEqual(len(cells), 3)
