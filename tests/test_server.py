@@ -80,6 +80,147 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(payload["runtime"]["media_base_url"], "http://192.168.1.10:8099")
         self.assertEqual(payload["runtime"]["player_local_url"], "http://192.168.1.10:8101")
 
+    def test_instagram_token_stays_on_server(self):
+        self.app.INSTAGRAM_TOKEN_FILE.unlink(missing_ok=True)
+        with mock.patch.object(self.app.InstagramImporter, "_get", return_value={"username": "carellas.ristorante"}) as get:
+            status, payload = self.request("/api/social/instagram/token", "POST", {"token": "IGAA-SEGRETO-123"})
+        self.assertEqual(payload["username"], "carellas.ristorante")
+        self.assertEqual(get.call_args.args[1]["access_token"], "IGAA-SEGRETO-123")
+        self.assertTrue(self.app.INSTAGRAM_TOKEN_FILE.is_file())
+        # La chiave non arriva mai al pannello: solo "collegato a @...".
+        with urllib.request.urlopen(self.base + "/api/state") as response:
+            state = response.read().decode("utf-8")
+        self.assertNotIn("IGAA-SEGRETO-123", state)
+        self.assertIn('"username": "carellas.ristorante"', state)
+        self.assertIn('"token_set": true', state)
+        self.request("/api/social/instagram/token", "POST", {"token": ""})
+        self.assertFalse(self.app.INSTAGRAM_TOKEN_FILE.exists())
+
+    def test_instagram_videos_are_added_to_the_chosen_channel(self):
+        saved_iptv = json.loads(json.dumps(self.app.store.config.get("iptv", {})))
+        saved_social = json.loads(json.dumps(self.app.store.config.get("social", {})))
+        importer = self.app.InstagramImporter()
+        self.app.INSTAGRAM_TOKEN_FILE.write_text(json.dumps({"token": "T", "saved_at": self.app.time.time(), "username": "carellas"}))
+        downloads = []
+
+        def download(url, target):
+            downloads.append(url)
+            target.write_bytes(b"video")
+
+        media = {"data": [
+            {"id": "100", "media_type": "VIDEO", "media_url": "https://cdn/100.mp4", "timestamp": "2026-10-01T10:00:00+0000"},
+            {"id": "200", "media_type": "IMAGE", "media_url": "https://cdn/200.jpg", "timestamp": "2026-10-02T10:00:00+0000"},
+            {"id": "300", "media_type": "VIDEO", "media_url": "https://cdn/300.mp4", "timestamp": "2026-10-03T10:00:00+0000"},
+        ]}
+        try:
+            self.app.store.update({
+                "iptv": {"channels": [{"id": "ingresso", "name": "TV Ingresso", "enabled": True,
+                                       "playlist": [{"name": "foto.jpg", "kind": "image", "duration": 12}]}]},
+                "social": {"instagram": {"enabled": True, "channel_id": "ingresso", "keep": 1, "interval_minutes": 15}},
+            })
+            with mock.patch.object(self.app.InstagramImporter, "_get", return_value=media), \
+                    mock.patch.object(self.app.InstagramImporter, "_download", side_effect=download), \
+                    mock.patch.object(self.app.iptv, "build_async") as build:
+                status = importer.check(force=True)
+            self.assertEqual(status["last_error"], "")
+            self.assertEqual(downloads, ["https://cdn/300.mp4"])  # solo il video più recente (keep=1)
+            playlist = self.app.store.config["iptv"]["channels"][0]["playlist"]
+            self.assertEqual([item["name"] for item in playlist], ["foto.jpg", "Instagram_300.mp4"])
+            build.assert_called_once_with("ingresso")
+            # Arriva un video più nuovo: sostituisce il vecchio, gli altri contenuti restano.
+            media["data"].append({"id": "400", "media_type": "VIDEO", "media_url": "https://cdn/400.mp4",
+                                  "timestamp": "2026-10-04T10:00:00+0000"})
+            with mock.patch.object(self.app.InstagramImporter, "_get", return_value=media), \
+                    mock.patch.object(self.app.InstagramImporter, "_download", side_effect=download), \
+                    mock.patch.object(self.app.iptv, "build_async"):
+                importer.check(force=True)
+            playlist = self.app.store.config["iptv"]["channels"][0]["playlist"]
+            self.assertEqual([item["name"] for item in playlist], ["foto.jpg", "Instagram_400.mp4"])
+            # Senza canale scelto il controllo si ferma con un messaggio chiaro.
+            self.app.store.update({"social": {"instagram": {"channel_id": ""}}})
+            self.assertIn("Scegli il canale", importer.check(force=True)["last_error"])
+        finally:
+            for name in ("Instagram_300.mp4", "Instagram_400.mp4"):
+                (self.app.MEDIA_DIR / name).unlink(missing_ok=True)
+            self.app.INSTAGRAM_TOKEN_FILE.unlink(missing_ok=True)
+            self.app.store.config["iptv"] = saved_iptv
+            self.app.store.config["social"] = saved_social
+
+    def test_instagram_photos_and_carousels(self):
+        saved_iptv = json.loads(json.dumps(self.app.store.config.get("iptv", {})))
+        saved_social = json.loads(json.dumps(self.app.store.config.get("social", {})))
+        importer = self.app.InstagramImporter()
+        self.app.INSTAGRAM_TOKEN_FILE.write_text(json.dumps({"token": "T", "saved_at": self.app.time.time(), "username": "c"}))
+        media = {"data": [
+            {"id": "450", "media_type": "IMAGE", "media_url": "https://cdn/450.jpg", "timestamp": "2026-10-05T10:00:00+0000"},
+            {"id": "500", "media_type": "CAROUSEL_ALBUM", "timestamp": "2026-10-06T10:00:00+0000", "children": {"data": [
+                {"id": "501", "media_type": "IMAGE", "media_url": "https://cdn/501.jpg"},
+                {"id": "502", "media_type": "VIDEO", "media_url": "https://cdn/502.mp4"},
+            ]}},
+            {"id": "400", "media_type": "VIDEO", "media_url": "https://cdn/400.mp4", "timestamp": "2026-10-01T10:00:00+0000"},
+        ]}
+        created = []
+
+        def download(url, target):
+            created.append(target)
+            target.write_bytes(b"x")
+
+        try:
+            self.app.store.update({
+                "iptv": {"channels": [{"id": "ingresso", "name": "TV Ingresso", "enabled": True,
+                                       "playlist": [{"name": "foto.jpg", "kind": "image", "duration": 12}]}]},
+                "social": {"instagram": {"enabled": True, "channel_id": "ingresso", "keep": 2, "photo_seconds": 8}},
+            })
+            with mock.patch.object(self.app.InstagramImporter, "_get", return_value=media) as get, \
+                    mock.patch.object(self.app.InstagramImporter, "_download", side_effect=download), \
+                    mock.patch.object(self.app.iptv, "build_async"):
+                importer.check(force=True)
+            self.assertIn("children{id,media_type,media_url}", get.call_args.args[1]["fields"])
+            playlist = self.app.store.config["iptv"]["channels"][0]["playlist"]
+            # Gli ultimi 2 post: il carosello (foto e video nell'ordine del post) e la foto.
+            self.assertEqual([item["name"] for item in playlist],
+                             ["foto.jpg", "Instagram_501.jpg", "Instagram_502.mp4", "Instagram_450.jpg"])
+            self.assertEqual(playlist[1], {"name": "Instagram_501.jpg", "kind": "image", "duration": 8,
+                                           "fit": "smart", "effect": "fade"})
+            self.assertEqual(playlist[2]["kind"], "video")
+            # Senza foto: restano solo i video, anche quelli dentro i caroselli.
+            self.app.store.update({"social": {"instagram": {"include_photos": False}}})
+            with mock.patch.object(self.app.InstagramImporter, "_get", return_value=media), \
+                    mock.patch.object(self.app.InstagramImporter, "_download", side_effect=download), \
+                    mock.patch.object(self.app.iptv, "build_async"):
+                importer.check(force=True)
+            playlist = self.app.store.config["iptv"]["channels"][0]["playlist"]
+            self.assertEqual([item["name"] for item in playlist], ["foto.jpg", "Instagram_502.mp4", "Instagram_400.mp4"])
+        finally:
+            for target in created:
+                target.unlink(missing_ok=True)
+            self.app.INSTAGRAM_TOKEN_FILE.unlink(missing_ok=True)
+            self.app.store.config["iptv"] = saved_iptv
+            self.app.store.config["social"] = saved_social
+
+    def test_instagram_token_is_renewed_after_twenty_days(self):
+        importer = self.app.InstagramImporter()
+        old = {"token": "VECCHIA", "saved_at": self.app.time.time() - 21 * 86400, "username": "carellas"}
+        self.app.INSTAGRAM_TOKEN_FILE.write_text(json.dumps(old))
+        try:
+            with mock.patch.object(self.app.InstagramImporter, "_get", return_value={"access_token": "NUOVA"}) as get:
+                token = importer._refresh_if_needed(old)
+            self.assertEqual(token, "NUOVA")
+            self.assertEqual(get.call_args.args[1], {"grant_type": "ig_refresh_token", "access_token": "VECCHIA"})
+            self.assertEqual(importer.token_info()["token"], "NUOVA")
+        finally:
+            self.app.INSTAGRAM_TOKEN_FILE.unlink(missing_ok=True)
+
+    def test_instagram_settings_in_panel(self):
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        self.assertIn("['instagram','Instagram']", html)
+        self.assertIn("${instagramSettings()}", html)
+        self.assertIn('type="password" autocomplete="off"', html)
+        self.assertIn("'ig-check':async()=>", html)
+        self.assertIn("data-bind=\"social.instagram.channel_id\"", html)
+        self.assertIn("data-bind=\"social.instagram.photo_seconds\"", html)
+        self.assertIn("data-bind=\"social.instagram.include_photos\"", html)
+
     def test_browser_player_requires_login_and_only_serves_assigned_channel(self):
         self.app.store.update({
             "iptv": {"channels": [{
