@@ -1230,6 +1230,26 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(attempts, 2)
         self.assertIn(("media_player", "media_stop", {"entity_id": "media_player.sala"}), calls)
 
+    def test_addresses_without_protocol_are_completed(self):
+        saved_media = self.app.store.config.get("media_base_url", "")
+        saved_player = json.loads(json.dumps(self.app.store.config.get("browser_player", {})))
+        try:
+            # Scritti senza http:// o https:// (come 'tvspot.hausmaistercarellas.com') vengono completati.
+            self.app.store.update({
+                "media_base_url": "192.168.1.50:8099",
+                "browser_player": {**saved_player, "public_url": "tvspot.esempio.com/"},
+            })
+            self.assertEqual(self.app.store.config["media_base_url"], "http://192.168.1.50:8099")
+            self.assertEqual(self.app.store.config["browser_player"]["public_url"], "https://tvspot.esempio.com")
+            self.assertEqual(self.app.player_public_url(), "https://tvspot.esempio.com")
+            self.assertEqual(self.app.player_local_url(), "http://192.168.1.50:8102")
+        finally:
+            self.app.store.update({"media_base_url": saved_media, "browser_player": saved_player})
+        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        # Il pulsante apre sempre un sito e la sezione Player avvisa se manca l'IP numerico.
+        self.assertIn("if(url&&!/^https?:\/\//i.test(url))url='https://'+url;", html)
+        self.assertIn('data-act="focus-local-url"', html)
+
     def test_player_settings_show_local_link_like_stable(self):
         html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
         # Come nello stabile: oltre al dominio pubblico si vede il link locale IP:porta del Player TV.
