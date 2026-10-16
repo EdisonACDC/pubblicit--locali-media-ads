@@ -1465,12 +1465,69 @@ def parse_menu_line(line):
     return {"name": line, "price": ""}
 
 
+def menu_logo_path(menu):
+    return None if menu["logo"] == "none" else (MEDIA_DIR / menu["logo"] if menu["logo"] else MENU_DEFAULT_LOGO)
+
+
+def menu_title_size(title, width, height):
+    """Il titolo si rimpicciolisce finché non sta nella larghezza della pagina."""
+    size = max(12, min(30, int(height * 0.08)))
+    while size > 10 and len(title) * size * MENU_BOLD_CHAR_WIDTH > width - 24:
+        size -= 1
+    return size
+
+
+def menu_text_top(menu, title, width, height):
+    """Spazio sopra i piatti: margine, logo in alto e titolo, come in render_menu_frame."""
+    top = 10
+    logo = menu_logo_path(menu)
+    if logo and logo.is_file() and menu["logo_mode"] in {"top", "both"}:
+        top += max(14, int(height * 0.16)) // 2 * 2 + 4
+    if title:
+        top += int(menu_title_size(title, width, height) * 1.35) + 8
+    return top
+
+
+def expand_menu_pages(menu):
+    """Una pagina che non sta nel suo riquadro a una misura leggibile diventa più pagine con lo stesso titolo."""
+    pages = menu["pages"] or [{"title": "Menu", "text": ""}]
+    slots, result = min(3, len(pages)), pages
+    # Le pagine nuove possono cambiare la larghezza dei riquadri: si ricalcola finché il numero resta stabile.
+    for _ in range(4):
+        _, cells = menu_layout(menu["ad_percent"], slots)
+        width, height = cells[0][2], cells[0][3]
+        result = []
+        for page in pages:
+            probe = f"{page['title']} (9/9)" if page["title"] else ""
+            area = height - 12 - menu_text_top(menu, probe, width, height)
+            chunks, current = [], []
+            for line in (line for line in page["text"].splitlines() if line.strip()):
+                candidate = current + [line]
+                rows = menu_rows([parse_menu_line(item) for item in candidate], width - 24, MENU_MIN_READABLE)
+                if current and not menu_rows_fit(rows, MENU_MIN_READABLE, area):
+                    chunks.append(current)
+                    current = [line]
+                else:
+                    current = candidate
+            chunks.append(current)
+            if len(chunks) == 1:
+                result.append(page)
+                continue
+            for number, chunk in enumerate(chunks, start=1):
+                title = f"{page['title']} ({number}/{len(chunks)})" if page["title"] else ""
+                result.append({"title": title, "text": "\n".join(chunk)})
+        if min(3, len(result)) == slots:
+            break
+        slots = min(3, len(result))
+    return result
+
+
 def menu_groups(menu):
     """Pagine divise in gruppi da tre: ogni gruppo resta sullo schermo page_seconds secondi."""
     if menu["mode"] == "images" and menu["page_images"]:
         items = menu["page_images"]
     else:
-        items = menu["pages"] or [{"title": "Menu", "text": ""}]
+        items = expand_menu_pages(menu)
     return [items[index:index + 3] for index in range(0, len(items), 3)]
 
 
@@ -1526,17 +1583,31 @@ MENU_BOLD_CHAR_WIDTH = 0.66
 MENU_LINE_HEIGHT = 1.32
 
 
+# Sotto questa misura (pixel su 720) il menu non si legge dalla sala: la pagina viene divisa.
+MENU_MIN_READABLE = 12
+
+
+def menu_rows(items, width, size):
+    """Piatti con le righe già mandate a capo per una certa misura del testo."""
+    rows = []
+    for item in items:
+        bold = not item["price"]
+        price_room = (len(item["price"]) * size * MENU_BOLD_CHAR_WIDTH + size) if item["price"] else 0
+        chars = max(4, int((width - price_room) / (size * (MENU_BOLD_CHAR_WIDTH if bold else MENU_CHAR_WIDTH))))
+        rows.append((item, wrap_menu_text(item["name"], chars)))
+    return rows
+
+
+def menu_rows_fit(rows, size, height):
+    return sum(len(lines) for _, lines in rows) * size * MENU_LINE_HEIGHT <= height
+
+
 def fit_menu_items(items, width, height, max_size=22, min_size=8):
     """La dimensione più grande con cui tutti i piatti, andando a capo, stanno nella pagina."""
     rows = []
     for size in range(max_size, min_size - 1, -1):
-        rows = []
-        for item in items:
-            bold = not item["price"]
-            price_room = (len(item["price"]) * size * MENU_BOLD_CHAR_WIDTH + size) if item["price"] else 0
-            chars = max(4, int((width - price_room) / (size * (MENU_BOLD_CHAR_WIDTH if bold else MENU_CHAR_WIDTH))))
-            rows.append((item, wrap_menu_text(item["name"], chars)))
-        if sum(len(lines) for _, lines in rows) * size * MENU_LINE_HEIGHT <= height:
+        rows = menu_rows(items, width, size)
+        if menu_rows_fit(rows, size, height):
             return size, rows
     # Anche alla misura più piccola non ci sta tutto: si mostrano le righe che entrano nella pagina.
     fitted, used = [], 0
@@ -1637,7 +1708,7 @@ def render_menu_frame(menu, target, preview=False, group=0, width=1280, height=7
                 overlay(source, f"{x}+({w}-overlay_w)/2", f"{y}+({h}-overlay_h)/2",
                         f"scale={w}:{h}:force_original_aspect_ratio=decrease")
         else:
-            logo = None if menu["logo"] == "none" else (MEDIA_DIR / menu["logo"] if menu["logo"] else MENU_DEFAULT_LOGO)
+            logo = menu_logo_path(menu)
             pages = current
             for index, (x, y, w, h) in enumerate(cells):
                 page = pages[index] if index < len(pages) else {"title": "", "text": ""}
@@ -1655,9 +1726,7 @@ def render_menu_frame(menu, target, preview=False, group=0, width=1280, height=7
                     cursor += logo_height + 4
                 if page["title"]:
                     # Il titolo si rimpicciolisce finché non sta nella larghezza della pagina.
-                    title_size = max(12, min(30, int(h * 0.08)))
-                    while title_size > 10 and len(page["title"]) * title_size * MENU_BOLD_CHAR_WIDTH > w - 24:
-                        title_size -= 1
+                    title_size = menu_title_size(page["title"], w, h)
                     text(page["title"], "bold.ttf", title_size, MENU_COLORS["accent"], f"{x}+({w}-text_w)/2", str(cursor))
                     cursor += int(title_size * 1.35)
                     chain(f"drawbox=x={x + w // 4}:y={cursor}:w={w // 2}:h=2:color={MENU_COLORS['accent']}:t=fill")
@@ -1676,10 +1745,12 @@ def render_menu_frame(menu, target, preview=False, group=0, width=1280, height=7
                             text(item["price"], "bold.ttf", size, MENU_COLORS["ink"], f"{x + w - 12}-text_w", str(cursor))
                         cursor += step
         if len(groups) > 1:
-            # Indica ai clienti che altre pagine arriveranno: "1/2" nell'angolo dell'ultima pagina.
-            x, y, w, h = cells[-1]
-            text(f"{group + 1}/{len(groups)}", "bold.ttf", 14, MENU_COLORS["accent"],
-                 f"{x + w - 12}-text_w", f"{y + h - 12}-text_h")
+            # Quadratini sotto le pagine, uno per schermata: il menu continua nelle schermate successive.
+            dot, space = 8, 8
+            start = (width - (len(groups) * dot + (len(groups) - 1) * space)) // 2
+            for number in range(len(groups)):
+                color = MENU_COLORS["accent"] if number == group else MENU_COLORS["page"]
+                chain(f"drawbox=x={start + number * (dot + space)}:y={height - 10}:w={dot}:h={dot}:color={color}:t=fill")
         command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", *inputs,
                    "-filter_complex", ";".join(filters), "-map", f"[{state['label']}]",
                    "-frames:v", "1", str(Path(target).resolve())]
