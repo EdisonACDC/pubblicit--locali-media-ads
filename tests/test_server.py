@@ -993,10 +993,30 @@ class CarellasServerTest(unittest.TestCase):
         # Un orario incompleto non diventa 00:00.
         self.assertIn("&&!t.value)return;", html)
         # Le fasce sovrapposte compaiono nel Palinsesto e in "Da sistemare" prima del salvataggio.
-        self.assertIn("function slotConflicts()", html)
+        self.assertIn("function slotConflicts(slots=cfg().music.slots)", html)
         self.assertIn("slotConflicts().forEach(k=>list.push(", html)
         self.assertIn("const conf=slotConflicts(),clash=", html)
         self.assertIn("['Fasce sovrapposte: {0} e {1}','Überlappende Zeiträume: {0} und {1}']", html)
+
+    def test_slot_edits_cannot_create_overlaps(self):
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        # Ogni modifica di orari, giorni, casse o zone passa dal controllo prima di restare nella bozza.
+        self.assertIn("function keepSlotsApart(before,s,field)", html)
+        for hook in ("slotTimeChanged(t,before,s,'start')", "slotTimeChanged(t,before,s,'end')",
+                     "keepSlotsApart(before,slot,'start')", "keepSlotsApart(before,slot,'end')",
+                     "if(path.startsWith('music.slots.')&&!keepSlotsApart(before,null))",
+                     "if(path.startsWith('music.slots.'))keepSlotsApart(before,null)",
+                     "keepSlotsApart(before,null);render()},"):
+            self.assertIn(hook, html)
+        # Il controllo aspetta l'uscita dal campo orario e il nuovo blocco nasce in un orario libero.
+        self.assertIn("e.target.matches('[data-slot-start],[data-slot-end]')", html)
+        self.assertIn("if(!placeFreeSlot(s,open))", html)
+        # L'orario scelto resta: la fascia prima si accorcia, quelle dopo slittano a catena fino alla chiusura.
+        self.assertIn("function slotCloseTime(s)", html)
+        self.assertIn("o.duration_minutes=as-os;", html)
+        self.assertIn("o.start=hhmm(ae);o.duration_minutes=Math.min(slotDuration(o),close-ae);", html)
+        self.assertIn("['Fasce adattate: {0}','Angepasste Zeiträume: {0}']", html)
+        self.assertIn("['Modifica annullata: {0} e {1} si accavallerebbero. {2}',", html)
 
     def test_music_slot_is_automatically_limited_by_general_opening_hours(self):
         music = {

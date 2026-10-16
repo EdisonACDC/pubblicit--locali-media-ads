@@ -551,14 +551,19 @@ function openWindows(day){return windowsOf(cfg().music.schedule,day)}
 function slotDuration(s){return +s.duration_minutes||((toMin(s.end)-toMin(s.start)+1440)%1440)||60}
 // Con il campo orologio ancora attivo si aggiorna solo la barra: la pagina si ridisegna all'uscita dal campo.
 function timeChanged(t){if(document.activeElement===t){S.pending=true;renderSavebar();renderTop()}else render()}
+// Orario di una fascia: mentre si scrive il controllo aspetta l'uscita dal campo (gli orari a metà non contano).
+function slotTimeChanged(t,before,s,field){
+  if(document.activeElement===t){S.slotGuard=S.slotGuard&&S.slotGuard.s===s?{...S.slotGuard,field}:{before,s,field};timeChanged(t);return}
+  keepSlotsApart(before,s,field);render();
+}
 function slotIntervals(s){
   const a=toMin(s.start),b=a+slotDuration(s),out=[];
   (s.days||[]).forEach(d=>{if(b<=1440)out.push([d,a,b]);else{out.push([d,a,1440]);out.push([(d+1)%7,0,b-1440])}});
   return out;
 }
 // Stesso controllo del server (validate_music_slots): due fasce attive non possono suonare insieme sugli stessi Sonos.
-function slotConflicts(){
-  const c=cfg(),list=(c.music.slots||[]).filter(s=>s.enabled!==false),out=[];
+function slotConflicts(slots=cfg().music.slots){
+  const c=cfg(),list=(slots||[]).filter(s=>s.enabled!==false),out=[];
   const playersOf=s=>(s.players||[]).length?s.players:(c.music.players||[]);
   list.forEach((x,i)=>list.slice(i+1).forEach(y=>{
     const shared=playersOf(x).filter(p=>playersOf(y).includes(p));if(!shared.length)return;
@@ -570,6 +575,62 @@ function slotConflicts(){
 function conflictText(k){
   const long=S.lang==='de'?DAYS_LONG_DE:DAYS_LONG_IT;
   return Lf('{0} dalle {1} alle {2} su {3}. Un Sonos suona una sola musica alla volta: cambia l’orario, i giorni o le casse di una delle due.',long[k.day],hhmm(k.from),hhmm(k.to),namesOf(k.players));
+}
+function slotsSnap(){return JSON.stringify(cfg().music.slots||[])}
+// Fine dell'orario di apertura in cui inizia la fascia (la più presto tra i suoi giorni); senza orari generali è mezzanotte.
+function slotCloseTime(s){
+  const a=toMin(s.start);let close=1440;
+  if(!(cfg().music.schedule||[]).length)return close;
+  (s.days||[]).forEach(d=>{const w=openWindows(d).find(([x,y])=>a>=x&&a<y);if(w)close=Math.min(close,w[1])});
+  return close;
+}
+// Dopo ogni modifica di una fascia: l'orario scelto resta com'è e sono le altre fasce degli stessi Sonos ad adattarsi.
+// - una fascia che inizia prima finisce dove comincia quella modificata;
+// - le fasce che vengono dopo slittano in avanti a catena, con la stessa durata, fino all'orario di chiusura
+//   (l'ultima viene accorciata per finire alla chiusura).
+// Se una fascia resterebbe sotto i 15 minuti, o per giorni e casse, la modifica è annullata con la spiegazione.
+// before = slotsSnap() preso prima della modifica; field = 'start' o 'end' per gli orari, altrimenti nulla.
+function keepSlotsApart(before,s,field){
+  const prev=slotConflicts(JSON.parse(before)).length;
+  if(slotConflicts().length<=prev)return true;
+  let reason='';
+  if(s&&(field==='start'||field==='end')){
+    const fixed=new Set([s]),moved=[];
+    for(let i=0;i<50;i++){
+      const k=slotConflicts().find(k=>fixed.has(k.a)!==fixed.has(k.b));if(!k)break;
+      const anchor=fixed.has(k.a)?k.a:k.b,o=anchor===k.a?k.b:k.a;
+      const as=toMin(anchor.start),ae=as+slotDuration(anchor),os=toMin(o.start);
+      if(os<as){
+        if(as-os<15){reason=Lf('{0} resterebbe più corta di 15 minuti.',slotTitle(o));break}
+        o.duration_minutes=as-os;o.end=slotEnd(o);
+      }else{
+        const close=slotCloseTime(o);
+        if(ae>close-15){reason=Lf('{0} non ci sta più prima della chiusura delle {1}.',slotTitle(o),hhmm(close));break}
+        o.start=hhmm(ae);o.duration_minutes=Math.min(slotDuration(o),close-ae);o.end=slotEnd(o);
+      }
+      fixed.add(o);if(!moved.includes(o))moved.push(o);
+    }
+    if(!reason&&slotConflicts().length<=prev){
+      if(moved.length)toast(Lf('Fasce adattate: {0}',moved.map(o=>slotTitle(o)+' '+o.start+'–'+slotEnd(o)).join(', ')));
+      return true;
+    }
+  }
+  const k=slotConflicts().find(k=>!s||k.a===s||k.b===s)||slotConflicts()[0];
+  cfg().music.slots=JSON.parse(before);
+  toast(reason?Lf('Modifica annullata: {0}',reason):Lf('Modifica annullata: {0} e {1} si accavallerebbero. {2}',slotTitle(k.a),slotTitle(k.b),conflictText(k)),true);
+  return false;
+}
+// Nuovo blocco: primo orario libero nell'orario di apertura, senza accavallarsi con le altre fasce degli stessi Sonos.
+function placeFreeSlot(s,open){
+  const others=(cfg().music.slots||[]).filter(o=>o!==s&&o.enabled!==false);
+  const cands=[open[0],...others.map(o=>toMin(o.start)+slotDuration(o))].filter(x=>x>=open[0]&&x<open[1]).sort((a,b)=>a-b);
+  for(const c of cands){
+    const next=Math.min(open[1],...others.map(o=>toMin(o.start)).filter(x=>x>c));
+    if(next-c<15)continue;
+    s.start=hhmm(c);s.duration_minutes=Math.min(240,next-c);s.end=slotEnd(s);
+    if(!slotConflicts().some(k=>k.a===s||k.b===s))return true;
+  }
+  return false;
 }
 function slotEnd(s){return hhmm(toMin(s.start)+slotDuration(s))}
 function slotsOn(day){return (cfg().music.slots||[]).filter(s=>(s.days||[]).includes(day)).sort((a,b)=>toMin(a.start)-toMin(b.start))}
@@ -1262,7 +1323,7 @@ function optionsPop(list,current,onPick){S.popPick=onPick;return list.map(([v,l]
 function timePop(value,onPick){S.popPick=onPick;return `<label class="field"><span>${esc(L('Orario'))}</span><input type="time" step="60" class="inp time" value="${esc(value)}" data-pop-time></label><button class="btn btn-primary btn-sm" type="button" data-popok>OK</button>`}
 function ensureRow(path,def){const list=getPath(path)||[];if(!list.length){list.push(def);setPath(path,list)}return list[0]}
 function daysPop(path){
-  const cur=getPath(path)||[];S.popPick=v=>{if(v==='work')setPath(path,[0,1,2,3,4]);else if(v==='all')setPath(path,[0,1,2,3,4,5,6]);else if(v==='weekend')setPath(path,[5,6])};
+  const cur=getPath(path)||[];S.popPick=v=>{const before=slotsSnap();if(v==='work')setPath(path,[0,1,2,3,4]);else if(v==='all')setPath(path,[0,1,2,3,4,5,6]);else if(v==='weekend')setPath(path,[5,6]);if(path.startsWith('music.slots.'))keepSlotsApart(before,null)};
   return `<button class="opt" type="button" data-popv="work">${esc(L('dal lunedì al venerdì'))}</button><button class="opt" type="button" data-popv="all">${esc(L('tutti i giorni'))}</button><button class="opt" type="button" data-popv="weekend">${esc(L('nel fine settimana'))}</button><div class="chips">${days().map((d,i)=>`<button class="chip" type="button" aria-pressed="${cur.includes(i)}" data-act="toggle-day" data-path="${path}" data-v="${i}" data-stay>${d}</button>`).join('')}</div><button class="btn btn-primary btn-sm" type="button" data-popclose>OK</button>`;
 }
 function pick(btn){
@@ -1283,8 +1344,8 @@ function pick(btn){
     'open-days':()=>openPop(btn,daysPop('music.schedule.0.days')),
     'slot-src':()=>openPop(btn,optionsPop(sonosSources(slot.content_id).slice(0,60).map(f=>[f.id,f.name]),slot.content_id,v=>setSlotSource(slot,v))),
     'slot-players':()=>{S.popPick=null;openPop(btn,`${sonosAll().map(s=>`<button class="opt" type="button" data-act="toggle-list" data-path="music.slots.0.players" data-v="${esc(s.entity_id)}" data-stay aria-pressed="${(slot.players||[]).includes(s.entity_id)}">${esc(shortName(s.name))} <span>${(slot.players||[]).includes(s.entity_id)?'✓':''}</span></button>`).join('')}<button class="btn btn-primary btn-sm" type="button" data-popclose>OK</button>`)},
-    'slot-start':()=>openPop(btn,timePop(slot.start,v=>{const end=slotEnd(slot);slot.start=v;setSlotEnd(slot,end)})),
-    'slot-end':()=>openPop(btn,timePop(slotEnd(slot),v=>setSlotEnd(slot,v))),
+    'slot-start':()=>openPop(btn,timePop(slot.start,v=>{const before=slotsSnap(),end=slotEnd(slot);slot.start=v;setSlotEnd(slot,end);keepSlotsApart(before,slot,'start')})),
+    'slot-end':()=>openPop(btn,timePop(slotEnd(slot),v=>{const before=slotsSnap();setSlotEnd(slot,v);keepSlotsApart(before,slot,'end')})),
     'slot-days':()=>openPop(btn,daysPop('music.slots.0.days')),
     'slot-volume':()=>openPop(btn,optionsPop([10,15,20,25,30,35,40,50,60].map(n=>[n,String(n)]),slot.volume??25,v=>slot.volume=+v)),
   };
@@ -1297,7 +1358,9 @@ function newSlot(){
   const day=todayIdx(),open=openWindows(day)[0]||[600,840],start=hhmm(open[0]),players=(cfg().audio.players||[]).length?[...cfg().audio.players]:sonosAll().filter(s=>s.available).map(s=>s.entity_id).slice(0,2);
   const f=(S.state.sonos_favorites||[])[0];
   const s={id:newId('music'),name:f?.name||L('Nuova playlist'),title:f?.name||'',enabled:true,content_id:f?String(f.id):'',content_type:'favorite_item_id',players,volume:25,start,duration_minutes:Math.min(240,open[1]-open[0]),days:[0,1,2,3,4]};
-  if(f)setSlotSource(s,f.id);s.end=slotEnd(s);m.slots.push(s);return s;
+  if(f)setSlotSource(s,f.id);s.end=slotEnd(s);m.slots.push(s);
+  if(!placeFreeSlot(s,open))toast(L('Nessun orario libero per il nuovo blocco su questi Sonos: scegli tu orario, giorni o casse.'),true);
+  return s;
 }
 async function uploadFiles(files){
   for(const file of files){
@@ -1338,7 +1401,7 @@ const ACTIONS={
   'zone-del-yes':el=>{cfg().zones=ensureZones().filter(z=>z.id!==el.dataset.v);S.confirm=null;if(S.route==='zona')location.hash='#/zone';render()},
   'confirm-no':()=>{S.confirm=null;render()},
   'zone-audio':el=>{const z=zoneById(el.dataset.v),a=cfg().audio;if(!z)return;const on=zoneAudioOn(z);a.players=on?(a.players||[]).filter(p=>!(z.players||[]).includes(p)):[...new Set([...(a.players||[]),...(z.players||[])])];if(!S.popReturn)render();else{$('pop').querySelectorAll('[data-act="zone-audio"]').forEach(b=>{const zz=zoneById(b.dataset.v);b.setAttribute('aria-pressed',zoneAudioOn(zz));b.lastElementChild.textContent=zoneAudioOn(zz)?'✓':''});renderSavebar()}},
-  'zone-music':el=>{const z=zoneById(el.dataset.v),slots=cfg().music.slots||[];if(!z)return;if(zoneMusicSlots(z).length)slots.forEach(s=>s.players=(s.players||[]).filter(p=>!(z.players||[]).includes(p)));else if(slots.length)slots.forEach(s=>s.players=[...new Set([...(s.players||[]),...z.players])]);else{const s=newSlot();s.players=[...z.players]}render()},
+  'zone-music':el=>{const z=zoneById(el.dataset.v),slots=cfg().music.slots||[],before=slotsSnap();if(!z)return;if(zoneMusicSlots(z).length)slots.forEach(s=>s.players=(s.players||[]).filter(p=>!(z.players||[]).includes(p)));else if(slots.length)slots.forEach(s=>s.players=[...new Set([...(s.players||[]),...z.players])]);else{const s=newSlot();s.players=[...z.players]}keepSlotsApart(before,null);render()},
   'zone-spot':el=>{const z=zoneById(el.dataset.v);command('api/test/audio',{name:rt().next_spot||cfg().audio.ads?.[0],players:z.players},Lf('Spot di prova in {0}',z.name))},
   'zone-stop':async el=>{const z=zoneById(el.dataset.v);if((z.players||[]).length)await command('api/music/stop',{players:z.players},Lf('{0} fermata',z.name))},
   'zone-add-channel':el=>{const z=zoneById(el.dataset.v);const ch=ACTIONS['channel-new'](null,z.name);editZone(z.id,zz=>{zz.iptv_channels=[...(zz.iptv_channels||[]),ch.id]})},
@@ -1369,8 +1432,8 @@ const ACTIONS={
   'add-open':el=>{const m=cfg().music;m.schedule=m.schedule||[];m.schedule.push({days:[+el.dataset.v],start:'10:00',end:'23:00',enabled:true});S.sel.openHours=true;S.sel.slot=null;S.sel.rule=false;render()},
   view:el=>{S.sel.view=el.dataset.v;render()},
   'sonos-catalog':async()=>{const p=sonosAll().find(s=>s.available)?.entity_id;if(!p)return toast('Nessun Sonos raggiungibile',true);if(S.sonosRefreshing)return;S.sonosRefreshing=true;render();try{await post('api/music/refresh',{entity_id:p});S.sonosRefreshedAt=hhmm(nowMin());await load(true);toast(Lf('{0} contenuti Sonos aggiornati',sonosSources().length))}catch(e){toast(e.message,true)}finally{S.sonosRefreshing=false;render()}},
-  'toggle-day':el=>{ensureScheduleRow(el.dataset.path+'.x');const path=el.dataset.path,v=+el.dataset.v,list=[...(getPath(path)||[])],i=list.indexOf(v);i<0?list.push(v):list.splice(i,1);setPath(path,list.sort((a,b)=>a-b));if(el.dataset.stay!==undefined){el.setAttribute('aria-pressed',i<0);renderSavebar()}else render()},
-  'toggle-list':el=>{const path=el.dataset.path,v=el.dataset.v,list=[...(getPath(path)||[])],i=list.indexOf(v);i<0?list.push(v):list.splice(i,1);setPath(path,list);if(el.dataset.stay!==undefined){el.setAttribute('aria-pressed',i<0);const s=el.querySelector('span');if(s)s.textContent=i<0?'✓':'';renderSavebar()}else render()},
+  'toggle-day':el=>{ensureScheduleRow(el.dataset.path+'.x');const path=el.dataset.path,v=+el.dataset.v,list=[...(getPath(path)||[])],i=list.indexOf(v),before=slotsSnap();i<0?list.push(v):list.splice(i,1);setPath(path,list.sort((a,b)=>a-b));if(path.startsWith('music.slots.')&&!keepSlotsApart(before,null)){closePop();render();return}if(el.dataset.stay!==undefined){el.setAttribute('aria-pressed',i<0);renderSavebar()}else render()},
+  'toggle-list':el=>{const path=el.dataset.path,v=el.dataset.v,list=[...(getPath(path)||[])],i=list.indexOf(v),before=slotsSnap();i<0?list.push(v):list.splice(i,1);setPath(path,list);if(path.startsWith('music.slots.')&&!keepSlotsApart(before,null)){closePop();render();return}if(el.dataset.stay!==undefined){el.setAttribute('aria-pressed',i<0);const s=el.querySelector('span');if(s)s.textContent=i<0?'✓':'';renderSavebar()}else render()},
   'row-add':el=>{const list=getPath(el.dataset.path)||[];list.push({days:[0,1,2,3,4],start:'10:00',end:'23:00',enabled:true});setPath(el.dataset.path,list);render()},
   'row-del':el=>{const list=getPath(el.dataset.path)||[];list.splice(+el.dataset.v,1);render()},
   'ad-toggle':el=>{const a=cfg().audio;a.ads=a.ads||[];const i=a.ads.indexOf(el.dataset.v);i<0?a.ads.push(el.dataset.v):a.ads.splice(i,1);render()},
@@ -1426,8 +1489,8 @@ document.addEventListener('change',e=>{
   // Campi orologio: un orario incompleto arriva vuoto e non deve diventare 00:00.
   if((t.dataset.time||t.dataset.slotStart!==undefined||t.dataset.slotEnd!==undefined)&&!t.value)return;
   if(t.dataset.time){ensureScheduleRow(t.dataset.time);const v=normClock(t.value);setPath(t.dataset.time,v);timeChanged(t);return}
-  if(t.dataset.slotStart!==undefined){const s=cfg().music.slots[+t.dataset.slotStart],end=slotEnd(s);s.start=normClock(t.value);setSlotEnd(s,end);timeChanged(t);return}
-  if(t.dataset.slotEnd!==undefined){const s=cfg().music.slots[+t.dataset.slotEnd];setSlotEnd(s,normClock(t.value));timeChanged(t);return}
+  if(t.dataset.slotStart!==undefined){const before=slotsSnap(),s=cfg().music.slots[+t.dataset.slotStart],end=slotEnd(s);s.start=normClock(t.value);setSlotEnd(s,end);slotTimeChanged(t,before,s,'start');return}
+  if(t.dataset.slotEnd!==undefined){const before=slotsSnap(),s=cfg().music.slots[+t.dataset.slotEnd];setSlotEnd(s,normClock(t.value));slotTimeChanged(t,before,s,'end');return}
   if(t.dataset.zoneName){editZone(t.dataset.zoneName,z=>z.name=t.value.trim()||z.name);return}
   if(t.dataset.seqAdd){const ch=channelById(t.dataset.seqAdd),o=t.selectedOptions[0];if(!o?.value)return;ch.playlist=ch.playlist||[];ch.playlist.push(o.dataset.kind==='image'?{name:o.value,kind:'image',duration:12,fit:'smart',effect:'fade'}:{name:o.value,kind:'video',fit:'smart'});render();return}
   if(t.dataset.seqItem){const it=channelById(t.dataset.seqItem).playlist[+t.dataset.i];it[t.dataset.k]=t.type==='number'?Math.max(2,+t.value||12):t.value;render();return}
@@ -1447,6 +1510,7 @@ document.addEventListener('drop',e=>{
   if(drop&&e.dataTransfer.files.length){e.preventDefault();drop.classList.remove('over');uploadFiles([...e.dataTransfer.files])}
 });
 document.addEventListener('dragend',()=>{if(S.dragging){S.dragging=null;render()}});
+document.addEventListener('focusout',e=>{const g=S.slotGuard;if(g&&e.target.matches&&e.target.matches('[data-slot-start],[data-slot-end]')){S.slotGuard=null;keepSlotsApart(g.before,g.s,g.field);S.pending=true}});
 document.addEventListener('focusout',()=>setTimeout(()=>{if(S.pending&&!busy())render()},50));
 function showTip(el){const tip=$('tip'),text=el.dataset.tip;if(!text){tip.hidden=true;return}tip.textContent=text;tip.hidden=false;const r=el.getBoundingClientRect(),w=tip.offsetWidth,hh=tip.offsetHeight;tip.style.left=Math.max(8,Math.min(r.left+r.width/2-w/2,innerWidth-w-8))+'px';tip.style.top=(r.top-hh-8<8?r.bottom+8:r.top-hh-8)+'px'}
 document.addEventListener('mouseover',e=>{const el=e.target.closest?.('[data-tip]');if(el)showTip(el);else $('tip').hidden=true});
@@ -1471,7 +1535,7 @@ const DE=new Map([
 ['Offline','Offline'],['offline','offline'],['Suona','Spielt'],['In pausa','Pausiert'],['Nessun dispositivo','Kein Gerät'],['Volume','Lautstärke'],['Riprova collegamento','Verbindung erneut prüfen'],['riprova','erneut'],['Gestisci zone','Zonen verwalten'],['Nessun Sonos trovato in Home Assistant.','Keine Sonos in Home Assistant gefunden.'],
 ['Da sistemare','Zu erledigen'],['Tutto in ordine.','Alles in Ordnung.'],['Attività','Aktivität'],['Tutto il registro','Ganzes Protokoll'],['Nessuna attività','Keine Aktivität'],
 ['{0} non raggiungibile','{0} nicht erreichbar'],['Escluso dagli spot finché non torna online.','Von Spots ausgeschlossen, bis er wieder online ist.'],['Sequenza TV da inviare: {0}','TV-Sequenz senden: {0}'],['Le TV mostrano ancora la versione precedente.','Die Fernseher zeigen noch die vorherige Version.'],['Genera e invia alle TV','Erzeugen und an die TVs senden'],['Errore nel canale {0}','Fehler im Kanal {0}'],['Riprova','Erneut versuchen'],['Nessun accesso Player TV','Kein TV-Player-Zugang'],['Serve per aprire il canale dal browser della TV.','Nötig, um den Kanal im TV-Browser zu öffnen.'],['Crea accesso TV','TV-Zugang anlegen'],['La pubblicità è attiva ma non ha spot da trasmettere.','Werbung ist aktiv, aber ohne Spots.'],['Scegli gli spot','Spots auswählen'],['Nessun Sonos per gli spot','Kein Sonos für Spots'],['Attiva gli spot almeno in una zona.','Spots in mindestens einer Zone aktivieren.'],['Apri le zone','Zonen öffnen'],['Fascia fuori orario: {0}','Zeitraum außerhalb der Öffnungszeit: {0}'],['Una parte della fascia è fuori dall’orario di apertura e non suonerà.','Ein Teil des Zeitraums liegt außerhalb der Öffnungszeit und wird nicht gespielt.'],['Correggi','Korrigieren'],['Indirizzo locale da controllare','Lokale Adresse prüfen'],['Sonos e TV usano {0}: serve l’indirizzo IP numerico.','Sonos und TV verwenden {0}: nötig ist die numerische IP-Adresse.'],['Apri impostazioni','Einstellungen öffnen'],
-['Fasce sovrapposte: {0} e {1}','Überlappende Zeiträume: {0} und {1}'],['{0} dalle {1} alle {2} su {3}. Un Sonos suona una sola musica alla volta: cambia l’orario, i giorni o le casse di una delle due.','{0} von {1} bis {2} auf {3}. Ein Sonos spielt nur eine Musik gleichzeitig: Uhrzeit, Tage oder Lautsprecher eines der beiden ändern.'],['Queste fasce suonano insieme sugli stessi Sonos: finché non le correggi le modifiche non si possono salvare.','Diese Zeiträume spielen gleichzeitig auf denselben Sonos: Bis sie korrigiert sind, lassen sich die Änderungen nicht speichern.'],
+['Fasce sovrapposte: {0} e {1}','Überlappende Zeiträume: {0} und {1}'],['Fasce adattate: {0}','Angepasste Zeiträume: {0}'],['Modifica annullata: {0}','Änderung verworfen: {0}'],['{0} resterebbe più corta di 15 minuti.','{0} wäre kürzer als 15 Minuten.'],['{0} non ci sta più prima della chiusura delle {1}.','{0} passt nicht mehr vor die Schließung um {1}.'],['Modifica annullata: {0} e {1} si accavallerebbero. {2}','Änderung verworfen: {0} und {1} würden sich überschneiden. {2}'],['Nessun orario libero per il nuovo blocco su questi Sonos: scegli tu orario, giorni o casse.','Keine freie Zeit für den neuen Block auf diesen Sonos: Uhrzeit, Tage oder Lautsprecher selbst wählen.'],['{0} dalle {1} alle {2} su {3}. Un Sonos suona una sola musica alla volta: cambia l’orario, i giorni o le casse di una delle due.','{0} von {1} bis {2} auf {3}. Ein Sonos spielt nur eine Musik gleichzeitig: Uhrzeit, Tage oder Lautsprecher eines der beiden ändern.'],['Queste fasce suonano insieme sugli stessi Sonos: finché non le correggi le modifiche non si possono salvare.','Diese Zeiträume spielen gleichzeitig auf denselben Sonos: Bis sie korrigiert sind, lassen sich die Änderungen nicht speichern.'],
 ['Schermi','Bildschirme'],['Schermo principale','Hauptbildschirm'],['spot','Spot'],['Sorgente musicale','Musikquelle'],['Pronto','Bereit'],['Storico spot','Spot-Verlauf'],['Apri lo storico degli spot','Spot-Verlauf öffnen'],['Esporta CSV per Excel','CSV für Excel exportieren'],['Filtri','Filter'],['Periodo','Zeitraum'],['7 giorni','7 Tage'],['30 giorni','30 Tage'],['Questo mese','Dieser Monat'],['Personalizzato','Benutzerdefiniert'],['Dal','Vom'],['Al','Bis'],['Tutti gli spot','Alle Spots'],['Storico non disponibile','Verlauf nicht verfügbar'],['Caricamento dello storico…','Verlauf wird geladen…'],['{0} spot in onda','{0} Spots gesendet'],['{0} non riusciti','{0} fehlgeschlagen'],['{0} passaggi','{0} Ausstrahlungen'],['{0} min in onda','{0} Min. gesendet'],['{0} spot ascoltati','{0} Spots gehört'],['Trasmesso','Gesendet'],['Interrotto','Abgebrochen'],['Non riuscito','Fehlgeschlagen'],['Data e ora','Datum und Uhrzeit'],['Tipo','Art'],['Durata','Dauer'],['Esito','Ergebnis'],['Prova manuale','Manueller Test'],['Automatico','Automatisch'],['Mostra altri ({0} rimanenti)','Weitere anzeigen ({0} übrig)'],['Nessuno spot in questo periodo.','Keine Spots in diesem Zeitraum.'],['Spot in onda','Gesendete Spots'],['nel giorno scelto','am gewählten Tag'],['in {0} giorni','in {0} Tagen'],['Media al giorno','Durchschnitt pro Tag'],['limite {0} al giorno','Limit {0} pro Tag'],['Minuti in onda','Sendeminuten'],['solo spot ascoltati per intero','nur vollständig gehörte Spots'],['Trasmessi per intero','Vollständig gesendet'],['{0} interrotti · {1} non riusciti','{0} abgebrochen · {1} fehlgeschlagen'],['{0} prove manuali nel periodo','{0} manuelle Tests im Zeitraum'],['Spot in onda per giorno','Gesendete Spots pro Tag'],['Per ora del giorno','Nach Tageszeit'],['quando passano gli spot','wann die Spots laufen'],['Spot in onda per ora del giorno','Gesendete Spots nach Tageszeit'],['Per spot','Nach Spot'],['passaggi e quota','Ausstrahlungen und Anteil'],['Per zona','Nach Zone'],['dove sono stati ascoltati','wo sie gehört wurden'],['Tutti i passaggi','Alle Ausstrahlungen'],['Trasmessi','Gesendet'],['Interrotti','Abgebrochen'],['Non riusciti','Fehlgeschlagen'],['FFmpeg non trovato: serve per generare i canali TV (sul PC di prova va installato a parte).','FFmpeg nicht gefunden: wird zum Erzeugen der TV-Kanäle benötigt (auf dem Test-PC separat installieren).'],['In preparazione','Wird vorbereitet'],['Da aggiornare','Zu aktualisieren'],['Errore','Fehler'],['Da generare','Zu erzeugen'],
 ['Apri','Öffnen'],['Chiudi','Schließen'],['Modifica','Bearbeiten'],['suona','spielt'],['ferma','gestoppt'],['spot in onda','Spot läuft'],['Nessun dispositivo assegnato','Kein Gerät zugewiesen'],['Abbiamo preparato una zona per ogni Sonos. Rinominale, uniscile o assegna le TV, poi salva.','Für jeden Sonos wurde eine Zone vorbereitet. Umbenennen, zusammenlegen oder TVs zuweisen, dann speichern.'],['Conferma queste zone','Diese Zonen bestätigen'],['Premi "Nuova zona" per aggiungere un luogo del locale.','„Neue Zone“ drücken, um einen Bereich hinzuzufügen.'],['Nessuna zona: premi "Nuova zona".','Keine Zonen: „Neue Zone“ drücken.'],
 ['Nome della zona','Name der Zone'],['Sonos in questa zona','Sonos in dieser Zone'],['Nessun Sonos trovato','Keine Sonos gefunden'],['Canali TV in questa zona','TV-Kanäle in dieser Zone'],['Schermo principale (LAN/DLNA)','Hauptbildschirm (LAN/DLNA)'],['Eliminare la zona {0}? Sonos e TV non vengono toccati.','Zone {0} löschen? Sonos und TVs bleiben unverändert.'],['Elimina','Löschen'],['Elimina zona','Zone löschen'],['Zona','Zone'],['Zona {0}','Zone {0}'],['Zona non trovata.','Zone nicht gefunden.'],['Torna alle zone','Zurück zu den Zonen'],
