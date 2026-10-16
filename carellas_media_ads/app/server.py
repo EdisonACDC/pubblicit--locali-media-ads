@@ -1370,7 +1370,7 @@ MENU_FONT_BOLD_CANDIDATES = [
 ]
 # Colori del logo Carellas: verde oliva e verde scuro su carta crema.
 MENU_COLORS = {"page": "0xFBF7EE", "ink": "0x2F3A26", "accent": "0x6E7F1D", "background": "0x2F3A26"}
-MENU_PRICE = re.compile(r"^(?P<name>.*?)[\s.·…_-]*\s(?P<price>(?:€\s?)?\d{1,4}(?:[.,]\d{1,2})?(?:\s?€)?)$")
+MENU_PRICE = re.compile(r"^(?P<name>.*?)[\s.·…_|:-]*\s(?P<price>(?:€\s?)?\d{1,4}(?:[.,]\d{1,2})?(?:\s?€)?)$")
 MENU_MAX_PDF = 50 * 1024 * 1024
 # Sullo schermo stanno tre pagine alla volta; oltre, i gruppi da tre si alternano a tempo.
 MENU_MAX_PAGES = 12
@@ -1410,6 +1410,8 @@ def menu_settings(channel):
         "logo": "none" if raw.get("logo") == "none" else (safe_name(raw["logo"]) if raw.get("logo") else ""),
         # Il logo come sfondo sbiadito di ogni pagina, in alto, oppure entrambi.
         "logo_mode": raw.get("logo_mode") if raw.get("logo_mode") in {"background", "top", "both"} else "background",
+        # La pubblicità riempie tutta la larghezza (taglia sopra e sotto), oppure resta intera.
+        "ad_fit": raw.get("ad_fit") if raw.get("ad_fit") in {"cover", "smart", "contain"} else "cover",
     }
 
 
@@ -1436,6 +1438,19 @@ def menu_groups(menu):
     return [items[index:index + 3] for index in range(0, len(items), 3)]
 
 
+def menu_ad_filter(fit, width, height):
+    """Filtro della pubblicità nella parte alta: a tutta larghezza (cover), intera con lati sfocati o intera."""
+    if fit == "cover":
+        return f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},setsar=1[ad]"
+    if fit == "smart":
+        return (
+            f"[0:v]split[adbg][adfg];[adbg]scale={width}:{height}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{height},boxblur=20:2[adblur];[adfg]scale={width}:{height}:force_original_aspect_ratio=decrease[adclear];"
+            "[adblur][adclear]overlay=(W-w)/2:(H-h)/2,setsar=1[ad]"
+        )
+    return f"[0:v]scale=-2:{height},setsar=1[ad]"
+
+
 def menu_cycle_command(frames, seconds, target):
     """Video corto in cui i gruppi di pagine si alternano ogni 'seconds': poi viene ripetuto sotto la pubblicità."""
     command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
@@ -1446,6 +1461,56 @@ def menu_cycle_command(frames, seconds, target):
         "-filter_complex", f"{joined}concat=n={len(frames)}:v=1:a=0,format=yuv420p[v]", "-map", "[v]",
         "-c:v", "libx264", "-preset", "superfast", "-crf", "22", "-pix_fmt", "yuv420p", str(target),
     ]
+
+
+def wrap_menu_text(text, max_chars):
+    """Manda a capo tra le parole; una parola più lunga della riga viene spezzata."""
+    lines, current = [], ""
+    for word in str(text).split():
+        while len(word) > max_chars:
+            if current:
+                lines.append(current)
+                current = ""
+            lines.append(word[:max_chars - 1] + "-")
+            word = word[max_chars - 1:]
+        candidate = f"{current} {word}".strip()
+        if len(candidate) <= max_chars:
+            current = candidate
+        else:
+            lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return lines or [""]
+
+
+# Larghezza media di un carattere rispetto alla dimensione del font (stima prudente per DejaVu Serif).
+MENU_CHAR_WIDTH = 0.6
+MENU_BOLD_CHAR_WIDTH = 0.66
+MENU_LINE_HEIGHT = 1.32
+
+
+def fit_menu_items(items, width, height, max_size=22, min_size=8):
+    """La dimensione più grande con cui tutti i piatti, andando a capo, stanno nella pagina."""
+    rows = []
+    for size in range(max_size, min_size - 1, -1):
+        rows = []
+        for item in items:
+            bold = not item["price"]
+            price_room = (len(item["price"]) * size * MENU_BOLD_CHAR_WIDTH + size) if item["price"] else 0
+            chars = max(4, int((width - price_room) / (size * (MENU_BOLD_CHAR_WIDTH if bold else MENU_CHAR_WIDTH))))
+            rows.append((item, wrap_menu_text(item["name"], chars)))
+        if sum(len(lines) for _, lines in rows) * size * MENU_LINE_HEIGHT <= height:
+            return size, rows
+    # Anche alla misura più piccola non ci sta tutto: si mostrano le righe che entrano nella pagina.
+    fitted, used = [], 0
+    for item, lines in rows:
+        room = int(height // (min_size * MENU_LINE_HEIGHT)) - used
+        if room <= 0:
+            break
+        fitted.append((item, lines[:room]))
+        used += len(lines[:room])
+    return min_size, fitted
 
 
 def menu_layout(ad_percent, page_count, width=1280, height=720, gap=12):
@@ -1524,7 +1589,7 @@ def render_menu_frame(menu, target, preview=False, group=0, width=1280, height=7
             chain(f"drawtext=fontfile={font}:textfile={name}:expansion=none:fontsize={size}:fontcolor={color}:x={x}:y={y}")
 
         if preview:
-            ad_width = ad_height * 16 // 9
+            ad_width = width if menu["ad_fit"] in {"cover", "smart"} else ad_height * 16 // 9
             chain(f"drawbox=x={(width - ad_width) // 2}:y=0:w={ad_width}:h={ad_height}:color=0x15180F:t=fill")
             text("Pubblicità", "bold.ttf", max(18, ad_height // 8), "0xC9D3A5",
                  "(w-text_w)/2", f"{ad_height // 2}-text_h/2")
@@ -1553,27 +1618,27 @@ def render_menu_frame(menu, target, preview=False, group=0, width=1280, height=7
                             f"scale=w={w - 24}:h={logo_height}:force_original_aspect_ratio=decrease")
                     cursor += logo_height + 4
                 if page["title"]:
+                    # Il titolo si rimpicciolisce finché non sta nella larghezza della pagina.
                     title_size = max(12, min(30, int(h * 0.08)))
+                    while title_size > 10 and len(page["title"]) * title_size * MENU_BOLD_CHAR_WIDTH > w - 24:
+                        title_size -= 1
                     text(page["title"], "bold.ttf", title_size, MENU_COLORS["accent"], f"{x}+({w}-text_w)/2", str(cursor))
                     cursor += int(title_size * 1.35)
                     chain(f"drawbox=x={x + w // 4}:y={cursor}:w={w // 2}:h=2:color={MENU_COLORS['accent']}:t=fill")
                     cursor += 8
-                lines = [item for item in (parse_menu_line(line) for line in page["text"].splitlines()) if item]
-                if not lines:
+                items = [item for item in (parse_menu_line(line) for line in page["text"].splitlines()) if item]
+                if not items:
                     continue
-                available = y + h - 10 - cursor
-                size = max(9, min(22, int(available / (len(lines) * 1.45))))
-                lines = lines[:max(1, int(available / (size * 1.45)))]
-                for item in lines:
-                    price_width = int(len(item["price"]) * size * 0.6)
-                    max_chars = max(4, int((w - 24 - price_width) / (size * 0.52)))
-                    name = item["name"] if len(item["name"]) <= max_chars else item["name"][:max_chars - 1] + "…"
-                    if item["price"]:
-                        text(name, "regular.ttf", size, MENU_COLORS["ink"], str(x + 12), str(cursor))
-                        text(item["price"], "bold.ttf", size, MENU_COLORS["ink"], f"{x + w - 12}-text_w", str(cursor))
-                    else:
-                        text(name, "bold.ttf", size, MENU_COLORS["accent"], str(x + 12), str(cursor))
-                    cursor += int(size * 1.45)
+                # Righe lunghe (descrizioni, allergeni) vanno a capo e la misura si adatta alla pagina.
+                size, rows = fit_menu_items(items, w - 24, y + h - 12 - cursor)
+                step = int(size * MENU_LINE_HEIGHT)
+                for item, lines in rows:
+                    font, color = ("regular.ttf", MENU_COLORS["ink"]) if item["price"] else ("bold.ttf", MENU_COLORS["accent"])
+                    for number, line in enumerate(lines):
+                        text(line, font, size, color, str(x + 12 + (6 if number else 0)), str(cursor))
+                        if number == 0 and item["price"]:
+                            text(item["price"], "bold.ttf", size, MENU_COLORS["ink"], f"{x + w - 12}-text_w", str(cursor))
+                        cursor += step
         if len(groups) > 1:
             # Indica ai clienti che altre pagine arriveranno: "1/2" nell'angolo dell'ultima pagina.
             x, y, w, h = cells[-1]
@@ -2008,7 +2073,7 @@ class IPTVEngine:
                     "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
                     "-stream_loop", str(loops - 1), "-i", str(temporary), *menu_input,
                     "-filter_complex",
-                    f"[1:v]fps=25,format=yuv420p[menu];[0:v]scale=-2:{ad_height},setsar=1[ad];"
+                    f"[1:v]fps=25,format=yuv420p[menu];{menu_ad_filter(menu['ad_fit'], 1280, ad_height)};"
                     "[menu][ad]overlay=(W-w)/2:0:shortest=1,fps=25,format=yuv420p[v]",
                     *(["-t", f"{total:.3f}"] if total else []),
                     "-map", "[v]", "-map", "0:a:0?",
