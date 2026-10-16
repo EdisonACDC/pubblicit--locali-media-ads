@@ -9,6 +9,7 @@ import io
 import base64
 import hashlib
 import hmac
+import html
 import json
 import math
 import mimetypes
@@ -50,6 +51,15 @@ HA_API = os.environ.get("CARELLAS_HA_API", "http://supervisor/core/api")
 HA_WS = os.environ.get("CARELLAS_HA_WS", "ws://supervisor/core/websocket")
 PORT = 8100
 PLAYER_PORT = 8102
+REMOTE_PORT = 8104
+# Accesso da Internet: uscita automatica dopo un periodo senza attività e comunque dopo 12 ore.
+REMOTE_SESSION_IDLE_SECONDS = max(300, int(os.environ.get("CARELLAS_REMOTE_IDLE_MINUTES", "120")) * 60)
+REMOTE_SESSION_MAX_SECONDS = 12 * 60 * 60
+REMOTE_LOCK_SECONDS = 15 * 60
+REMOTE_MAX_FAILURES_IP = 5
+REMOTE_MAX_FAILURES_USER = 10
+REMOTE_FAIL_DELAY_SECONDS = 1.0
+REMOTE_MIN_PASSWORD = 10
 SONOS_GROUP_SETTLE_SECONDS = float(os.environ.get("CARELLAS_SONOS_GROUP_SETTLE_SECONDS", "0.6"))
 SONOS_RESTORE_SETTLE_SECONDS = float(os.environ.get("CARELLAS_SONOS_RESTORE_SETTLE_SECONDS", "0.6"))
 SONOS_RESTORE_RETRIES = max(1, int(os.environ.get("CARELLAS_SONOS_RESTORE_RETRIES", "3")))
@@ -235,6 +245,30 @@ class Store:
             item["password_hash"] = encoded
             normalized_users.append(item)
         player["users"] = normalized_users
+        remote = self.config.setdefault("remote_admin", {})
+        remote["enabled"] = remote.get("enabled") is True
+        remote["public_url"] = str(remote.get("public_url", "")).strip().rstrip("/")[:200]
+        remote_users, seen_remote = [], set()
+        for raw in remote.get("users") or []:
+            username = str(raw.get("username", "")).strip().lower()
+            if not re.fullmatch(r"[a-z0-9_.-]{3,40}", username):
+                raise RuntimeError("Nome utente per l'accesso da Internet non valido: usa 3–40 lettere, numeri, punto, trattino o underscore")
+            if username in seen_remote:
+                raise RuntimeError(f"Nome utente per l'accesso da Internet duplicato: {username}")
+            seen_remote.add(username)
+            password = str(raw.get("password", ""))
+            encoded = str(raw.get("password_hash", ""))
+            if password:
+                if len(password) < REMOTE_MIN_PASSWORD:
+                    raise RuntimeError(f"La password di {username} per l'accesso da Internet deve contenere almeno {REMOTE_MIN_PASSWORD} caratteri")
+                if username in password.lower():
+                    raise RuntimeError(f"La password di {username} non deve contenere il nome utente")
+                encoded = password_hash(password)
+            if not encoded.startswith("pbkdf2_sha256$"):
+                raise RuntimeError(f"Imposta una password per l'accesso da Internet di {username}")
+            remote_users.append({"username": username, "enabled": raw.get("enabled", True) is not False,
+                                 "password_hash": encoded})
+        remote["users"] = remote_users
         # Zone: informazione dell'interfaccia (luoghi del ristorante). Lo Scheduler non le usa.
         zones = []
         seen_zones = set()
@@ -657,6 +691,14 @@ def player_local_url():
     hostname = parsed.hostname or "homeassistant.local"
     host = f"[{hostname}]" if ":" in hostname else hostname
     return f"{parsed.scheme or 'http'}://{host}:{PLAYER_PORT}"
+
+
+def remote_local_url():
+    """Indirizzo LAN della porta per l'accesso da Internet, da collegare a Cloudflare."""
+    parsed = urllib.parse.urlsplit(local_base_url())
+    hostname = parsed.hostname or "homeassistant.local"
+    host = f"[{hostname}]" if ":" in hostname else hostname
+    return f"http://{host}:{REMOTE_PORT}"
 
 
 def player_public_url():
@@ -2905,6 +2947,8 @@ instagram = InstagramImporter()
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "CarellasMediaAds/0.4.47"
+    # Utente entrato dalla porta per l'accesso da Internet (None sulla porta locale).
+    remote_user = None
 
     def log_message(self, fmt, *args):
         return
@@ -3232,6 +3276,9 @@ class Handler(BaseHTTPRequestHandler):
                         "media_base_url": local_base_url(),
                         "player_url": player_public_url(),
                         "player_local_url": player_local_url(),
+                        "remote_local_url": remote_local_url(),
+                        "remote_port": REMOTE_PORT,
+                        "remote_user": self.remote_user,
                         "instagram": instagram.public_status(),
                         "iptv_status": iptv.runtime_status(),
                     },
@@ -3888,11 +3935,284 @@ class PlayerHandler(Handler):
             self.send_player_json({"error": "Errore del Player TV"}, 500)
 
 
+# Accesso da Internet: lo stesso pannello su una porta separata, solo dopo il login.
+REMOTE_LOCK = threading.Lock()
+REMOTE_SESSIONS = {}
+REMOTE_FAILURES = {}
+REMOTE_COOKIE = "carellas_admin"
+
+
+def remote_account(username):
+    username = str(username or "").strip().lower()
+    return next((item for item in store.config.get("remote_admin", {}).get("users", [])
+                 if item.get("username") == username and item.get("enabled", True)), None)
+
+
+def remote_password_version(account):
+    return hashlib.sha256(account["password_hash"].encode()).hexdigest()[:16]
+
+
+def remote_session_create(username):
+    """Sessione tenuta solo in memoria: il browser riceve un codice casuale, il server ne conserva l'impronta."""
+    token = secrets.token_urlsafe(32)
+    now = time.time()
+    with REMOTE_LOCK:
+        for key in [key for key, item in REMOTE_SESSIONS.items() if now - item["created"] > REMOTE_SESSION_MAX_SECONDS]:
+            REMOTE_SESSIONS.pop(key, None)
+        REMOTE_SESSIONS[hashlib.sha256(token.encode()).hexdigest()] = {
+            "username": username, "created": now, "seen": now,
+            "version": remote_password_version(remote_account(username)),
+        }
+    return token
+
+
+def remote_session_user(token):
+    if not token or not store.config.get("remote_admin", {}).get("enabled"):
+        return None
+    key, now = hashlib.sha256(str(token).encode()).hexdigest(), time.time()
+    with REMOTE_LOCK:
+        item = REMOTE_SESSIONS.get(key)
+        if not item:
+            return None
+        account = remote_account(item["username"])
+        expired = (now - item["seen"] > REMOTE_SESSION_IDLE_SECONDS
+                   or now - item["created"] > REMOTE_SESSION_MAX_SECONDS)
+        # Utente eliminato, disattivato o password cambiata: la sessione non vale più.
+        if expired or not account or not hmac.compare_digest(item["version"], remote_password_version(account)):
+            REMOTE_SESSIONS.pop(key, None)
+            return None
+        item["seen"] = now
+        return item["username"]
+
+
+def remote_session_drop(token):
+    with REMOTE_LOCK:
+        REMOTE_SESSIONS.pop(hashlib.sha256(str(token or "").encode()).hexdigest(), None)
+
+
+def remote_blocked(keys):
+    now = time.monotonic()
+    with REMOTE_LOCK:
+        blocked = False
+        for key, limit in keys:
+            recent = [stamp for stamp in REMOTE_FAILURES.get(key, []) if now - stamp < REMOTE_LOCK_SECONDS]
+            REMOTE_FAILURES[key] = recent
+            blocked = blocked or len(recent) >= limit
+        return blocked
+
+
+def remote_failed(keys):
+    with REMOTE_LOCK:
+        for key, _limit in keys:
+            REMOTE_FAILURES.setdefault(key, []).append(time.monotonic())
+
+
+def remote_login_page(error="", disabled=False, username=""):
+    de = store.config.get("language") == "de"
+    text = {
+        "title": "Anmelden" if de else "Accedi",
+        "lead": ("Zugang von außen zum Bedienfeld Carellas Media Ads." if de
+                 else "Accesso da fuori al pannello Carellas Media Ads."),
+        "user": "Benutzername" if de else "Nome utente",
+        "password": "Passwort" if de else "Password",
+        "button": "Anmelden" if de else "Entra",
+        "disabled": ("Der Zugang über das Internet ist ausgeschaltet. Schalte ihn im Bedienfeld unter Einstellungen ein."
+                     if de else "L'accesso da Internet è spento. Attivalo dal pannello in Impostazioni."),
+    }
+    if de:
+        error = {
+            "Nome utente o password errati": "Benutzername oder Passwort falsch",
+            "Troppi tentativi sbagliati. Riprova tra 15 minuti.": "Zu viele Fehlversuche. Versuche es in 15 Minuten erneut.",
+            "Richiesta non valida": "Ungültige Anfrage",
+        }.get(error, error)
+    message = f'<p class="err" role="alert">{html.escape(error)}</p>' if error else ""
+    if disabled:
+        form = f'<p class="err">{html.escape(text["disabled"])}</p>'
+    else:
+        form = f"""{message}<form method="post" action="login">
+<label>{text["user"]}<input name="username" value="{html.escape(username)}" autocomplete="username" autocapitalize="none" spellcheck="false" required maxlength="40"></label>
+<label>{text["password"]}<input name="password" type="password" autocomplete="current-password" required maxlength="200"></label>
+<button type="submit">{text["button"]}</button></form>"""
+    return f"""<!doctype html><html lang="{'de' if de else 'it'}"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex">
+<title>Carellas · {text["title"]}</title><style>
+body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#f4efe6;color:#2b2118;font:16px system-ui,sans-serif}}
+main{{width:min(380px,calc(100% - 32px));background:#fffaf2;border:1px solid #e3d6c3;border-radius:16px;padding:28px;box-shadow:0 10px 30px #0000000f}}
+h1{{margin:0 0 4px;font-size:26px}}p{{margin:0 0 18px;color:#6b5a48}}label{{display:grid;gap:6px;margin-bottom:14px;font-weight:600}}
+input{{font:inherit;padding:12px;border:1px solid #cdbba3;border-radius:10px;background:#fff}}
+button{{width:100%;font:inherit;font-weight:700;padding:13px;border:0;border-radius:10px;background:#8a3b1f;color:#fff;cursor:pointer}}
+.err{{color:#a3261b;font-weight:600}}</style></head><body><main><h1>Carellas</h1><p>{html.escape(text["lead"])}</p>{form}</main></body></html>"""
+
+
+class RemoteAdminHandler(Handler):
+    """Porta per l'accesso da Internet: il pannello completo, ma solo dopo nome utente e password."""
+
+    server_version = "CarellasRemote"
+    sys_version = ""
+
+    def send_header(self, keyword, value):
+        name = keyword.lower()
+        # Niente CORS aperto e niente cache condivise: il pannello si usa solo dal suo indirizzo.
+        if name == "access-control-allow-origin":
+            return
+        if name == "cache-control" and "public" in str(value):
+            value = str(value).replace("public", "private")
+        super().send_header(keyword, value)
+
+    def end_headers(self):
+        super().send_header("X-Frame-Options", "DENY")
+        super().send_header("X-Content-Type-Options", "nosniff")
+        super().send_header("Referrer-Policy", "same-origin")
+        super().end_headers()
+
+    def client_ip(self):
+        return PlayerHandler.client_key(self)
+
+    def cookie_value(self):
+        morsel = SimpleCookie(self.headers.get("Cookie", "")).get(REMOTE_COOKIE)
+        return morsel.value if morsel else ""
+
+    def cookie_header(self, value, max_age):
+        attributes = f"; Path=/; HttpOnly; SameSite=Strict; Max-Age={max_age}"
+        if self.headers.get("X-Forwarded-Proto", "").lower() == "https":
+            attributes += "; Secure"
+        return f"{REMOTE_COOKIE}={value}{attributes}"
+
+    def same_origin(self):
+        """Blocca i moduli inviati da altri siti (CSRF): l'origine deve essere questo indirizzo."""
+        origin = self.headers.get("Origin")
+        if origin is None:
+            return True
+        allowed = {value.strip().lower() for value in (
+            self.headers.get("Host", ""), self.headers.get("X-Forwarded-Host", ""),
+            urllib.parse.urlsplit(store.config.get("remote_admin", {}).get("public_url", "")).netloc,
+        ) if value.strip()}
+        return urllib.parse.urlsplit(origin).netloc.lower() in allowed
+
+    def send_page(self, page, status=200, cookie=None):
+        data = page.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Security-Policy",
+                         "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'")
+        if cookie:
+            self.send_header("Set-Cookie", cookie)
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(data)
+
+    def redirect(self, location, cookie=None):
+        self.send_response(303)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.send_header("Cache-Control", "no-store")
+        if cookie:
+            self.send_header("Set-Cookie", cookie)
+        self.end_headers()
+
+    def authorized(self):
+        if not store.config.get("remote_admin", {}).get("enabled"):
+            self.send_page(remote_login_page(disabled=True), 403)
+            return False
+        username = remote_session_user(self.cookie_value())
+        if username:
+            self.remote_user = username
+            return True
+        if self.command in {"GET", "HEAD"} and "/api/" not in urllib.parse.urlsplit(self.path).path:
+            self.redirect("/login")
+        else:
+            self.send_json({"error": "Accesso richiesto: entra di nuovo con nome utente e password"}, 401)
+        return False
+
+    def login(self):
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        if length > 4096:
+            self.send_page(remote_login_page("Richiesta non valida"), 400)
+            return
+        form = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8", "replace"))
+        username = str((form.get("username") or [""])[0]).strip().lower()[:40]
+        password = str((form.get("password") or [""])[0])
+        ip = self.client_ip()
+        shown = re.sub(r"[^a-z0-9_.-]", "", username) or "?"
+        keys = [(f"ip:{ip}", REMOTE_MAX_FAILURES_IP), (f"user:{username}", REMOTE_MAX_FAILURES_USER)]
+        if remote_blocked(keys):
+            self.send_page(remote_login_page("Troppi tentativi sbagliati. Riprova tra 15 minuti."), 429)
+            return
+        account = remote_account(username)
+        if not password_matches(password, account.get("password_hash") if account else DUMMY_PASSWORD_HASH):
+            remote_failed(keys)
+            store.log("warning", f"Accesso da Internet: nome utente o password errati per «{shown}» da {ip}")
+            if remote_blocked(keys):
+                store.log("warning", f"Accesso da Internet bloccato per 15 minuti: troppi tentativi da {ip} o per «{shown}»")
+            time.sleep(REMOTE_FAIL_DELAY_SECONDS)
+            self.send_page(remote_login_page("Nome utente o password errati", username=shown if shown != "?" else ""), 401)
+            return
+        with REMOTE_LOCK:
+            REMOTE_FAILURES.pop(f"ip:{ip}", None)
+            REMOTE_FAILURES.pop(f"user:{username}", None)
+        token = remote_session_create(username)
+        store.log("info", f"Accesso da Internet: {username} è entrato da {ip}")
+        self.redirect("/", cookie=self.cookie_header(token, REMOTE_SESSION_MAX_SECONDS))
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Allow", "GET, HEAD, POST, DELETE")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def do_HEAD(self):
+        self.do_GET()
+
+    def do_GET(self):
+        path = urllib.parse.urlsplit(self.path).path.rstrip("/") or "/"
+        if path == "/login":
+            if not store.config.get("remote_admin", {}).get("enabled"):
+                self.send_page(remote_login_page(disabled=True), 403)
+            elif remote_session_user(self.cookie_value()):
+                self.redirect("/")
+            else:
+                self.send_page(remote_login_page())
+            return
+        if self.authorized():
+            super().do_GET()
+
+    def do_POST(self):
+        path = urllib.parse.urlsplit(self.path).path.rstrip("/") or "/"
+        if not self.same_origin():
+            store.log("warning", f"Accesso da Internet: richiesta da un altro sito bloccata ({self.client_ip()})")
+            self.send_json({"error": "Richiesta da un altro sito bloccata"}, 403)
+            return
+        if path == "/logout":
+            remote_session_drop(self.cookie_value())
+            self.redirect("/login", cookie=self.cookie_header("", 0))
+            return
+        if path == "/login":
+            if not store.config.get("remote_admin", {}).get("enabled"):
+                self.send_page(remote_login_page(disabled=True), 403)
+                return
+            self.login()
+            return
+        if self.authorized():
+            super().do_POST()
+
+    def do_DELETE(self):
+        if not self.same_origin():
+            self.send_json({"error": "Richiesta da un altro sito bloccata"}, 403)
+            return
+        if self.authorized():
+            super().do_DELETE()
+
+
 if __name__ == "__main__":
     scheduler.start()
     player_server = ThreadingHTTPServer(("0.0.0.0", PLAYER_PORT), PlayerHandler)
     threading.Thread(target=player_server.serve_forever, name="carellas-tv-player", daemon=True).start()
     store.log("info", f"Player TV protetto pronto sulla porta {PLAYER_PORT}")
+    remote_server = ThreadingHTTPServer(("0.0.0.0", REMOTE_PORT), RemoteAdminHandler)
+    threading.Thread(target=remote_server.serve_forever, name="carellas-remote-admin", daemon=True).start()
+    store.log("info", f"Accesso da Internet pronto sulla porta {REMOTE_PORT}")
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     store.log("info", f"Interfaccia pronta sulla porta {PORT}")
     server.serve_forever()
