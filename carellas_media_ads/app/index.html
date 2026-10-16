@@ -49,6 +49,15 @@ h1,h2,h3{text-wrap:balance}
 .side a .meta{font-size:12px;color:var(--muted)}
 .side .sub a{min-height:34px;padding-left:44px;font-size:14px}
 .side .sep{height:1px;background:var(--line3);margin:12px 6px}
+.side .zone-toggle{display:flex;align-items:center;gap:10px;min-height:42px;padding:0 12px;border:0;border-radius:9px;background:none;color:var(--muted2);font:inherit;font-weight:500;cursor:pointer;text-align:left;width:100%}
+.side .zone-toggle:hover{background:var(--card);color:var(--text)}
+.side .zone-toggle.current{background:var(--chip);color:var(--title)}
+.side .zone-toggle .grow{flex:1}
+.side .zone-toggle .meta{font-size:12px;color:var(--muted)}
+.side .zone-toggle .chev{transform:rotate(180deg);transition:transform .15s}
+.side .zone-toggle[aria-expanded="true"] .chev{transform:rotate(-90deg)}
+.side .zone-list a{min-height:36px;padding-left:24px;font-size:14px}
+.side .zone-toggle:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 .side svg{flex:none}
 .dot{width:8px;height:8px;border-radius:50%;background:#6B5D50;flex:none;display:inline-block}
 .dot.on{background:var(--green)}.dot.spot{background:var(--gold)}
@@ -352,6 +361,8 @@ table.hist td.num{font-variant-numeric:tabular-nums;font-family:var(--mono);font
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const clone=o=>JSON.parse(JSON.stringify(o));
+// Tendina delle zone nel menu laterale: chiusa di serie, il browser ricorda se l'hai aperta.
+let sideZonesOpen=false;try{sideZonesOpen=localStorage.getItem('carellas.sideZones')==='1'}catch(e){}
 const S={hist:{period:'7',limit:50},state:null,draft:null,saved:'',route:'oggi',param:'',lang:'it',sel:{},confirm:null,filter:{media:'all',log:'all',q:''},expert:false,uploading:''};
 const DAYS_IT=['Lu','Ma','Me','Gi','Ve','Sa','Do'],DAYS_DE=['Mo','Di','Mi','Do','Fr','Sa','So'];
 const DAYS_LONG_IT=['Lunedì','Martedì','Mercoledì','Giovedì','Venerdì','Sabato','Domenica'];
@@ -618,14 +629,15 @@ function render(){
 function navLink(href,label,iconName,current,meta=''){return `<a href="${href}" ${current?'aria-current="page"':''}>${iconName}<span class="grow">${esc(label)}</span>${meta}</a>`}
 function renderSide(){
   const r=S.route,p=S.param;
-  const zs=zones().map(z=>{const st=zoneStatus(z);return navLink('#/zona/'+encodeURIComponent(z.id),z.name,`<span class="dot ${st}"></span>`,r==='zona'&&p===z.id,`<span class="meta ${st==='off'?'warn-text':''}">${esc(zoneMeta(z))}</span>`)}).join('');
+  const item=z=>{const st=zoneStatus(z);return navLink('#/zona/'+encodeURIComponent(z.id),z.name,`<span class="dot ${st}"></span>`,r==='zona'&&p===z.id,`<span class="meta ${st==='off'?'warn-text':''}">${esc(zoneMeta(z))}</span>`)};
+  const zs=zones().map(item).join(''),off=zones().filter(z=>zoneStatus(z)==='off').length;
+  // Con la tendina chiusa resta visibile solo la zona aperta in questo momento.
+  const curZone=r==='zona'?zones().find(z=>z.id===p):null,cur=curZone?item(curZone):'';
   $('side').innerHTML=`<div class="brand"><div class="seal">C</div>Carellas Media Ads</div>
     ${navLink('#/oggi',L('Oggi'),icon('live'),r==='oggi')}
     ${navLink('#/palinsesto',L('Palinsesto'),icon('cal'),r==='palinsesto')}
-    <div class="label cap">${esc(L('Zone'))}</div>
-    ${navLink('#/zone',L('Tutte le zone'),icon('grid'),r==='zone')}
-    ${zs}
-    <a href="#/zone" data-act="zone-new" style="color:var(--gold)">${icon('plus')}<span class="grow">${esc(L('Nuova zona'))}</span></a>
+    <button class="zone-toggle ${(r==='zone'||r==='zona')&&!sideZonesOpen?'current':''}" type="button" data-act="side-zones" aria-expanded="${sideZonesOpen}" aria-controls="side-zone-list">${icon('grid')}<span class="grow">${esc(L('Zone'))}</span><span class="meta ${off?'warn-text':''}">${off?esc(Lf('{0} offline',off)):zones().length}</span><span class="chev">${icon('left',16)}</span></button>
+    ${sideZonesOpen?`<div class="zone-list col" id="side-zone-list" style="gap:2px">${navLink('#/zone',L('Tutte le zone'),icon('grid',16),r==='zone')}${zs}<a href="#/zone" data-act="zone-new" style="color:var(--gold)">${icon('plus',16)}<span class="grow">${esc(L('Nuova zona'))}</span></a></div>`:(cur?`<div class="zone-list">${cur}</div>`:'')}
     <div class="sep"></div>
     ${navLink('#/contenuti',L('Contenuti'),icon('image'),r==='contenuti')}
     ${navLink('#/storico',L('Storico spot'),icon('chart'),r==='storico')}
@@ -1449,6 +1461,7 @@ const ACTIONS={
   'hist-more':()=>{S.hist.limit=(S.hist.limit||50)+100;render()},
   'log-filter':el=>{S.filter.log=el.dataset.v;render()},
   'tv-add-here':el=>{const bp=cfg().browser_player||(cfg().browser_player={enabled:true,public_url:'',users:[]});bp.users=bp.users||[];let n=bp.users.length+1;while(bp.users.some(u=>u.username==='tv'+n))n++;bp.users.push({username:'tv'+n,channel_id:el.dataset.v,fit:'contain',enabled:true,password:''});S.sel.setScrolled=null;location.hash='#/impostazioni/utenti';render();toast(L('Nuova TV aggiunta: scegli la password e salva'))},
+  'side-zones':()=>{sideZonesOpen=!sideZonesOpen;try{localStorage.setItem('carellas.sideZones',sideZonesOpen?'1':'0')}catch(e){}render();document.querySelector('[data-act="side-zones"]')?.focus()},
   'ev-enabled':()=>{const c=cfg(),social=c.social=c.social||{},ev=social.website_events=social.website_events||{url:'https://carellas.de',category:'events'};ev.enabled=!ev.enabled;render()},
   'ev-check':async()=>{if(isDirty()&&!(await save()))return;toast('Controllo degli eventi sul sito…');const r=await command('api/social/events/check',{});if(r)toast(r.last_error?r.last_error:Lf('Eventi sulla TV: {0}',(r.events||[]).length),!!r.last_error)},
   'ig-enabled':()=>{const c=cfg(),ig=(c.social=c.social||{}).instagram=c.social.instagram||{};ig.enabled=!ig.enabled;render()},
@@ -1546,7 +1559,7 @@ function afterRender(){
    Traduzioni tedesche (IT → DE)
    ========================================================================== */
 const DE=new Map([
-['Oggi','Heute'],['Palinsesto','Programm'],['Zone','Zonen'],['Tutte le zone','Alle Zonen'],['Nuova zona','Neue Zone'],['Contenuti','Inhalte'],['Registro','Protokoll'],['Impostazioni','Einstellungen'],['Configurazione guidata','Geführte Einrichtung'],['Altro','Mehr'],
+['{0} offline','{0} offline'],['Oggi','Heute'],['Palinsesto','Programm'],['Zone','Zonen'],['Tutte le zone','Alle Zonen'],['Nuova zona','Neue Zone'],['Contenuti','Inhalte'],['Registro','Protokoll'],['Impostazioni','Einstellungen'],['Configurazione guidata','Geführte Einrichtung'],['Altro','Mehr'],
 ['Modifiche non salvate','Ungespeicherte Änderungen'],['Modifiche salvate','Änderungen gespeichert'],['Motore attivo','Steuerung aktiv'],['Home Assistant non raggiungibile','Home Assistant nicht erreichbar'],['Home Assistant non risponde','Home Assistant antwortet nicht'],['Annulla','Abbrechen'],['Salva','Speichern'],['Modifiche annullate','Änderungen verworfen'],['Impossibile caricare il pannello','Panel kann nicht geladen werden'],['risposta non valida','ungültige Antwort'],
 ['Ora in onda','Jetzt auf Sendung'],['aperto {0}','geöffnet {0}'],['chiuso oggi','heute geschlossen'],['Pausa pubblicità 1 ora','Werbung 1 Stunde pausieren'],['Riprendi pubblicità','Werbung fortsetzen'],['Ferma tutto','Alles stoppen'],['Riproduzione attuale','Aktuelle Wiedergabe'],
 ['Vai alla sezione…','Zum Abschnitt…'],['Su quali TV va questo canale','Auf welchen TVs läuft dieser Kanal'],['Lo mostrano: {0}','Angezeigt auf: {0}'],['Nessuna TV mostra ancora questo canale.','Noch kein TV zeigt diesen Kanal.'],['Aggiungi una TV','TV hinzufügen'],['Ogni TV accede al Player con il suo utente e mostra il canale scelto qui.','Jeder TV meldet sich mit seinem Benutzer im Player an und zeigt den hier gewählten Kanal.'],['Password e accessi','Passwörter und Zugänge'],['accesso disattivato','Zugang deaktiviert'],['Canale mostrato da {0}','Kanal auf {0}'],['Nuova TV aggiunta: scegli la password e salva','Neuer TV hinzugefügt: Passwort wählen und speichern'],
