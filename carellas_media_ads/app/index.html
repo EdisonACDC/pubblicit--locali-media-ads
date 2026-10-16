@@ -47,6 +47,7 @@ h1,h2,h3{text-wrap:balance}
 .side a[aria-current="page"]{background:var(--chip);color:var(--title)}
 .side a .grow{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .side a .meta{font-size:12px;color:var(--muted)}
+.side .sub a{min-height:34px;padding-left:44px;font-size:14px}
 .side .sep{height:1px;background:var(--line3);margin:12px 6px}
 .side svg{flex:none}
 .dot{width:8px;height:8px;border-radius:50%;background:#6B5D50;flex:none;display:inline-block}
@@ -629,7 +630,8 @@ function renderSide(){
     ${navLink('#/contenuti',L('Contenuti'),icon('image'),r==='contenuti')}
     ${navLink('#/storico',L('Storico spot'),icon('chart'),r==='storico')}
     ${navLink('#/registro',L('Registro'),icon('list'),r==='registro')}
-    ${navLink('#/impostazioni',L('Impostazioni'),icon('gear'),r==='impostazioni')}
+    ${navLink('#/impostazioni',L('Impostazioni'),icon('gear'),r==='impostazioni'&&!p)}
+    ${r==='impostazioni'?`<div class="sub">${SETTINGS.map(([k,l])=>`<a href="#/impostazioni/${k}" data-set-key="${k}" ${p===k?'aria-current="page"':''}><span class="grow">${esc(L(l))}</span></a>`).join('')}</div>`:''}
     ${navLink('#/guidata/1',L('Configurazione guidata'),icon('wand'),r==='guidata')}`;
 }
 function renderTop(){
@@ -805,9 +807,18 @@ function pageZona(){
       <div class="row"><button class="btn btn-ghost" type="button" data-act="zone-spot" data-v="${esc(z.id)}" ${(z.players||[]).length&&ads.length?'':'disabled'}>${icon('play',14)}${esc(Lf('Prova spot in {0}',z.name))}</button><button class="btn btn-quiet" type="button" data-act="zone-stop" data-v="${esc(z.id)}">${esc(L('Ferma la zona'))}</button></div></div>
     ${z.virtual?`<div class="notice warn">${esc(L('Questa zona è stata proposta automaticamente.'))} <a href="#/zone">${esc(L('Conferma o modifica le zone'))}</a></div>`:''}
     <div class="grid-3">${music}${audio}${screen}</div>
+    ${ch?tvTargets(ch):''}
     ${ch?sequenceEditor(ch):''}
     <section class="card" style="padding:6px 20px"><details ${S.sel.adv===z.id?'open':''} data-adv="${esc(z.id)}"><summary style="min-height:52px;display:flex;align-items:center;gap:10px"><span class="muted">${icon('right',16)}</span><h2 style="font:600 17px var(--sans)">${esc(L('Impostazioni avanzate dei dispositivi'))}</h2><span class="small muted desktop-only">${esc(L('Wake-on-LAN, accensione e spegnimento, orari dello schermo, zona'))}</span></summary>
       <div class="col" style="padding:4px 0 18px">${ch?channelAdvanced(ch):''}${z.main_tv?mainTvSettings():''}${zoneEditor(z)}</div></details></section>`;
+}
+// Ogni TV accede al Player con il suo utente: qui si sceglie quale canale mostra.
+function tvTargets(ch){
+  const users=cfg().browser_player?.users||[],here=users.filter(u=>u.channel_id===ch.id).map(u=>u.username);
+  const rows=users.map((u,i)=>`<li class="row" style="justify-content:space-between;gap:10px"><span class="row" style="gap:8px">${icon('tv',16)}<strong>${esc(u.username)}</strong>${u.enabled===false?`<span class="tiny muted">${esc(L('accesso disattivato'))}</span>`:''}</span><select class="inp" style="width:auto;min-height:36px" data-bind="browser_player.users.${i}.channel_id" aria-label="${esc(Lf('Canale mostrato da {0}',u.username))}">${channels().map(c=>`<option value="${esc(c.id)}" ${c.id===u.channel_id?'selected':''}>${esc(c.name)}</option>`).join('')}</select></li>`).join('');
+  return `<section class="card col" style="gap:12px"><div class="card-head"><div><h2 style="font:600 17px var(--sans)">${esc(L('Su quali TV va questo canale'))}</h2><div class="small muted">${esc(here.length?Lf('Lo mostrano: {0}',here.join(', ')):L('Nessuna TV mostra ancora questo canale.'))}</div></div><button class="btn btn-ghost btn-sm" type="button" data-act="tv-add-here" data-v="${esc(ch.id)}">${icon('plus',14)}${esc(L('Aggiungi una TV'))}</button></div>
+    ${users.length?`<ul class="list" style="gap:8px">${rows}</ul>`:''}
+    <div class="small muted">${esc(L('Ogni TV accede al Player con il suo utente e mostra il canale scelto qui.'))} <a href="#/impostazioni/utenti">${esc(L('Password e accessi'))}</a></div></section>`;
 }
 function sequenceEditor(ch){
   const items=ch.playlist||[],st=channelStatus(ch),changed=st.state!=='ready'||isDirty()&&JSON.stringify(ch.playlist)!==JSON.stringify((JSON.parse(S.saved).iptv?.channels||[]).find(x=>x.id===ch.id)?.playlist);
@@ -1181,6 +1192,8 @@ function pageRegistro(){
   return `<div class="page-head"><div><div class="label">${esc(L('Attività'))}</div><h1>${esc(L('Registro'))}</h1></div><div class="chips">${[['all','Tutto'],['error','Errori e avvisi'],['spot','Spot'],['music','Musica'],['tv','TV']].map(([k,l])=>`<button class="chip" type="button" aria-pressed="${f===k}" data-act="log-filter" data-v="${k}">${esc(L(l))}${k==='error'&&errors?' '+errors:''}</button>`).join('')}</div></div>
     <section class="card"><ol class="list" style="gap:0">${rows||`<li class="empty">${esc(L('Nessuna attività'))}</li>`}</ol></section>`;
 }
+const SETTINGS=[['collegamento','Collegamento locale'],['canali','Canali TV (IPTV)'],['player','Player TV via browser'],['utenti','Utenti TV'],['schermo','Schermo principale (LAN/DLNA)'],['lingua','Lingua e interfaccia']];
+function scrollToSetting(key){const el=document.getElementById('set-'+key);if(!el)return;el.scrollIntoView({block:'start'});window.scrollBy(0,-72)}
 function pageImpostazioni(){
   const c=cfg(),r=rt(),bp=c.browser_player||(c.browser_player={enabled:true,public_url:'',users:[]});
   const base=r.media_base_url||'',numeric=/^https?:\/\/(?:\d{1,3}\.){3}\d{1,3}(:\d+)?$/.test(base),master=base+'/iptv/channels.m3u';
@@ -1188,22 +1201,22 @@ function pageImpostazioni(){
       <div class="row">${reset?`<div class="field"><label for="pw-${i}">${esc(L(u.password_hash?'Nuova password':'Password'))}</label><div class="pw-wrap"><input class="inp" id="pw-${i}" type="${S.sel.showPw?.[i]?'text':'password'}" autocomplete="new-password" minlength="6" placeholder="${esc(L('Minimo 6 caratteri'))}" value="${esc(u.password||'')}" data-bind="${p}.password" data-nore><button class="pw-eye" type="button" data-act="pw-toggle" data-v="${i}" aria-label="${esc(L(S.sel.showPw?.[i]?'Nascondi password':'Mostra password'))}" aria-pressed="${!!S.sel.showPw?.[i]}">${icon(S.sel.showPw?.[i]?'eyeoff':'eye',20)}</button></div><div class="row" style="margin-top:6px"><button class="btn btn-primary btn-sm" type="button" data-act="pw-save" data-v="${i}">${esc(L(u.password_hash?'Salva nuova password':'Salva password'))}</button>${u.password_hash?`<button class="btn btn-ghost btn-sm" type="button" data-act="pw-cancel" data-v="${i}">${esc(L('Annulla'))}</button>`:''}<span class="tiny muted">${esc(L('Minimo 6 caratteri'))}</span></div></div>`:`<div class="field"><span>${esc(L('Password'))}</span><div class="row"><span class="ok-text small">✓ ${esc(L('Password salvata e protetta'))}</span><button class="btn btn-ghost btn-sm" type="button" data-act="user-reset" data-v="${i}">${esc(L('Reimposta password'))}</button></div></div>`}<label class="field"><span>${esc(L('Adattamento schermo'))}</span><select class="inp" data-bind="${p}.fit">${opts([['contain','Video intero, senza distorsione'],['cover','Riempi 16:9, ritaglio automatico']],u.fit||'contain')}</select></label></div>
       <div class="row" style="justify-content:space-between"><label class="check"><input type="checkbox" data-bind="${p}.enabled" ${u.enabled!==false?'checked':''}> ${esc(L('Accesso attivo'))}</label>${confirm?`<div class="confirm">${esc(L('Eliminare questo utente TV?'))}<button class="btn btn-danger btn-sm" type="button" data-act="user-del-yes" data-v="${i}">${esc(L('Elimina'))}</button><button class="btn btn-ghost btn-sm" type="button" data-act="confirm-no">${esc(L('Annulla'))}</button></div>`:`<button class="btn btn-quiet btn-sm" type="button" data-act="user-del" data-v="${i}">${esc(L('Elimina utente'))}</button>`}</div></li>`}).join('');
   const chList=channels().map((ch,i)=>{const st=channelStatus(ch),confirm=S.confirm==='channel-del:'+ch.id,z=zones().find(z=>(z.iptv_channels||[]).includes(ch.id));return `<li class="box row" style="justify-content:space-between"><div style="min-width:0"><strong>${esc(ch.name)}</strong><div class="small muted">${esc(Lf('{0} elementi',(ch.playlist||[]).length))} · ${esc(statusLabel(st.state))}${z?' · '+esc(z.name):''}</div></div><div class="row">${z?`<a class="btn btn-ghost btn-sm" href="#/zona/${encodeURIComponent(z.id)}">${esc(L('Sequenza'))}</a>`:''}<button class="btn btn-ghost btn-sm" type="button" data-act="copy" data-v="${esc(base+'/iptv/'+ch.id+'.m3u')}">${esc(L('Copia M3U'))}</button>${confirm?`<span class="confirm">${esc(L('Eliminare il canale?'))}<button class="btn btn-danger btn-sm" type="button" data-act="channel-del-yes" data-v="${esc(ch.id)}">${esc(L('Elimina'))}</button><button class="btn btn-ghost btn-sm" type="button" data-act="confirm-no">${esc(L('Annulla'))}</button></span>`:`<button class="btn btn-quiet btn-sm" type="button" data-act="channel-del" data-v="${esc(ch.id)}">${esc(L('Elimina'))}</button>`}</div></li>`}).join('');
-  return `<div class="page-head"><div><div class="label">${esc(L('Impianto'))}</div><h1>${esc(L('Impostazioni'))}</h1></div><a class="btn btn-ghost" href="#/guidata/1">${icon('wand')}${esc(L('Configurazione guidata'))}</a></div>
-    <section class="card col"><h2>${esc(L('Collegamento locale'))}</h2><p class="small muted" style="margin:0">${esc(L('Sonos e TV devono poter raggiungere questo indirizzo nella rete del ristorante. Usa l’indirizzo IP numerico del mini-PC Home Assistant.'))}</p>
+  return `<div class="page-head"><div><div class="label">${esc(L('Impianto'))}</div><h1>${esc(L('Impostazioni'))}</h1></div><select class="inp" data-settings-jump style="width:auto;min-height:40px" aria-label="${esc(L('Vai alla sezione…'))}"><option value="">${esc(L('Vai alla sezione…'))}</option>${SETTINGS.map(([k,l])=>`<option value="${k}">${esc(L(l))}</option>`).join('')}</select><a class="btn btn-ghost" href="#/guidata/1">${icon('wand')}${esc(L('Configurazione guidata'))}</a></div>
+    <section class="card col" id="set-collegamento"><h2>${esc(L('Collegamento locale'))}</h2><p class="small muted" style="margin:0">${esc(L('Sonos e TV devono poter raggiungere questo indirizzo nella rete del ristorante. Usa l’indirizzo IP numerico del mini-PC Home Assistant.'))}</p>
       <label class="field"><span>${esc(L('URL contenuti multimediali'))}</span><input class="inp mono" value="${esc(c.media_base_url||'')}" placeholder="http://192.168.178.50:8099" data-bind="media_base_url"></label>
       <div class="notice ${numeric?'ok':'warn'}">${esc(numeric?L('Indirizzo utilizzato')+': '+base:Lf('Indirizzo non adatto alle TV: {0}. Inserisci un indirizzo come http://192.168.178.50:8099 e salva.',base))}</div></section>
-    <section class="card col"><div class="row" style="justify-content:space-between"><h2>${esc(L('Canali TV (IPTV)'))}</h2><button class="btn btn-ghost btn-sm" type="button" data-act="channel-new">${icon('plus',14)}${esc(L('Nuovo canale TV'))}</button></div>
+    <section class="card col" id="set-canali"><div class="row" style="justify-content:space-between"><h2>${esc(L('Canali TV (IPTV)'))}</h2><button class="btn btn-ghost btn-sm" type="button" data-act="channel-new">${icon('plus',14)}${esc(L('Nuovo canale TV'))}</button></div>
       <div class="row small"><span class="muted">${esc(L('Lista con tutti i canali'))}:</span><code class="mono">${esc(master)}</code><button class="btn-link small" type="button" data-act="copy" data-v="${esc(master)}">${esc(L('Copia'))}</button><a href="${esc(master)}" target="_blank" rel="noopener" class="small">${esc(L('Apri'))}</a></div>
       <ul class="list">${chList||`<li class="empty">${esc(L('Nessun canale TV.'))}</li>`}</ul></section>
-    <section class="card col"><h2>${esc(L('Player TV via browser'))}</h2><p class="small muted" style="margin:0">${esc(L('Apri il link nel browser della Smart TV, accedi e il canale assegnato parte a schermo intero.'))}</p>
+    <section class="card col" id="set-player"><h2>${esc(L('Player TV via browser'))}</h2><p class="small muted" style="margin:0">${esc(L('Apri il link nel browser della Smart TV, accedi e il canale assegnato parte a schermo intero.'))}</p>
       <label class="check"><input type="checkbox" data-bind="browser_player.enabled" ${bp.enabled!==false?'checked':''}> ${esc(L('Player TV protetto attivo'))}</label>
       <label class="field"><span>${esc(L('Dominio pubblico (facoltativo)'))}</span><input class="inp" value="${esc(bp.public_url||'')}" placeholder="https://tv.esempio.com" data-bind="browser_player.public_url"></label>
       <div class="notice info" style="flex-wrap:wrap;align-items:center"><span style="flex:1 1 260px"><strong>${esc(L('Link TV'))}:</strong> <span class="mono">${esc(r.player_url||'')}</span></span><button class="btn btn-ghost btn-sm" type="button" data-act="open-player">${esc(L('Apri Player TV'))}</button><button class="btn btn-ghost btn-sm" type="button" data-act="copy" data-v="${esc(r.player_url||'')}">${esc(L('Copia link'))}</button></div>
       <div class="notice warn">${esc(L('Per l’accesso da Internet esponi solo la porta 8101. La porta amministrativa 8099 deve restare privata.'))}</div>
-      <div class="row" style="justify-content:space-between"><h3 style="margin:0;font:600 16px var(--sans)">${esc(L('Utenti TV'))}</h3><button class="btn btn-ghost btn-sm" type="button" data-act="user-new" ${channels().length?'':'disabled'}>${icon('plus',14)}${esc(L('Nuovo utente TV'))}</button></div>
+      <div class="row" id="set-utenti" style="justify-content:space-between"><h3 style="margin:0;font:600 16px var(--sans)">${esc(L('Utenti TV'))}</h3><button class="btn btn-ghost btn-sm" type="button" data-act="user-new" ${channels().length?'':'disabled'}>${icon('plus',14)}${esc(L('Nuovo utente TV'))}</button></div>
       <ul class="list">${users||`<li class="empty">${esc(L(channels().length?'Nessun utente TV.':'Crea prima un canale TV.'))}</li>`}</ul></section>
-    <section class="card col"><h2>${esc(L('Schermo principale (LAN/DLNA)'))}</h2>${mainTvSettings()}</section>
-    <section class="card col"><h2>${esc(L('Lingua e interfaccia'))}</h2><div class="row"><div class="seg" role="group" aria-label="Lingua / Sprache"><button type="button" data-act="lang" data-v="it" aria-pressed="${S.lang==='it'}">Italiano</button><button type="button" data-act="lang" data-v="de" aria-pressed="${S.lang==='de'}">Deutsch</button></div><a href="classic" class="small">${esc(L('Apri l’interfaccia precedente'))}</a></div></section>`;
+    <section class="card col" id="set-schermo"><h2>${esc(L('Schermo principale (LAN/DLNA)'))}</h2>${mainTvSettings()}</section>
+    <section class="card col" id="set-lingua"><h2>${esc(L('Lingua e interfaccia'))}</h2><div class="row"><div class="seg" role="group" aria-label="Lingua / Sprache"><button type="button" data-act="lang" data-v="it" aria-pressed="${S.lang==='it'}">Italiano</button><button type="button" data-act="lang" data-v="de" aria-pressed="${S.lang==='de'}">Deutsch</button></div><a href="classic" class="small">${esc(L('Apri l’interfaccia precedente'))}</a></div></section>`;
 }
 function pageAltro(){
   const link=(href,label,ic,meta='')=>`<a href="${href}" class="card row" style="justify-content:space-between;text-decoration:none;color:var(--text);padding:16px"><span class="row">${ic}<strong>${esc(label)}</strong></span><span class="small muted">${meta}</span></a>`;
@@ -1356,6 +1369,7 @@ const ACTIONS={
   'hist-status':el=>{S.hist.status=el.dataset.v;S.hist.limit=50;render()},
   'hist-more':()=>{S.hist.limit=(S.hist.limit||50)+100;render()},
   'log-filter':el=>{S.filter.log=el.dataset.v;render()},
+  'tv-add-here':el=>{const bp=cfg().browser_player||(cfg().browser_player={enabled:true,public_url:'',users:[]});bp.users=bp.users||[];let n=bp.users.length+1;while(bp.users.some(u=>u.username==='tv'+n))n++;bp.users.push({username:'tv'+n,channel_id:el.dataset.v,fit:'contain',enabled:true,password:''});S.sel.setScrolled=null;location.hash='#/impostazioni/utenti';render();toast(L('Nuova TV aggiunta: scegli la password e salva'))},
   'user-new':()=>{const bp=cfg().browser_player;bp.users=bp.users||[];let n=bp.users.length+1;while(bp.users.some(u=>u.username==='tv'+n))n++;bp.users.push({username:'tv'+n,channel_id:channels()[0]?.id||'',fit:'contain',enabled:true,password:''});render()},
   'user-reset':el=>{S.sel.reset=+el.dataset.v;render();document.getElementById('pw-'+el.dataset.v)?.focus()},
   'pw-toggle':el=>{const i=+el.dataset.v;S.sel.showPw={...(S.sel.showPw||{}),[i]:!S.sel.showPw?.[i]};render();const f=document.getElementById('pw-'+i);if(f){f.focus();f.setSelectionRange(f.value.length,f.value.length)}},
@@ -1373,6 +1387,7 @@ const ACTIONS={
    Eventi
    ========================================================================== */
 document.addEventListener('click',e=>{
+  const sk=e.target.closest('[data-set-key]');if(sk&&location.hash==='#/impostazioni/'+sk.dataset.setKey){e.preventDefault();scrollToSetting(sk.dataset.setKey);return}
   const popv=e.target.closest('[data-popv]');if(popv){S.popPick&&S.popPick(popv.dataset.popv);closePop();return}
   if(e.target.closest('[data-popok]')){const v=$('pop').querySelector('[data-pop-time]').value;S.popPick&&S.popPick(normClock(v));closePop();return}
   if(e.target.closest('[data-popclose]')){closePop();return}
@@ -1402,6 +1417,7 @@ document.addEventListener('change',e=>{
   if(t.dataset.slotEnd!==undefined){const s=cfg().music.slots[+t.dataset.slotEnd];setSlotEnd(s,normClock(t.value));render();return}
   if(t.dataset.zoneName){editZone(t.dataset.zoneName,z=>z.name=t.value.trim()||z.name);return}
   if(t.dataset.seqAdd){const ch=channelById(t.dataset.seqAdd),o=t.selectedOptions[0];if(!o?.value)return;ch.playlist=ch.playlist||[];ch.playlist.push(o.dataset.kind==='image'?{name:o.value,kind:'image',duration:12,fit:'smart',effect:'fade'}:{name:o.value,kind:'video',fit:'smart'});render();return}
+  if(t.dataset.settingsJump!==undefined){const k=t.value;if(!k)return;S.sel.setScrolled=null;if(location.hash==='#/impostazioni/'+k)scrollToSetting(k);else location.hash='#/impostazioni/'+k;return}
   if(t.dataset.seqItem){const it=channelById(t.dataset.seqItem).playlist[+t.dataset.i];it[t.dataset.k]=t.type==='number'?Math.max(2,+t.value||12):t.value;render();return}
   if(t.dataset.collage){const it=channelById(t.dataset.collage).playlist[+t.dataset.i];it.images=it.images||[];if(t.checked){if(it.images.length>=6){t.checked=false;return toast('Massimo 6 fotografie per collage',true)}it.images.push(t.value)}else it.images=it.images.filter(x=>x!==t.value);render();return}
   if(t.dataset.hist){S.hist[t.dataset.hist]=t.value;S.hist.limit=50;render();return}
@@ -1426,7 +1442,10 @@ document.addEventListener('focusin',e=>{const el=e.target.closest?.('[data-tip]'
 window.addEventListener('scroll',()=>{$('tip').hidden=true},{passive:true});
 window.addEventListener('hashchange',()=>{parseRoute();S.confirm=null;closePop();render();$('main').focus({preventScroll:true});window.scrollTo(0,0)});
 window.addEventListener('beforeunload',e=>{if(isDirty()){e.preventDefault();e.returnValue=''}});
-function afterRender(){}
+function afterRender(){
+  // #/impostazioni/<sezione>: porta subito alla sezione, una volta per ogni indirizzo.
+  if(S.route==='impostazioni'&&S.param&&S.sel.setScrolled!==location.hash){S.sel.setScrolled=location.hash;setTimeout(()=>scrollToSetting(S.param),0)}
+}
 
 /* ==========================================================================
    Traduzioni tedesche (IT → DE)
@@ -1435,6 +1454,7 @@ const DE=new Map([
 ['Oggi','Heute'],['Palinsesto','Programm'],['Zone','Zonen'],['Tutte le zone','Alle Zonen'],['Nuova zona','Neue Zone'],['Contenuti','Inhalte'],['Registro','Protokoll'],['Impostazioni','Einstellungen'],['Configurazione guidata','Geführte Einrichtung'],['Altro','Mehr'],
 ['Modifiche non salvate','Ungespeicherte Änderungen'],['Modifiche salvate','Änderungen gespeichert'],['Motore attivo','Steuerung aktiv'],['Home Assistant non raggiungibile','Home Assistant nicht erreichbar'],['Home Assistant non risponde','Home Assistant antwortet nicht'],['Annulla','Abbrechen'],['Salva','Speichern'],['Modifiche annullate','Änderungen verworfen'],['Impossibile caricare il pannello','Panel kann nicht geladen werden'],['risposta non valida','ungültige Antwort'],
 ['Ora in onda','Jetzt auf Sendung'],['aperto {0}','geöffnet {0}'],['chiuso oggi','heute geschlossen'],['Pausa pubblicità 1 ora','Werbung 1 Stunde pausieren'],['Riprendi pubblicità','Werbung fortsetzen'],['Ferma tutto','Alles stoppen'],['Riproduzione attuale','Aktuelle Wiedergabe'],
+['Vai alla sezione…','Zum Abschnitt…'],['Su quali TV va questo canale','Auf welchen TVs läuft dieser Kanal'],['Lo mostrano: {0}','Angezeigt auf: {0}'],['Nessuna TV mostra ancora questo canale.','Noch kein TV zeigt diesen Kanal.'],['Aggiungi una TV','TV hinzufügen'],['Ogni TV accede al Player con il suo utente e mostra il canale scelto qui.','Jeder TV meldet sich mit seinem Benutzer im Player an und zeigt den hier gewählten Kanal.'],['Password e accessi','Passwörter und Zugänge'],['accesso disattivato','Zugang deaktiviert'],['Canale mostrato da {0}','Kanal auf {0}'],['Nuova TV aggiunta: scegli la password e salva','Neuer TV hinzugefügt: Passwort wählen und speichern'],
 ['Musica · in riproduzione','Musik · läuft'],['Musica · ferma','Musik · gestoppt'],['Musica in riproduzione','Musik läuft'],['avviata dall’app Sonos, fuori dal palinsesto','aus der Sonos-App gestartet, außerhalb des Programms'],['orari di apertura non impostati','Öffnungszeiten nicht festgelegt'],['Nessuna musica in onda','Keine Musik auf Sendung'],['volume','Lautstärke'],['Prossima fascia alle {0}','Nächster Zeitraum um {0}'],['Nessuna fascia musicale più tardi oggi','Heute kein weiterer Musikzeitraum'],['alle','bis'],['Avvia la musica del palinsesto','Musik laut Programm starten'],
 ['Spot in onda adesso','Spot läuft jetzt'],['Prossimo spot','Nächster Spot'],['Nessuno spot','Kein Spot'],['fino alle {0}','bis {0}'],['vol.','Lautst.'],['Riproduci ora','Jetzt abspielen'],['Salta questo','Diesen überspringen'],['Ferma lo spot','Spot stoppen'],
 ['Pubblicità automatica spenta','Automatische Werbung aus'],['Nessuno spot scelto','Kein Spot ausgewählt'],['Pubblicità in pausa','Werbung pausiert'],['Fuori dall’orario degli spot','Außerhalb der Spotzeiten'],['Limite giornaliero raggiunto','Tageslimit erreicht'],['In attesa che parta la musica','Wartet auf Musik'],
