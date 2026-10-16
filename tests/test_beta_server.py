@@ -54,6 +54,20 @@ class CarellasServerTest(unittest.TestCase):
         with urllib.request.urlopen(req) as response:
             return response.status, json.loads(response.read())
 
+    def test_channel_page_edits_channels_without_zone(self):
+        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        # Ogni canale ha la sua pagina: nome, zona, sequenza e impostazioni anche se non è in una zona.
+        self.assertIn("canale:pageCanale", html)
+        self.assertIn('data-bind="iptv.channels.${i}.name"', html)
+        self.assertIn('data-channel-zone=', html)
+        self.assertIn("if(t.dataset.channelZone!==undefined)", html)
+        # Impostazioni, configurazione guidata e Nuovo canale TV portano alla pagina del canale.
+        self.assertEqual(html.count('href="#/canale/${encodeURIComponent(ch.id)}"'), 2)
+        self.assertIn("if(el){location.hash='#/canale/'+encodeURIComponent(ch.id);render()}", html)
+        self.assertIn("['Nome e zona','Name und Zone']", html)
+        # Dal riquadro delle TV si apre il canale mostrato da ogni TV.
+        self.assertIn('href="#/canale/${encodeURIComponent(u.channel_id)}"', html)
+
     def test_state_and_ingress_path(self):
         status, payload = self.request("/api/hassio_ingress/example/api/state")
         self.assertEqual(status, 200)
