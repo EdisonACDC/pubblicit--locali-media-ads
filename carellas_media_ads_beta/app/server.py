@@ -197,6 +197,8 @@ class Store:
             music["transition_seconds"] = 3
         if self.config.get("language") not in {"it", "de"}:
             self.config["language"] = "it"
+        social = self.config.setdefault("social", {})
+        social.setdefault("instagram", {"enabled": False, "channel_id": "", "keep": 3, "interval_minutes": 15})
         player = self.config.setdefault("browser_player", {})
         player.setdefault("enabled", True)
         # Un dominio scritto senza https:// verrebbe aperto come pagina interna del pannello.
@@ -2674,6 +2676,8 @@ class Scheduler(threading.Thread):
 
     def run(self):
         store.log("info", "Motore Carellas Media Ads avviato")
+        if not instagram.is_alive():
+            instagram.start()
         while True:
             try:
                 today = datetime.now().date()
@@ -2692,6 +2696,211 @@ class Scheduler(threading.Thread):
 
 
 scheduler = Scheduler()
+
+
+# Video di Instagram sulla TV: collegamento ufficiale "Instagram API con login Instagram"
+# (profili Business o Creator). La chiave resta in un file del server e non arriva mai al pannello.
+INSTAGRAM_API = os.environ.get("CARELLAS_INSTAGRAM_API", "https://graph.instagram.com/v21.0").rstrip("/")
+INSTAGRAM_REFRESH_URL = os.environ.get("CARELLAS_INSTAGRAM_REFRESH_URL", "https://graph.instagram.com/refresh_access_token")
+INSTAGRAM_TOKEN_FILE = DATA_DIR / "instagram_token.json"
+INSTAGRAM_PREFIX = "Instagram_"
+INSTAGRAM_MAX_VIDEO = 500 * 1024 * 1024
+INSTAGRAM_REFRESH_DAYS = 20
+
+
+def instagram_settings():
+    raw = store.config.get("social", {}).get("instagram", {})
+    try:
+        keep = int(raw.get("keep", 3))
+    except (TypeError, ValueError):
+        keep = 3
+    try:
+        interval = int(raw.get("interval_minutes", 15))
+    except (TypeError, ValueError):
+        interval = 15
+    try:
+        photo_seconds = int(raw.get("photo_seconds", 10))
+    except (TypeError, ValueError):
+        photo_seconds = 10
+    return {
+        "enabled": raw.get("enabled") is True,
+        "channel_id": safe_channel_id(raw.get("channel_id", "")) if raw.get("channel_id") else "",
+        "keep": max(1, min(keep, 10)),
+        "interval_minutes": max(5, min(interval, 240)),
+        # Anche i post con foto e i caroselli (foto e video del carosello, nell'ordine del post).
+        "include_photos": raw.get("include_photos") is not False,
+        "photo_seconds": max(2, min(photo_seconds, 60)),
+    }
+
+
+class InstagramImporter(threading.Thread):
+    def __init__(self):
+        super().__init__(daemon=True, name="instagram")
+        self.lock = threading.Lock()
+        self.next_check = 0.0
+        self.state = {"last_check": "", "last_error": "", "imported": []}
+
+    # --- chiave di accesso -------------------------------------------------------
+    def token_info(self):
+        try:
+            data = json.loads(INSTAGRAM_TOKEN_FILE.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) and data.get("token") else {}
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return {}
+
+    def _write_token(self, data):
+        INSTAGRAM_TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        temporary = INSTAGRAM_TOKEN_FILE.with_suffix(".tmp")
+        temporary.write_text(json.dumps(data), encoding="utf-8")
+        os.replace(temporary, INSTAGRAM_TOKEN_FILE)
+
+    def save_token(self, token):
+        token = str(token or "").strip()
+        if not token:
+            INSTAGRAM_TOKEN_FILE.unlink(missing_ok=True)
+            store.log("info", "Collegamento Instagram rimosso")
+            return ""
+        profile = self._get(f"{INSTAGRAM_API}/me", {"fields": "user_id,username", "access_token": token})
+        username = str(profile.get("username", ""))
+        self._write_token({"token": token, "saved_at": time.time(), "username": username})
+        store.log("success", f"Instagram collegato: @{username}")
+        self.next_check = 0.0
+        return username
+
+    def _refresh_if_needed(self, info):
+        # La chiave lunga dura 60 giorni: si rinnova da sola ogni 20.
+        if time.time() - float(info.get("saved_at", 0)) < INSTAGRAM_REFRESH_DAYS * 86400:
+            return info["token"]
+        data = self._get(INSTAGRAM_REFRESH_URL, {"grant_type": "ig_refresh_token", "access_token": info["token"]})
+        token = data.get("access_token") or info["token"]
+        self._write_token({**info, "token": token, "saved_at": time.time()})
+        store.log("info", "Chiave di Instagram rinnovata")
+        return token
+
+    # --- richieste ------------------------------------------------------------------
+    @staticmethod
+    def _get(url, params):
+        request = urllib.request.Request(f"{url}?{urllib.parse.urlencode(params)}", headers={"User-Agent": "CarellasMediaAds"})
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                return json.loads(response.read() or b"{}")
+        except urllib.error.HTTPError as error:
+            try:
+                message = json.loads(error.read() or b"{}").get("error", {}).get("message", "")
+            except (ValueError, AttributeError):
+                message = ""
+            raise RuntimeError(f"Instagram ha risposto {error.code}: {message or error.reason}") from None
+        except urllib.error.URLError as error:
+            raise RuntimeError(f"Instagram non raggiungibile: {error.reason}") from None
+
+    @staticmethod
+    def _download(url, target):
+        temporary = target.with_name(f".{target.name}.download")
+        request = urllib.request.Request(url, headers={"User-Agent": "CarellasMediaAds"})
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response, temporary.open("wb") as handle:
+                size = 0
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    if size > INSTAGRAM_MAX_VIDEO:
+                        raise RuntimeError("Video di Instagram troppo grande")
+                    handle.write(chunk)
+            os.replace(temporary, target)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    # --- controllo -------------------------------------------------------------------
+    def public_status(self):
+        info = self.token_info()
+        with self.lock:
+            return {**copy.deepcopy(self.state), "token_set": bool(info), "username": info.get("username", "")}
+
+    def check(self, force=False):
+        settings = instagram_settings()
+        if not force and (not settings["enabled"] or time.time() < self.next_check):
+            return self.public_status()
+        self.next_check = time.time() + settings["interval_minutes"] * 60
+        imported = []
+        try:
+            info = self.token_info()
+            if not info:
+                raise RuntimeError("Manca la chiave di accesso di Instagram")
+            channel = iptv.channel(settings["channel_id"]) if settings["channel_id"] else None
+            if not channel:
+                raise RuntimeError("Scegli il canale TV per i video di Instagram")
+            token = self._refresh_if_needed(info)
+            data = self._get(f"{INSTAGRAM_API}/me/media", {
+                "fields": "id,media_type,media_url,timestamp,children{id,media_type,media_url}",
+                "limit": "25", "access_token": token,
+            })
+            posts = sorted(data.get("data", []), key=lambda item: str(item.get("timestamp", "")), reverse=True)
+            entries, selected = [], 0
+            for post in posts:
+                parts = (post.get("children") or {}).get("data", []) if post.get("media_type") == "CAROUSEL_ALBUM" else [post]
+                media = [part for part in parts if part.get("media_url") and part.get("media_type") in {"VIDEO", "IMAGE"}]
+                if not settings["include_photos"]:
+                    media = [part for part in media if part.get("media_type") == "VIDEO"]
+                if not media:
+                    continue
+                entries += media
+                selected += 1
+                if selected >= settings["keep"]:
+                    break
+            items = []
+            for part in entries:
+                kind = "video" if part["media_type"] == "VIDEO" else "image"
+                name = safe_name(f"{INSTAGRAM_PREFIX}{part.get('id', '')}{'.mp4' if kind == 'video' else '.jpg'}")
+                target = MEDIA_DIR / name
+                if not target.exists():
+                    self._download(part["media_url"], target)
+                    imported.append(name)
+                    store.log("success", f"Nuovo contenuto di Instagram scaricato: {name}")
+                items.append((name, kind))
+            self._update_channel(channel.get("id", ""), items, settings["photo_seconds"])
+            message = ""
+        except Exception as error:
+            message = str(error)
+            store.log("warning", f"Instagram: {message}")
+        with self.lock:
+            self.state = {
+                "last_check": now_iso(), "last_error": message,
+                "imported": (imported + self.state.get("imported", []))[:10],
+            }
+        return self.public_status()
+
+    def _update_channel(self, channel_id, items, photo_seconds=10):
+        """Nel canale restano solo gli ultimi post di Instagram, in fondo; gli altri contenuti non vengono toccati."""
+        channels = copy.deepcopy(store.config.get("iptv", {}).get("channels", []))
+        channel = next((item for item in channels if safe_channel_id(item.get("id", "")) == safe_channel_id(channel_id)), None)
+        if not channel:
+            return
+        playlist = channel.get("playlist") or []
+        others = [item for item in playlist if not str(item.get("name", "")).startswith(INSTAGRAM_PREFIX)]
+        updated = others + [
+            {"name": name, "kind": "video", "fit": "smart"} if kind == "video"
+            else {"name": name, "kind": "image", "duration": photo_seconds, "fit": "smart", "effect": "fade"}
+            for name, kind in items
+        ]
+        if updated == playlist:
+            return
+        channel["playlist"] = updated
+        store.update({"iptv": {"channels": channels}})
+        iptv.build_async(channel_id)
+        store.log("info", f"Contenuti di Instagram aggiornati nel canale {channel.get('name', channel_id)}")
+
+    def run(self):
+        while True:
+            try:
+                self.check()
+            except Exception:
+                store.log("error", traceback.format_exc(limit=2))
+            time.sleep(30)
+
+
+instagram = InstagramImporter()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -3023,6 +3232,7 @@ class Handler(BaseHTTPRequestHandler):
                         "media_base_url": local_base_url(),
                         "player_url": player_public_url(),
                         "player_local_url": player_local_url(),
+                        "instagram": instagram.public_status(),
                         "iptv_status": iptv.runtime_status(),
                     },
                     "ha_error": error,
@@ -3203,6 +3413,13 @@ class Handler(BaseHTTPRequestHandler):
                         shutil.rmtree(iptv.output(channel_id).parent, ignore_errors=True)
                         iptv.set_status(channel_id, "not_built", "Canale vuoto")
                 self.send_json({"ok": True, "config": config, "rebuilt_channels": rebuilt})
+                return
+            if path == "/api/social/instagram/token":
+                username = instagram.save_token(self.json_body().get("token", ""))
+                self.send_json({"ok": True, "username": username})
+                return
+            if path == "/api/social/instagram/check":
+                self.send_json({"ok": True, **instagram.check(force=True)})
                 return
             if path == "/api/upload/chunk":
                 self.receive_upload_chunk()
