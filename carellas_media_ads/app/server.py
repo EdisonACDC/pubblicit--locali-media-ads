@@ -189,10 +189,10 @@ class Store:
             music["transition_seconds"] = 3
         if self.config.get("language") not in {"it", "de"}:
             self.config["language"] = "it"
-        player = self.config.setdefault("browser_player", {})
-        player.setdefault("enabled", True)
         social = self.config.setdefault("social", {})
         social.setdefault("instagram", {"enabled": False, "channel_id": "", "keep": 3, "interval_minutes": 15})
+        player = self.config.setdefault("browser_player", {})
+        player.setdefault("enabled", True)
         player.setdefault("public_url", "")
         if not player.get("session_secret"):
             player["session_secret"] = secrets.token_urlsafe(48)
