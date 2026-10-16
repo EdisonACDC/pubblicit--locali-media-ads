@@ -1352,6 +1352,396 @@ def play_tv_item(item):
     store.log("success", f"Pubblicità TV avviata: {filename}")
 
 
+# Menu sullo schermo diviso: sopra gira la pubblicità del canale, sotto restano
+# fisse fino a tre pagine di menu (scritte nel pannello oppure prese da un PDF).
+MENU_FONT = os.environ.get("CARELLAS_MENU_FONT", "")
+MENU_FONT_BOLD = os.environ.get("CARELLAS_MENU_FONT_BOLD", "")
+MENU_FONT_CANDIDATES = [
+    "/usr/share/fonts/dejavu/DejaVuSerif.ttf",
+    "/usr/share/fonts/TTF/DejaVuSerif.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
+    "C:/Windows/Fonts/georgia.ttf",
+]
+MENU_FONT_BOLD_CANDIDATES = [
+    "/usr/share/fonts/dejavu/DejaVuSerif-Bold.ttf",
+    "/usr/share/fonts/TTF/DejaVuSerif-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
+    "C:/Windows/Fonts/georgiab.ttf",
+]
+# Colori del logo Carellas: verde oliva e verde scuro su carta crema.
+MENU_COLORS = {"page": "0xFBF7EE", "ink": "0x2F3A26", "accent": "0x6E7F1D", "background": "0x2F3A26"}
+MENU_PRICE = re.compile(r"^(?P<name>.*?)[\s.·…_|:-]*\s(?P<price>(?:€\s?)?\d{1,4}(?:[.,]\d{1,2})?(?:\s?€)?)$")
+MENU_MAX_PDF = 50 * 1024 * 1024
+# Sullo schermo stanno tre pagine alla volta; oltre, i gruppi da tre si alternano a tempo.
+MENU_MAX_PAGES = 12
+# Logo Carellas Ristorante (PNG trasparente) usato quando non se ne sceglie un altro.
+MENU_DEFAULT_LOGO = APP_DIR / "menu_logo.png"
+
+
+def menu_settings(channel):
+    """Impostazioni del menu di un canale, ripulite e con valori sicuri."""
+    raw = channel.get("menu") or {}
+    try:
+        ad_percent = int(raw.get("ad_percent", 60))
+    except (TypeError, ValueError):
+        ad_percent = 60
+    pages = []
+    for page in (raw.get("pages") or [])[:MENU_MAX_PAGES]:
+        if not isinstance(page, dict):
+            continue
+        title = str(page.get("title", "")).strip()[:40]
+        text = str(page.get("text", ""))[:3000]
+        if title or text.strip():
+            pages.append({"title": title, "text": text})
+    images = [safe_name(name) for name in (raw.get("page_images") or [])[:MENU_MAX_PAGES] if name]
+    try:
+        page_seconds = int(raw.get("page_seconds", 15))
+    except (TypeError, ValueError):
+        page_seconds = 15
+    return {
+        "enabled": raw.get("enabled") is True,
+        "ad_percent": max(30, min(ad_percent, 80)),
+        "mode": "images" if raw.get("mode") == "images" else "text",
+        "pages": pages,
+        "page_images": images,
+        "page_seconds": max(5, min(page_seconds, 120)),
+        "background": safe_name(raw["background"]) if raw.get("background") else "",
+        # "" = logo Carellas predefinito, "none" = nessun logo, altrimenti un'immagine della libreria.
+        "logo": "none" if raw.get("logo") == "none" else (safe_name(raw["logo"]) if raw.get("logo") else ""),
+        # Il logo come sfondo sbiadito di ogni pagina, in alto, oppure entrambi.
+        "logo_mode": raw.get("logo_mode") if raw.get("logo_mode") in {"background", "top", "both"} else "background",
+        # La pubblicità riempie tutta la larghezza (taglia sopra e sotto), oppure resta intera.
+        "ad_fit": raw.get("ad_fit") if raw.get("ad_fit") in {"cover", "smart", "contain"} else "cover",
+    }
+
+
+def parse_menu_line(line):
+    """'Bruschetta 6,50' -> piatto e prezzo; una riga senza prezzo è un sottotitolo."""
+    line = str(line).strip()
+    if not line:
+        return None
+    match = MENU_PRICE.match(line)
+    if match and match.group("name").strip():
+        price = match.group("price").strip()
+        if "€" not in price:
+            price += " €"
+        return {"name": match.group("name").strip(), "price": price}
+    return {"name": line, "price": ""}
+
+
+def menu_logo_path(menu):
+    return None if menu["logo"] == "none" else (MEDIA_DIR / menu["logo"] if menu["logo"] else MENU_DEFAULT_LOGO)
+
+
+def menu_title_size(title, width, height):
+    """Il titolo si rimpicciolisce finché non sta nella larghezza della pagina."""
+    size = max(12, min(30, int(height * 0.08)))
+    while size > 10 and len(title) * size * MENU_BOLD_CHAR_WIDTH > width - 24:
+        size -= 1
+    return size
+
+
+def menu_text_top(menu, title, width, height):
+    """Spazio sopra i piatti: margine, logo in alto e titolo, come in render_menu_frame."""
+    top = 10
+    logo = menu_logo_path(menu)
+    if logo and logo.is_file() and menu["logo_mode"] in {"top", "both"}:
+        top += max(14, int(height * 0.16)) // 2 * 2 + 4
+    if title:
+        top += int(menu_title_size(title, width, height) * 1.35) + 8
+    return top
+
+
+def expand_menu_pages(menu):
+    """Una pagina che non sta nel suo riquadro a una misura leggibile diventa più pagine con lo stesso titolo."""
+    pages = menu["pages"] or [{"title": "Menu", "text": ""}]
+    slots, result = min(3, len(pages)), pages
+    # Le pagine nuove possono cambiare la larghezza dei riquadri: si ricalcola finché il numero resta stabile.
+    for _ in range(4):
+        _, cells = menu_layout(menu["ad_percent"], slots)
+        width, height = cells[0][2], cells[0][3]
+        result = []
+        for page in pages:
+            area = height - 12 - menu_text_top(menu, page["title"], width, height)
+            chunks, current = [], []
+            for line in (line for line in page["text"].splitlines() if line.strip()):
+                candidate = current + [line]
+                rows = menu_rows([parse_menu_line(item) for item in candidate], width - 24, MENU_MIN_READABLE)
+                if current and not menu_rows_fit(rows, MENU_MIN_READABLE, area):
+                    chunks.append(current)
+                    current = [line]
+                else:
+                    current = candidate
+            chunks.append(current)
+            if len(chunks) == 1:
+                result.append(page)
+                continue
+            # Le parti hanno lo stesso titolo, senza numeri: il menu continua nella pagina accanto.
+            for chunk in chunks:
+                result.append({"title": page["title"], "text": "\n".join(chunk)})
+        if min(3, len(result)) == slots:
+            break
+        slots = min(3, len(result))
+    return result
+
+
+def menu_groups(menu):
+    """Pagine divise in gruppi da tre: ogni gruppo resta sullo schermo page_seconds secondi."""
+    if menu["mode"] == "images" and menu["page_images"]:
+        items = menu["page_images"]
+    else:
+        items = expand_menu_pages(menu)
+    return [items[index:index + 3] for index in range(0, len(items), 3)]
+
+
+def menu_ad_filter(fit, width, height):
+    """Filtro della pubblicità nella parte alta: a tutta larghezza (cover), intera con lati sfocati o intera."""
+    if fit == "cover":
+        return f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},setsar=1[ad]"
+    if fit == "smart":
+        return (
+            f"[0:v]split[adbg][adfg];[adbg]scale={width}:{height}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{height},boxblur=20:2[adblur];[adfg]scale={width}:{height}:force_original_aspect_ratio=decrease[adclear];"
+            "[adblur][adclear]overlay=(W-w)/2:(H-h)/2,setsar=1[ad]"
+        )
+    return f"[0:v]scale=-2:{height},setsar=1[ad]"
+
+
+def menu_cycle_command(frames, seconds, target):
+    """Video corto in cui i gruppi di pagine si alternano ogni 'seconds': poi viene ripetuto sotto la pubblicità."""
+    command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
+    for frame in frames:
+        command += ["-loop", "1", "-framerate", "25", "-t", str(seconds), "-i", str(frame)]
+    joined = "".join(f"[{index}:v]" for index in range(len(frames)))
+    return command + [
+        "-filter_complex", f"{joined}concat=n={len(frames)}:v=1:a=0,format=yuv420p[v]", "-map", "[v]",
+        "-c:v", "libx264", "-preset", "superfast", "-crf", "22", "-pix_fmt", "yuv420p", str(target),
+    ]
+
+
+def wrap_menu_text(text, max_chars):
+    """Manda a capo tra le parole; una parola più lunga della riga viene spezzata."""
+    lines, current = [], ""
+    for word in str(text).split():
+        while len(word) > max_chars:
+            if current:
+                lines.append(current)
+                current = ""
+            lines.append(word[:max_chars - 1] + "-")
+            word = word[max_chars - 1:]
+        candidate = f"{current} {word}".strip()
+        if len(candidate) <= max_chars:
+            current = candidate
+        else:
+            lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return lines or [""]
+
+
+# Larghezza media di un carattere rispetto alla dimensione del font (stima prudente per DejaVu Serif).
+MENU_CHAR_WIDTH = 0.6
+MENU_BOLD_CHAR_WIDTH = 0.66
+MENU_LINE_HEIGHT = 1.32
+
+
+# Sotto questa misura (pixel su 720) il menu non si legge dalla sala: la pagina viene divisa.
+MENU_MIN_READABLE = 12
+
+
+def menu_rows(items, width, size):
+    """Piatti con le righe già mandate a capo per una certa misura del testo."""
+    rows = []
+    for item in items:
+        bold = not item["price"]
+        price_room = (len(item["price"]) * size * MENU_BOLD_CHAR_WIDTH + size) if item["price"] else 0
+        chars = max(4, int((width - price_room) / (size * (MENU_BOLD_CHAR_WIDTH if bold else MENU_CHAR_WIDTH))))
+        rows.append((item, wrap_menu_text(item["name"], chars)))
+    return rows
+
+
+def menu_rows_fit(rows, size, height):
+    return sum(len(lines) for _, lines in rows) * size * MENU_LINE_HEIGHT <= height
+
+
+def fit_menu_items(items, width, height, max_size=22, min_size=8):
+    """La dimensione più grande con cui tutti i piatti, andando a capo, stanno nella pagina."""
+    rows = []
+    for size in range(max_size, min_size - 1, -1):
+        rows = menu_rows(items, width, size)
+        if menu_rows_fit(rows, size, height):
+            return size, rows
+    # Anche alla misura più piccola non ci sta tutto: si mostrano le righe che entrano nella pagina.
+    fitted, used = [], 0
+    for item, lines in rows:
+        room = int(height // (min_size * MENU_LINE_HEIGHT)) - used
+        if room <= 0:
+            break
+        fitted.append((item, lines[:room]))
+        used += len(lines[:room])
+    return min_size, fitted
+
+
+def menu_layout(ad_percent, page_count, width=1280, height=720, gap=12):
+    """Altezza della pubblicità e riquadri delle pagine affiancate nella parte bassa."""
+    ad_height = int(round(height * ad_percent / 100 / 2)) * 2
+    top = ad_height + gap
+    page_height = height - top - gap
+    count = max(1, min(int(page_count), 3))
+    page_width = (width - gap * (count + 1)) // count
+    return ad_height, [(gap + index * (page_width + gap), top, page_width, page_height) for index in range(count)]
+
+
+def menu_fonts():
+    def first(preferred, candidates):
+        for candidate in ([preferred] if preferred else []) + candidates:
+            if candidate and Path(candidate).is_file():
+                return Path(candidate)
+        return None
+    regular = first(MENU_FONT, MENU_FONT_CANDIDATES)
+    bold = first(MENU_FONT_BOLD, MENU_FONT_BOLD_CANDIDATES) or regular
+    if not regular:
+        raise RuntimeError("Font per il menu non trovato: installa font-dejavu o imposta CARELLAS_MENU_FONT")
+    return regular, bold
+
+
+def render_menu_frame(menu, target, preview=False, group=0, width=1280, height=720):
+    """Disegna lo sfondo 1280x720 con un gruppo di pagine del menu; la pubblicità viene sovrapposta in alto."""
+    work = Path(target).parent / f".menu-{uuid.uuid4().hex[:8]}"
+    work.mkdir(parents=True, exist_ok=True)
+    try:
+        regular, bold = menu_fonts()
+        # Font e testi stanno nella cartella di lavoro: niente percorsi da proteggere nei filtri FFmpeg.
+        shutil.copyfile(regular, work / "regular.ttf")
+        shutil.copyfile(bold, work / "bold.ttf")
+        images_mode = menu["mode"] == "images" and menu["page_images"]
+        groups = menu_groups(menu)
+        group = max(0, min(int(group), len(groups) - 1))
+        current = groups[group]
+        # Stessa larghezza delle pagine in tutti i gruppi; un gruppo incompleto resta centrato.
+        ad_height, cells = menu_layout(menu["ad_percent"], len(groups[0]), width, height)
+        if len(current) < len(cells):
+            step = cells[1][0] - cells[0][0]
+            shift = (len(cells) - len(current)) * step // 2
+            cells = [(x + shift, y, w, h) for x, y, w, h in cells[:len(current)]]
+        inputs, filters = [], []
+        background = MEDIA_DIR / menu["background"] if menu["background"] else None
+        if background and background.is_file():
+            inputs += ["-loop", "1", "-i", str(background)]
+            filters.append(
+                f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},"
+                "boxblur=10:2,eq=brightness=-0.18,format=rgba[s0]"
+            )
+        else:
+            inputs += ["-f", "lavfi", "-i", f"color=c={MENU_COLORS['background']}:s={width}x{height}"]
+            filters.append("[0:v]format=rgba[s0]")
+        state = {"label": "s0", "inputs": 1, "texts": 0}
+
+        def chain(expression):
+            new = f"s{len(filters)}"
+            filters.append(f"[{state['label']}]{expression}[{new}]")
+            state["label"] = new
+
+        def overlay(source, x, y, scale):
+            index = state["inputs"]
+            state["inputs"] += 1
+            inputs.extend(["-i", str(source)])
+            filters.append(f"[{index}:v]{scale},format=rgba[i{index}]")
+            new = f"s{len(filters)}"
+            filters.append(f"[{state['label']}][i{index}]overlay=x={x}:y={y}:format=rgb[{new}]")
+            state["label"] = new
+
+        def text(value, font, size, color, x, y):
+            state["texts"] += 1
+            name = f"t{state['texts']}.txt"
+            (work / name).write_text(value, encoding="utf-8")
+            chain(f"drawtext=fontfile={font}:textfile={name}:expansion=none:fontsize={size}:fontcolor={color}:x={x}:y={y}")
+
+        if preview:
+            ad_width = width if menu["ad_fit"] in {"cover", "smart"} else ad_height * 16 // 9
+            chain(f"drawbox=x={(width - ad_width) // 2}:y=0:w={ad_width}:h={ad_height}:color=0x15180F:t=fill")
+            text("Pubblicità", "bold.ttf", max(18, ad_height // 8), "0xC9D3A5",
+                 "(w-text_w)/2", f"{ad_height // 2}-text_h/2")
+        if images_mode:
+            for name, (x, y, w, h) in zip(current, cells):
+                source = MEDIA_DIR / name
+                if not source.is_file():
+                    raise RuntimeError(f"Pagina del menu non trovata: {name}")
+                overlay(source, f"{x}+({w}-overlay_w)/2", f"{y}+({h}-overlay_h)/2",
+                        f"scale={w}:{h}:force_original_aspect_ratio=decrease")
+        else:
+            logo = menu_logo_path(menu)
+            pages = current
+            for index, (x, y, w, h) in enumerate(cells):
+                page = pages[index] if index < len(pages) else {"title": "", "text": ""}
+                chain(f"drawbox=x={x}:y={y}:w={w}:h={h}:color={MENU_COLORS['page']}:t=fill")
+                chain(f"drawbox=x={x + 4}:y={y + 4}:w={w - 8}:h={h - 8}:color={MENU_COLORS['accent']}:t=2")
+                cursor = y + 10
+                if logo and logo.is_file() and menu["logo_mode"] in {"background", "both"}:
+                    overlay(logo, f"{x}+({w}-overlay_w)/2", f"{y}+({h}-overlay_h)/2",
+                            f"scale=w={int(w * 0.82)}:h={int(h * 0.82)}:force_original_aspect_ratio=decrease,"
+                            "format=rgba,colorchannelmixer=aa=0.13")
+                if logo and logo.is_file() and menu["logo_mode"] in {"top", "both"}:
+                    logo_height = max(14, int(h * 0.16)) // 2 * 2
+                    overlay(logo, f"{x}+({w}-overlay_w)/2", str(cursor),
+                            f"scale=w={w - 24}:h={logo_height}:force_original_aspect_ratio=decrease")
+                    cursor += logo_height + 4
+                if page["title"]:
+                    # Il titolo si rimpicciolisce finché non sta nella larghezza della pagina.
+                    title_size = menu_title_size(page["title"], w, h)
+                    text(page["title"], "bold.ttf", title_size, MENU_COLORS["accent"], f"{x}+({w}-text_w)/2", str(cursor))
+                    cursor += int(title_size * 1.35)
+                    chain(f"drawbox=x={x + w // 4}:y={cursor}:w={w // 2}:h=2:color={MENU_COLORS['accent']}:t=fill")
+                    cursor += 8
+                items = [item for item in (parse_menu_line(line) for line in page["text"].splitlines()) if item]
+                if not items:
+                    continue
+                # Righe lunghe (descrizioni, allergeni) vanno a capo e la misura si adatta alla pagina.
+                size, rows = fit_menu_items(items, w - 24, y + h - 12 - cursor)
+                step = int(size * MENU_LINE_HEIGHT)
+                for item, lines in rows:
+                    font, color = ("regular.ttf", MENU_COLORS["ink"]) if item["price"] else ("bold.ttf", MENU_COLORS["accent"])
+                    for number, line in enumerate(lines):
+                        text(line, font, size, color, str(x + 12 + (6 if number else 0)), str(cursor))
+                        if number == 0 and item["price"]:
+                            text(item["price"], "bold.ttf", size, MENU_COLORS["ink"], f"{x + w - 12}-text_w", str(cursor))
+                        cursor += step
+        if len(groups) > 1:
+            # Quadratini sotto le pagine, uno per schermata: il menu continua nelle schermate successive.
+            dot, space = 8, 8
+            start = (width - (len(groups) * dot + (len(groups) - 1) * space)) // 2
+            for number in range(len(groups)):
+                color = MENU_COLORS["accent"] if number == group else MENU_COLORS["page"]
+                chain(f"drawbox=x={start + number * (dot + space)}:y={height - 10}:w={dot}:h={dot}:color={color}:t=fill")
+        command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", *inputs,
+                   "-filter_complex", ";".join(filters), "-map", f"[{state['label']}]",
+                   "-frames:v", "1", str(Path(target).resolve())]
+        subprocess.run(command, check=True, cwd=work, timeout=120)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def convert_menu_pdf(pdf_path, stem):
+    """Trasforma le pagine di un PDF (al massimo MENU_MAX_PAGES) in immagini PNG nella libreria."""
+    if not shutil.which("pdftoppm"):
+        raise RuntimeError("Conversione PDF non disponibile: manca pdftoppm (poppler-utils)")
+    output = Path(pdf_path).parent / "pagina"
+    subprocess.run(["pdftoppm", "-png", "-r", "110", "-f", "1", "-l", str(MENU_MAX_PAGES), str(pdf_path), str(output)],
+                   check=True, timeout=120)
+    pages = sorted(Path(pdf_path).parent.glob("pagina-*.png"), key=lambda item: int(item.stem.rsplit("-", 1)[1]))
+    if not pages:
+        raise RuntimeError("Il PDF non contiene pagine leggibili")
+    names = []
+    for number, page in enumerate(pages[:MENU_MAX_PAGES], start=1):
+        target = MEDIA_DIR / safe_name(f"{stem}_pagina_{number}.png")
+        if target.exists():
+            target = MEDIA_DIR / f"{target.stem}-{uuid.uuid4().hex[:6]}.png"
+        shutil.move(str(page), target)
+        names.append(target.name)
+    return names
+
+
 class IPTVEngine:
     BUILD_FORMAT_VERSION = 5
 
@@ -1392,6 +1782,8 @@ class IPTVEngine:
             "format_version": self.BUILD_FORMAT_VERSION,
             "playlist": channel.get("playlist") or [],
         }
+        if (channel.get("menu") or {}).get("enabled"):
+            payload["menu"] = menu_settings(channel)
         encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
@@ -1726,6 +2118,41 @@ class IPTVEngine:
                 "-map", "0:v:0", "-map", "0:a:0?", "-c", "copy",
                 "-avoid_negative_ts", "make_zero", "-movflags", "+faststart", str(temporary),
             ], check=True, timeout=600)
+            menu = menu_settings(channel)
+            if menu["enabled"]:
+                self.set_status(channel_id, "building", "Composizione dello schermo con il menu")
+                frames = []
+                for group in range(len(menu_groups(menu))):
+                    frame = work / f"menu-frame-{group + 1}.png"
+                    render_menu_frame(menu, frame, group=group)
+                    frames.append(frame)
+                ad_height = menu_layout(menu["ad_percent"], 1)[0]
+                composed = work / "channel.menu.tmp.mp4"
+                if len(frames) == 1:
+                    loops, menu_input = 1, ["-loop", "1", "-i", str(frames[0])]
+                    total = None
+                else:
+                    # La pubblicità si ripete finché tutti i gruppi di pagine sono passati almeno una volta.
+                    ads_duration = max(1.0, self._probe_duration(temporary))
+                    loops = max(1, math.ceil(len(frames) * menu["page_seconds"] / ads_duration))
+                    total = ads_duration * loops
+                    cycle = work / "menu-cycle.mp4"
+                    subprocess.run(menu_cycle_command(frames, menu["page_seconds"], cycle), check=True, timeout=600)
+                    menu_input = ["-stream_loop", "-1", "-i", str(cycle)]
+                subprocess.run([
+                    "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                    "-stream_loop", str(loops - 1), "-i", str(temporary), *menu_input,
+                    "-filter_complex",
+                    f"[1:v]fps=25,format=yuv420p[menu];{menu_ad_filter(menu['ad_fit'], 1280, ad_height)};"
+                    "[menu][ad]overlay=(W-w)/2:0:shortest=1,fps=25,format=yuv420p[v]",
+                    *(["-t", f"{total:.3f}"] if total else []),
+                    "-map", "[v]", "-map", "0:a:0?",
+                    "-c:v", "libx264", "-preset", "superfast", "-crf", "22",
+                    "-profile:v", "high", "-level", "4.0", "-g", "50", "-keyint_min", "50",
+                    "-sc_threshold", "0", "-pix_fmt", "yuv420p", "-c:a", "copy",
+                    "-movflags", "+faststart", str(composed),
+                ], check=True, timeout=1800)
+                os.replace(composed, temporary)
             probe = subprocess.run([
                 "ffprobe", "-v", "error", "-select_streams", "v:0",
                 "-show_entries", "stream=codec_name", "-of", "default=nw=1:nk=1",
@@ -2743,6 +3170,41 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path == "/api/upload/chunk":
                 self.receive_upload_chunk()
+                return
+            if path == "/api/menu/preview":
+                menu = menu_settings({"menu": self.json_body().get("menu") or {}})
+                preview_dir = IPTV_DIR / "menu-preview"
+                preview_dir.mkdir(parents=True, exist_ok=True)
+                images = []
+                for group in range(len(menu_groups(menu))):
+                    target = preview_dir / f"{uuid.uuid4().hex}.png"
+                    try:
+                        render_menu_frame(menu, target, preview=True, group=group)
+                        images.append("data:image/png;base64," + base64.b64encode(target.read_bytes()).decode("ascii"))
+                    finally:
+                        target.unlink(missing_ok=True)
+                self.send_json({"ok": True, "image": images[0], "images": images})
+                return
+            if path == "/api/menu/pdf":
+                query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+                filename = safe_name(query.get("filename", ["menu.pdf"])[0])
+                if Path(filename).suffix.lower() != ".pdf":
+                    self.send_json({"error": "Carica un file PDF"}, 400)
+                    return
+                length = int(self.headers.get("Content-Length", "0"))
+                if length <= 0 or length > MENU_MAX_PDF:
+                    self.send_json({"error": "PDF non valido (massimo 50 MB)"}, 400)
+                    return
+                work = IPTV_DIR / "menu-pdf" / uuid.uuid4().hex
+                work.mkdir(parents=True, exist_ok=True)
+                try:
+                    pdf = work / "menu.pdf"
+                    pdf.write_bytes(self.rfile.read(length))
+                    pages = convert_menu_pdf(pdf, Path(filename).stem)
+                finally:
+                    shutil.rmtree(work, ignore_errors=True)
+                store.log("success", f"Menu PDF convertito in {len(pages)} pagine: {filename}")
+                self.send_json({"ok": True, "pages": pages})
                 return
             if path == "/api/upload":
                 query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)

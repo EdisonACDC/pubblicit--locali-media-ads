@@ -1193,6 +1193,199 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn(("media_player", "media_stop", {"entity_id": "media_player.sala"}), calls)
         self.assertTrue(any(call[1] == "media_play" for call in calls))
 
+    def test_menu_settings_lines_and_layout(self):
+        menu = self.app.menu_settings({"menu": {
+            "enabled": True, "ad_percent": 95, "mode": "text",
+            "pages": [{"title": "Antipasti", "text": "Bruschetta 6,50"}, {"title": "", "text": ""}, {"title": "Pizze", "text": "x"}, {"title": "Extra"}],
+            "page_images": ["../segreto.png", ""], "background": "sala.jpg", "logo": "",
+        }})
+        self.assertTrue(menu["enabled"])
+        self.assertEqual(menu["ad_percent"], 80)  # limitata tra 30 e 80
+        self.assertEqual([page["title"] for page in menu["pages"]], ["Antipasti", "Pizze", "Extra"])
+        self.assertEqual(menu["page_seconds"], 15)
+        self.assertEqual(self.app.menu_settings({"menu": {"page_seconds": 2}})["page_seconds"], 5)
+        self.assertEqual(self.app.menu_settings({"menu": {"page_seconds": "abc"}})["page_seconds"], 15)
+        self.assertEqual(menu["page_images"], ["segreto.png"])  # nomi ripuliti con safe_name
+        self.assertEqual(menu["logo_mode"], "background")  # di serie il logo fa da sfondo alle pagine
+        self.assertEqual(self.app.menu_settings({"menu": {"logo_mode": "both"}})["logo_mode"], "both")
+        # Senza scelta si usa il logo Carellas incluso nell'add-on; "none" lo toglie.
+        self.assertEqual(menu["logo"], "")
+        self.assertEqual(self.app.menu_settings({"menu": {"logo": "none"}})["logo"], "none")
+        self.assertTrue(self.app.MENU_DEFAULT_LOGO.is_file())
+        parse = self.app.parse_menu_line
+        self.assertEqual(parse("Bruschetta al pomodoro 6,50"), {"name": "Bruschetta al pomodoro", "price": "6,50 €"})
+        self.assertEqual(parse("Tagliere misto ....... € 14"), {"name": "Tagliere misto", "price": "€ 14"})
+        self.assertEqual(parse("Dal forno a legna"), {"name": "Dal forno a legna", "price": ""})
+        self.assertIsNone(parse("   "))
+        self.assertEqual(parse("Bruschetta Pugliese | 8,80"), {"name": "Bruschetta Pugliese", "price": "8,80 €"})
+        # Le righe lunghe vanno a capo e la misura scende finché tutto sta nella pagina.
+        lines = self.app.wrap_menu_text("Weißbrotscheiben mit marinierten Tomatenwürfeln und Grana Padano", 20)
+        self.assertTrue(all(len(line) <= 20 for line in lines))
+        self.assertEqual(" ".join(lines), "Weißbrotscheiben mit marinierten Tomatenwürfeln und Grana Padano")
+        items = [parse("Piatto con una descrizione molto lunga che non entra in una riga sola 12,50")] * 6
+        size, rows = self.app.fit_menu_items(items, 380, 220)
+        used = sum(len(row_lines) for _, row_lines in rows) * size * self.app.MENU_LINE_HEIGHT
+        self.assertLessEqual(used, 220)
+        self.assertTrue(all(len(line) * size * self.app.MENU_CHAR_WIDTH <= 380 for _, row_lines in rows for line in row_lines))
+        self.assertEqual(self.app.menu_settings({"menu": {}})["ad_fit"], "cover")  # pubblicità a tutta larghezza
+        self.assertIn("crop=1280:432", self.app.menu_ad_filter("cover", 1280, 432))
+        ad_height, cells = self.app.menu_layout(60, 3)
+        self.assertEqual(ad_height, 432)
+        self.assertEqual(len(cells), 3)
+        self.assertTrue(all(y == 444 and h == 264 for _, y, _, h in cells))
+        self.assertLessEqual(cells[-1][0] + cells[-1][2], 1280)
+
+    def test_menu_with_more_than_three_pages_rotates_groups(self):
+        pages = [{"title": f"P{number}", "text": f"Piatto {number} 5,00"} for number in range(1, 8)]
+        menu = self.app.menu_settings({"menu": {"enabled": True, "pages": pages, "page_seconds": 20}})
+        groups = self.app.menu_groups(menu)
+        self.assertEqual([[page["title"] for page in group] for group in groups],
+                         [["P1", "P2", "P3"], ["P4", "P5", "P6"], ["P7"]])
+        command = self.app.menu_cycle_command(["a.png", "b.png", "c.png"], 20, "cycle.mp4")
+        self.assertEqual(command.count("-loop"), 3)
+        self.assertEqual(command[command.index("-t") + 1], "20")
+        self.assertIn("[0:v][1:v][2:v]concat=n=3:v=1:a=0", command[command.index("-filter_complex") + 1])
+        self.assertEqual(command[-1], "cycle.mp4")
+        font = Path(self.temp.name) / "font.ttf"
+        font.write_bytes(b"font")
+        captured = []
+
+        def run(command, **kwargs):
+            captured.append((command[command.index("-filter_complex") + 1],
+                             sorted(item.read_text(encoding="utf-8") for item in Path(kwargs["cwd"]).glob("t*.txt"))))
+            Path(command[-1]).write_bytes(b"png")
+
+        with mock.patch.object(self.app, "menu_fonts", return_value=(font, font)),                 mock.patch.object(self.app.subprocess, "run", side_effect=run):
+            self.app.render_menu_frame({**menu, "logo": "none"}, Path(self.temp.name) / "g1.png", group=0)
+            self.app.render_menu_frame({**menu, "logo": "none"}, Path(self.temp.name) / "g3.png", group=2)
+        first, last = captured
+        self.assertIn("P1", first[1])
+        self.assertIn("P7", last[1])
+        self.assertNotIn("P1", last[1])
+        # Un quadratino per schermata sotto le pagine, quello attuale nel colore del logo.
+        self.assertEqual(first[0].count(":y=710:w=8:h=8:"), 3)
+        self.assertIn(f":y=710:w=8:h=8:color={self.app.MENU_COLORS['accent']}", first[0])
+        self.assertNotIn("1/3", first[1])
+        # L'ultimo gruppo ha una sola pagina, centrata e larga come le altre.
+        _, cells = self.app.menu_layout(60, 3)
+        middle_x = cells[1][0]
+        self.assertIn(f"drawbox=x={middle_x}:y={cells[1][1]}:w={cells[1][2]}", last[0])
+
+    def test_menu_page_too_long_is_split_into_readable_pages(self):
+        drinks = "\n".join(f"Bevanda numero {number} con descrizione 0,5 l {number},50" for number in range(1, 41))
+        menu = self.app.menu_settings({"menu": {"enabled": True, "logo": "none", "ad_percent": 60, "pages": [
+            {"title": "Antipasti", "text": "Bruschetta 6,50"},
+            {"title": "Getränke", "text": drinks},
+        ]}})
+        pages = self.app.expand_menu_pages(menu)
+        titles = [page["title"] for page in pages]
+        self.assertEqual(titles[0], "Antipasti")
+        extra = [title for title in titles if title.startswith("Getränke")]
+        self.assertGreaterEqual(len(extra), 2)
+        self.assertEqual(set(extra), {"Getränke"})  # stesso titolo, senza numeri tra parentesi
+        # Nessuna riga persa e ogni pagina sta nel riquadro alla misura leggibile.
+        lines = [line for page in pages[1:] for line in page["text"].splitlines()]
+        self.assertEqual(lines, drinks.splitlines())
+        _, cells = self.app.menu_layout(60, min(3, len(pages)))
+        width, height = cells[0][2], cells[0][3]
+        for page in pages[1:]:
+            area = height - 12 - self.app.menu_text_top(menu, page["title"], width, height)
+            size, _ = self.app.fit_menu_items([self.app.parse_menu_line(line) for line in page["text"].splitlines()], width - 24, area)
+            self.assertGreaterEqual(size, self.app.MENU_MIN_READABLE)
+        self.assertEqual(len(self.app.menu_groups(menu)), -(-len(pages) // 3))
+
+    def test_menu_changes_channel_signature_only_when_enabled(self):
+        channel = {"id": "sala", "playlist": [{"name": "a.jpg", "kind": "image"}]}
+        plain = self.app.iptv.channel_signature(channel)
+        self.assertEqual(plain, self.app.iptv.channel_signature({**channel, "menu": {"enabled": False, "pages": [{"title": "X"}]}}))
+        with_menu = {**channel, "menu": {"enabled": True, "pages": [{"title": "Antipasti", "text": "Bruschetta 6,50"}]}}
+        self.assertNotEqual(plain, self.app.iptv.channel_signature(with_menu))
+
+    def test_menu_logo_is_a_faded_background_on_every_page(self):
+        font = Path(self.temp.name) / "font.ttf"
+        font.write_bytes(b"font")
+        (self.app.MEDIA_DIR / "logo-test.png").write_bytes(b"png")
+        graphs = []
+
+        def run(command, **kwargs):
+            graphs.append(command[command.index("-filter_complex") + 1])
+            Path(command[-1]).write_bytes(b"png")
+
+        try:
+            for logo, mode, faded, small in (("logo-test.png", "background", 3, 0), ("logo-test.png", "top", 0, 3),
+                                             ("logo-test.png", "both", 3, 3), ("", "background", 3, 0), ("none", "both", 0, 0)):
+                menu = self.app.menu_settings({"menu": {"enabled": True, "logo": logo, "logo_mode": mode, "pages": [
+                    {"title": "A", "text": "x 1"}, {"title": "B", "text": "y 2"}, {"title": "C", "text": "z 3"},
+                ]}})
+                with mock.patch.object(self.app, "menu_fonts", return_value=(font, font)),                         mock.patch.object(self.app.subprocess, "run", side_effect=run):
+                    self.app.render_menu_frame(menu, Path(self.temp.name) / f"logo-{mode}.png")
+                self.assertEqual(graphs[-1].count("colorchannelmixer=aa=0.13"), faded, mode)
+                self.assertEqual(graphs[-1].count("force_original_aspect_ratio=decrease") - faded, small, mode)
+        finally:
+            (self.app.MEDIA_DIR / "logo-test.png").unlink(missing_ok=True)
+
+    def test_menu_frame_draws_pages_with_text_files(self):
+        font = Path(self.temp.name) / "font.ttf"
+        font.write_bytes(b"font")
+        commands = []
+
+        def run(command, **kwargs):
+            commands.append((command, kwargs))
+            # I testi passano da file nella cartella di lavoro, mai dentro il filtro.
+            texts = {item.name: item.read_text(encoding="utf-8") for item in Path(kwargs["cwd"]).glob("t*.txt")}
+            commands.append(texts)
+            Path(command[-1]).write_bytes(b"png")
+
+        menu = self.app.menu_settings({"menu": {"enabled": True, "pages": [
+            {"title": "Antipasti", "text": "Bruschetta 6,50\nCaprese: bufala 9,00"},
+        ]}})
+        target = Path(self.temp.name) / "frame.png"
+        with mock.patch.object(self.app, "menu_fonts", return_value=(font, font)), \
+                mock.patch.object(self.app.subprocess, "run", side_effect=run):
+            self.app.render_menu_frame(menu, target, preview=True)
+        command, kwargs = commands[0]
+        graph = command[command.index("-filter_complex") + 1]
+        self.assertIn("drawtext=fontfile=bold.ttf:textfile=", graph)
+        self.assertIn("expansion=none", graph)
+        self.assertNotIn("Caprese", graph)
+        self.assertIn("Caprese: bufala", commands[1].values())
+        self.assertIn("9,00 €", commands[1].values())
+        self.assertIn("Pubblicità", commands[1].values())
+        self.assertTrue(target.exists())
+        self.assertFalse(Path(kwargs["cwd"]).exists())  # cartella di lavoro rimossa
+
+    def test_menu_pdf_is_converted_into_library_pages(self):
+        def run(command, **kwargs):
+            prefix = Path(command[-1])
+            for number in (1, 2, 3, 4):
+                (prefix.parent / f"{prefix.name}-{number}.png").write_bytes(b"png")
+
+        with mock.patch.object(self.app.shutil, "which", return_value="/usr/bin/pdftoppm"), \
+                mock.patch.object(self.app.subprocess, "run", side_effect=run) as fake:
+            req = urllib.request.Request(
+                self.base + "/api/menu/pdf?filename=Menu%20Carellas.pdf", data=b"%PDF-1.4 test", method="POST",
+                headers={"Content-Type": "application/pdf"},
+            )
+            with urllib.request.urlopen(req) as response:
+                payload = json.loads(response.read())
+        self.assertEqual(fake.call_args.args[0][:8], ["pdftoppm", "-png", "-r", "110", "-f", "1", "-l", "12"])
+        self.assertEqual(len(payload["pages"]), 4)  # tutte le pagine, fino a 12
+        for name in payload["pages"]:
+            self.assertTrue((self.app.MEDIA_DIR / name).is_file())
+            (self.app.MEDIA_DIR / name).unlink()
+        with mock.patch.object(self.app.shutil, "which", return_value=None):
+            req = urllib.request.Request(self.base + "/api/menu/pdf?filename=menu.pdf", data=b"%PDF", method="POST")
+            with self.assertRaises(urllib.error.HTTPError):
+                urllib.request.urlopen(req)
+
+    def test_zone_page_has_menu_editor(self):
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        self.assertIn("${ch?menuEditor(ch):''}", html)
+        for snippet in ("sw(on,'menu-enable'", "data-bind=\"${p}.page_seconds\"", "pages.length<12", "r.images||r.image", "data-bind=\"${p}.logo_mode\"", "data-bind=\"${p}.ad_percent\"", "data-menu-pdf=", "'menu-preview':async el=>",
+                        "post('api/menu/preview',{menu:ch.menu})", "fetch('api/menu/pdf?filename='",
+                        "['Menu sullo schermo','Menü auf dem Bildschirm']"):
+            self.assertIn(snippet, html)
+
     def test_scheduler_switches_source_when_music_slot_changes(self):
         original = json.loads(json.dumps(self.app.store.config["music"]))
         first = {
