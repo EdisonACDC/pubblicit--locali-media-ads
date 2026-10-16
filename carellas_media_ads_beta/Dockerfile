@@ -12,5 +12,5 @@ RUN apk add --no-cache ffmpeg font-dejavu poppler-utils \
     && chmod a+x /run.sh \
     && mkdir -p /media/carellas_media_ads
 
-EXPOSE 8100 8102
+EXPOSE 8100 8102 8104
 CMD ["/run.sh"]

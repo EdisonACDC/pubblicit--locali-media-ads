@@ -4,6 +4,7 @@ import os
 import tempfile
 import threading
 import unittest
+import urllib.parse
 import urllib.request
 import urllib.error
 from unittest import mock
@@ -2628,6 +2629,191 @@ class CarellasServerTest(unittest.TestCase):
         with urllib.request.urlopen(request) as response:
             html = response.read().decode("utf-8")
         self.assertIn('id="audioPlayers"', html)
+
+    def remote_server(self):
+        """Porta per l'accesso da Internet, avviata solo per il test."""
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), self.app.RemoteAdminHandler)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        self.addCleanup(httpd.server_close)
+        self.addCleanup(httpd.shutdown)
+        saved = json.loads(json.dumps(self.app.store.config.get("remote_admin", {})))
+        delay = self.app.REMOTE_FAIL_DELAY_SECONDS
+        self.app.REMOTE_FAIL_DELAY_SECONDS = 0
+
+        def restore():
+            self.app.REMOTE_FAIL_DELAY_SECONDS = delay
+            self.app.store.config["remote_admin"] = saved
+            self.app.REMOTE_SESSIONS.clear()
+            self.app.REMOTE_FAILURES.clear()
+
+        self.addCleanup(restore)
+        return httpd.server_address[1]
+
+    def remote_call(self, port, path, method="GET", body=None, headers=None, form=None):
+        import http.client
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        headers = dict(headers or {})
+        if form is not None:
+            body = urllib.parse.urlencode(form).encode()
+            headers["Content-Type"] = "application/x-www-form-urlencoded"
+        elif body is not None:
+            body = json.dumps(body).encode()
+            headers["Content-Type"] = "application/json"
+        connection.request(method, path, body=body, headers=headers)
+        response = connection.getresponse()
+        data = response.read()
+        connection.close()
+        return response, data
+
+    def remote_login(self, port, username, password, headers=None):
+        response, data = self.remote_call(port, "/login", "POST", form={"username": username, "password": password},
+                                          headers=headers)
+        cookie = response.getheader("Set-Cookie") or ""
+        token = cookie.split(";", 1)[0].split("=", 1)[1] if response.status == 303 and "=" in cookie else ""
+        return response, data, token
+
+    def test_remote_admin_requires_login_and_protects_the_panel(self):
+        port = self.remote_server()
+        self.app.store.update({"remote_admin": {"enabled": False, "users": []}})
+        # Spento di serie: nessuna pagina del pannello, neppure il login.
+        response, data = self.remote_call(port, "/")
+        self.assertEqual(response.status, 403)
+        self.assertIn("spento", data.decode())
+        response, _ = self.remote_call(port, "/api/state")
+        self.assertEqual(response.status, 403)
+
+        self.app.store.update({"remote_admin": {"enabled": True, "public_url": "https://ads.esempio.com/",
+                                                "users": [{"username": "Carellas", "password": "Pizza-Forno-2026"}]}})
+        remote = self.app.store.config["remote_admin"]
+        self.assertEqual(remote["public_url"], "https://ads.esempio.com")
+        self.assertEqual(remote["users"][0]["username"], "carellas")
+        self.assertTrue(remote["users"][0]["password_hash"].startswith("pbkdf2_sha256$"))
+        self.assertNotIn("password", remote["users"][0])
+        self.assertNotIn("Pizza-Forno-2026", self.app.CONFIG_FILE.read_text(encoding="utf-8"))
+
+        # Senza login: le pagine portano al login, le API rispondono 401 e non cambiano nulla.
+        response, _ = self.remote_call(port, "/")
+        self.assertEqual((response.status, response.getheader("Location")), (303, "/login"))
+        response, _ = self.remote_call(port, "/api/state")
+        self.assertEqual(response.status, 401)
+        language = self.app.store.config.get("language")
+        response, _ = self.remote_call(port, "/api/config", "POST", body={"language": "de" if language == "it" else "it"})
+        self.assertEqual(response.status, 401)
+        self.assertEqual(self.app.store.config.get("language"), language)
+        response, data = self.remote_call(port, "/login")
+        self.assertEqual(response.status, 200)
+        self.assertIn('name="password" type="password"', data.decode())
+        self.assertEqual(response.getheader("X-Frame-Options"), "DENY")
+        self.assertIn("frame-ancestors 'none'", response.getheader("Content-Security-Policy"))
+
+        response, data, token = self.remote_login(port, "carellas", "password-sbagliata")
+        self.assertEqual(response.status, 401)
+        self.assertIn("errati", data.decode())
+        self.assertEqual(token, "")
+        self.assertIn("Accesso da Internet: nome utente o password errati", self.app.store.logs[0]["message"])
+
+        response, _, token = self.remote_login(port, "CARELLAS", "Pizza-Forno-2026", headers={"X-Forwarded-Proto": "https"})
+        self.assertEqual((response.status, response.getheader("Location")), (303, "/"))
+        cookie = response.getheader("Set-Cookie")
+        for attribute in ("HttpOnly", "SameSite=Strict", "Secure", "Path=/"):
+            self.assertIn(attribute, cookie)
+        self.assertTrue(token)
+        # Il server conserva solo l'impronta della sessione, non il codice del browser.
+        self.assertNotIn(token, self.app.REMOTE_SESSIONS)
+        session = {"Cookie": f"carellas_admin={token}"}
+
+        response, data = self.remote_call(port, "/api/state", headers=session)
+        self.assertEqual(response.status, 200)
+        state = json.loads(data)
+        self.assertEqual(state["runtime"]["remote_user"], "carellas")
+        self.assertIsNone(response.getheader("Access-Control-Allow-Origin"))
+        self.assertEqual(response.getheader("X-Frame-Options"), "DENY")
+        response, data = self.remote_call(port, "/", headers=session)
+        self.assertEqual(response.status, 200)
+        self.assertIn("remoteSettings()", data.decode())
+        # Sulla porta locale nessuno risulta entrato da Internet.
+        self.assertIsNone(self.request("/api/state")[1]["runtime"]["remote_user"])
+
+        # Moduli inviati da un altro sito: bloccati anche con la sessione valida.
+        response, _ = self.remote_call(port, "/api/config", "POST", body={"language": language},
+                                       headers={**session, "Origin": "https://sito-cattivo.example"})
+        self.assertEqual(response.status, 403)
+        response, _ = self.remote_call(port, "/api/config", "POST", body={"language": language},
+                                       headers={**session, "Origin": "https://ads.esempio.com"})
+        self.assertEqual(response.status, 200)
+
+        # Esci: la sessione non vale più.
+        response, _ = self.remote_call(port, "/logout", "POST", headers=session)
+        self.assertEqual((response.status, response.getheader("Location")), (303, "/login"))
+        self.assertIn("Max-Age=0", response.getheader("Set-Cookie"))
+        response, _ = self.remote_call(port, "/api/state", headers=session)
+        self.assertEqual(response.status, 401)
+
+        # Password cambiata: chi era entrato con quella vecchia deve rientrare.
+        _, _, token = self.remote_login(port, "carellas", "Pizza-Forno-2026")
+        session = {"Cookie": f"carellas_admin={token}"}
+        self.assertEqual(self.remote_call(port, "/api/state", headers=session)[0].status, 200)
+        users = self.app.store.config["remote_admin"]["users"]
+        self.app.store.update({"remote_admin": {"users": [{**users[0], "password": "Nuova-Password-99"}]}})
+        self.assertEqual(self.remote_call(port, "/api/state", headers=session)[0].status, 401)
+        # Uscita automatica dopo il periodo senza attività.
+        _, _, token = self.remote_login(port, "carellas", "Nuova-Password-99")
+        session = {"Cookie": f"carellas_admin={token}"}
+        for item in self.app.REMOTE_SESSIONS.values():
+            item["seen"] -= self.app.REMOTE_SESSION_IDLE_SECONDS + 1
+        self.assertEqual(self.remote_call(port, "/api/state", headers=session)[0].status, 401)
+        # Accesso spento: anche le sessioni aperte smettono di funzionare.
+        _, _, token = self.remote_login(port, "carellas", "Nuova-Password-99")
+        self.app.store.update({"remote_admin": {"enabled": False}})
+        self.assertEqual(self.remote_call(port, "/api/state", headers={"Cookie": f"carellas_admin={token}"})[0].status, 403)
+
+    def test_remote_admin_blocks_repeated_wrong_passwords(self):
+        port = self.remote_server()
+        self.app.store.update({"remote_admin": {"enabled": True,
+                                                "users": [{"username": "carellas", "password": "Pizza-Forno-2026"}]}})
+        attacker = {"CF-Connecting-IP": "203.0.113.7"}
+        for _ in range(5):
+            self.assertEqual(self.remote_login(port, "carellas", "sbagliata", headers=attacker)[0].status, 401)
+        # Dopo 5 errori quell'indirizzo è bloccato, anche con la password giusta.
+        response, data, token = self.remote_login(port, "carellas", "Pizza-Forno-2026", headers=attacker)
+        self.assertEqual(response.status, 429)
+        self.assertIn("15 minuti", data.decode())
+        self.assertEqual(token, "")
+        self.assertTrue(any("bloccato per 15 minuti" in item["message"] for item in self.app.store.logs[:3]))
+        # Da un altro indirizzo si entra ancora.
+        response, _, token = self.remote_login(port, "carellas", "Pizza-Forno-2026", headers={"CF-Connecting-IP": "198.51.100.2"})
+        self.assertEqual(response.status, 303)
+        # Tanti indirizzi diversi sullo stesso utente: dopo 10 errori si blocca anche l'utente.
+        for number in range(10):
+            self.remote_login(port, "carellas", "sbagliata", headers={"CF-Connecting-IP": f"192.0.2.{number + 1}"})
+        response, _, _ = self.remote_login(port, "carellas", "Pizza-Forno-2026", headers={"CF-Connecting-IP": "198.51.100.3"})
+        self.assertEqual(response.status, 429)
+
+    def test_remote_admin_users_need_strong_passwords(self):
+        saved = json.loads(json.dumps(self.app.store.config))
+        try:
+            cases = [
+                ([{"username": "carellas", "password": "corta"}], "almeno 10 caratteri"),
+                ([{"username": "carellas", "password": "carellas-2026"}], "non deve contenere il nome utente"),
+                ([{"username": "carellas"}], "Imposta una password"),
+                ([{"username": "x", "password": "Pizza-Forno-2026"}], "non valido"),
+                ([{"username": "carellas", "password": "Pizza-Forno-2026"},
+                  {"username": "Carellas", "password": "Pizza-Forno-2027"}], "duplicato"),
+            ]
+            for users, message in cases:
+                with self.assertRaisesRegex(RuntimeError, message):
+                    self.app.store.update({"remote_admin": {"enabled": True, "users": users}})
+                self.app.store.config = json.loads(json.dumps(saved))
+        finally:
+            self.app.store.config = saved
+        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        self.assertIn("['remoto','Accesso da Internet']", html)
+        self.assertIn('id="set-remoto"', html)
+        self.assertIn('data-bind="remote_admin.public_url"', html)
+        self.assertIn('<form method="post" action="logout"', html)
+        self.assertIn("['Accesso da Internet','Zugang über das Internet']", html)
+        config = (Path(__file__).parents[1] / "carellas_media_ads_beta/config.yaml").read_text(encoding="utf-8")
+        self.assertIn("8104/tcp: 8104", config)
 
     def test_overnight_schedule(self):
         schedule = [{"days": [6], "start": "22:00", "end": "02:00", "enabled": True}]

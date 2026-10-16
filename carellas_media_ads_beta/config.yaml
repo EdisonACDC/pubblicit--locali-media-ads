@@ -1,5 +1,5 @@
 name: Carellas Media Ads Beta
-version: "0.6.0-beta.15"
+version: "0.6.0-beta.16"
 slug: carellas_media_ads_beta
 description: Beta del nuovo pannello per zone. Da provare con lo stabile fermo.
 url: https://github.com/EdisonACDC/pubblicit--locali-media-ads
@@ -23,9 +23,11 @@ map:
 ports:
   8100/tcp: 8100
   8102/tcp: 8102
+  8104/tcp: 8104
 ports_description:
   8100/tcp: Pannello beta, API e contenuti locali (solo LAN)
   8102/tcp: Player TV protetto della beta
+  8104/tcp: Pannello beta con login per l'accesso da Internet
 webui: http://[HOST]:[PORT:8100]
 watchdog: http://[HOST]:[PORT:8100]/api/state
 options: {}
