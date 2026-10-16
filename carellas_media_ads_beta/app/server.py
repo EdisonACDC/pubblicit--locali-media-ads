@@ -1408,6 +1408,8 @@ MENU_FONT_BOLD_CANDIDATES = [
 MENU_COLORS = {"page": "0xFBF7EE", "ink": "0x2F3A26", "accent": "0x6E7F1D", "background": "0x2F3A26"}
 MENU_PRICE = re.compile(r"^(?P<name>.*?)[\s.·…_-]*\s(?P<price>(?:€\s?)?\d{1,4}(?:[.,]\d{1,2})?(?:\s?€)?)$")
 MENU_MAX_PDF = 50 * 1024 * 1024
+# Sullo schermo stanno tre pagine alla volta; oltre, i gruppi da tre si alternano a tempo.
+MENU_MAX_PAGES = 12
 # Logo Carellas Ristorante (PNG trasparente) usato quando non se ne sceglie un altro.
 MENU_DEFAULT_LOGO = APP_DIR / "menu_logo.png"
 
@@ -1420,20 +1422,25 @@ def menu_settings(channel):
     except (TypeError, ValueError):
         ad_percent = 60
     pages = []
-    for page in (raw.get("pages") or [])[:3]:
+    for page in (raw.get("pages") or [])[:MENU_MAX_PAGES]:
         if not isinstance(page, dict):
             continue
         title = str(page.get("title", "")).strip()[:40]
         text = str(page.get("text", ""))[:3000]
         if title or text.strip():
             pages.append({"title": title, "text": text})
-    images = [safe_name(name) for name in (raw.get("page_images") or [])[:3] if name]
+    images = [safe_name(name) for name in (raw.get("page_images") or [])[:MENU_MAX_PAGES] if name]
+    try:
+        page_seconds = int(raw.get("page_seconds", 15))
+    except (TypeError, ValueError):
+        page_seconds = 15
     return {
         "enabled": raw.get("enabled") is True,
         "ad_percent": max(30, min(ad_percent, 80)),
         "mode": "images" if raw.get("mode") == "images" else "text",
         "pages": pages,
         "page_images": images,
+        "page_seconds": max(5, min(page_seconds, 120)),
         "background": safe_name(raw["background"]) if raw.get("background") else "",
         # "" = logo Carellas predefinito, "none" = nessun logo, altrimenti un'immagine della libreria.
         "logo": "none" if raw.get("logo") == "none" else (safe_name(raw["logo"]) if raw.get("logo") else ""),
@@ -1454,6 +1461,27 @@ def parse_menu_line(line):
             price += " €"
         return {"name": match.group("name").strip(), "price": price}
     return {"name": line, "price": ""}
+
+
+def menu_groups(menu):
+    """Pagine divise in gruppi da tre: ogni gruppo resta sullo schermo page_seconds secondi."""
+    if menu["mode"] == "images" and menu["page_images"]:
+        items = menu["page_images"]
+    else:
+        items = menu["pages"] or [{"title": "Menu", "text": ""}]
+    return [items[index:index + 3] for index in range(0, len(items), 3)]
+
+
+def menu_cycle_command(frames, seconds, target):
+    """Video corto in cui i gruppi di pagine si alternano ogni 'seconds': poi viene ripetuto sotto la pubblicità."""
+    command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
+    for frame in frames:
+        command += ["-loop", "1", "-framerate", "25", "-t", str(seconds), "-i", str(frame)]
+    joined = "".join(f"[{index}:v]" for index in range(len(frames)))
+    return command + [
+        "-filter_complex", f"{joined}concat=n={len(frames)}:v=1:a=0,format=yuv420p[v]", "-map", "[v]",
+        "-c:v", "libx264", "-preset", "superfast", "-crf", "22", "-pix_fmt", "yuv420p", str(target),
+    ]
 
 
 def menu_layout(ad_percent, page_count, width=1280, height=720, gap=12):
@@ -1479,8 +1507,8 @@ def menu_fonts():
     return regular, bold
 
 
-def render_menu_frame(menu, target, preview=False, width=1280, height=720):
-    """Disegna lo sfondo 1280x720 con le pagine del menu; la pubblicità viene sovrapposta in alto."""
+def render_menu_frame(menu, target, preview=False, group=0, width=1280, height=720):
+    """Disegna lo sfondo 1280x720 con un gruppo di pagine del menu; la pubblicità viene sovrapposta in alto."""
     work = Path(target).parent / f".menu-{uuid.uuid4().hex[:8]}"
     work.mkdir(parents=True, exist_ok=True)
     try:
@@ -1489,8 +1517,15 @@ def render_menu_frame(menu, target, preview=False, width=1280, height=720):
         shutil.copyfile(regular, work / "regular.ttf")
         shutil.copyfile(bold, work / "bold.ttf")
         images_mode = menu["mode"] == "images" and menu["page_images"]
-        count = len(menu["page_images"]) if images_mode else max(1, len(menu["pages"]))
-        ad_height, cells = menu_layout(menu["ad_percent"], count, width, height)
+        groups = menu_groups(menu)
+        group = max(0, min(int(group), len(groups) - 1))
+        current = groups[group]
+        # Stessa larghezza delle pagine in tutti i gruppi; un gruppo incompleto resta centrato.
+        ad_height, cells = menu_layout(menu["ad_percent"], len(groups[0]), width, height)
+        if len(current) < len(cells):
+            step = cells[1][0] - cells[0][0]
+            shift = (len(cells) - len(current)) * step // 2
+            cells = [(x + shift, y, w, h) for x, y, w, h in cells[:len(current)]]
         inputs, filters = [], []
         background = MEDIA_DIR / menu["background"] if menu["background"] else None
         if background and background.is_file():
@@ -1530,7 +1565,7 @@ def render_menu_frame(menu, target, preview=False, width=1280, height=720):
             text("Pubblicità", "bold.ttf", max(18, ad_height // 8), "0xC9D3A5",
                  "(w-text_w)/2", f"{ad_height // 2}-text_h/2")
         if images_mode:
-            for name, (x, y, w, h) in zip(menu["page_images"], cells):
+            for name, (x, y, w, h) in zip(current, cells):
                 source = MEDIA_DIR / name
                 if not source.is_file():
                     raise RuntimeError(f"Pagina del menu non trovata: {name}")
@@ -1538,7 +1573,7 @@ def render_menu_frame(menu, target, preview=False, width=1280, height=720):
                         f"scale={w}:{h}:force_original_aspect_ratio=decrease")
         else:
             logo = None if menu["logo"] == "none" else (MEDIA_DIR / menu["logo"] if menu["logo"] else MENU_DEFAULT_LOGO)
-            pages = menu["pages"] or [{"title": "Menu", "text": ""}]
+            pages = current
             for index, (x, y, w, h) in enumerate(cells):
                 page = pages[index] if index < len(pages) else {"title": "", "text": ""}
                 chain(f"drawbox=x={x}:y={y}:w={w}:h={h}:color={MENU_COLORS['page']}:t=fill")
@@ -1575,6 +1610,11 @@ def render_menu_frame(menu, target, preview=False, width=1280, height=720):
                     else:
                         text(name, "bold.ttf", size, MENU_COLORS["accent"], str(x + 12), str(cursor))
                     cursor += int(size * 1.45)
+        if len(groups) > 1:
+            # Indica ai clienti che altre pagine arriveranno: "1/2" nell'angolo dell'ultima pagina.
+            x, y, w, h = cells[-1]
+            text(f"{group + 1}/{len(groups)}", "bold.ttf", 14, MENU_COLORS["accent"],
+                 f"{x + w - 12}-text_w", f"{y + h - 12}-text_h")
         command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", *inputs,
                    "-filter_complex", ";".join(filters), "-map", f"[{state['label']}]",
                    "-frames:v", "1", str(Path(target).resolve())]
@@ -1584,17 +1624,17 @@ def render_menu_frame(menu, target, preview=False, width=1280, height=720):
 
 
 def convert_menu_pdf(pdf_path, stem):
-    """Trasforma le prime tre pagine di un PDF in immagini PNG nella libreria."""
+    """Trasforma le pagine di un PDF (al massimo MENU_MAX_PAGES) in immagini PNG nella libreria."""
     if not shutil.which("pdftoppm"):
         raise RuntimeError("Conversione PDF non disponibile: manca pdftoppm (poppler-utils)")
     output = Path(pdf_path).parent / "pagina"
-    subprocess.run(["pdftoppm", "-png", "-r", "110", "-f", "1", "-l", "3", str(pdf_path), str(output)],
+    subprocess.run(["pdftoppm", "-png", "-r", "110", "-f", "1", "-l", str(MENU_MAX_PAGES), str(pdf_path), str(output)],
                    check=True, timeout=120)
     pages = sorted(Path(pdf_path).parent.glob("pagina-*.png"), key=lambda item: int(item.stem.rsplit("-", 1)[1]))
     if not pages:
         raise RuntimeError("Il PDF non contiene pagine leggibili")
     names = []
-    for number, page in enumerate(pages[:3], start=1):
+    for number, page in enumerate(pages[:MENU_MAX_PAGES], start=1):
         target = MEDIA_DIR / safe_name(f"{stem}_pagina_{number}.png")
         if target.exists():
             target = MEDIA_DIR / f"{target.stem}-{uuid.uuid4().hex[:6]}.png"
@@ -1982,16 +2022,31 @@ class IPTVEngine:
             menu = menu_settings(channel)
             if menu["enabled"]:
                 self.set_status(channel_id, "building", "Composizione dello schermo con il menu")
-                frame = work / "menu-frame.png"
-                render_menu_frame(menu, frame)
+                frames = []
+                for group in range(len(menu_groups(menu))):
+                    frame = work / f"menu-frame-{group + 1}.png"
+                    render_menu_frame(menu, frame, group=group)
+                    frames.append(frame)
                 ad_height = menu_layout(menu["ad_percent"], 1)[0]
                 composed = work / "channel.menu.tmp.mp4"
+                if len(frames) == 1:
+                    loops, menu_input = 1, ["-loop", "1", "-i", str(frames[0])]
+                    total = None
+                else:
+                    # La pubblicità si ripete finché tutti i gruppi di pagine sono passati almeno una volta.
+                    ads_duration = max(1.0, self._probe_duration(temporary))
+                    loops = max(1, math.ceil(len(frames) * menu["page_seconds"] / ads_duration))
+                    total = ads_duration * loops
+                    cycle = work / "menu-cycle.mp4"
+                    subprocess.run(menu_cycle_command(frames, menu["page_seconds"], cycle), check=True, timeout=600)
+                    menu_input = ["-stream_loop", "-1", "-i", str(cycle)]
                 subprocess.run([
                     "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-                    "-i", str(temporary), "-loop", "1", "-i", str(frame),
+                    "-stream_loop", str(loops - 1), "-i", str(temporary), *menu_input,
                     "-filter_complex",
-                    f"[1:v]format=yuv420p[menu];[0:v]scale=-2:{ad_height},setsar=1[ad];"
+                    f"[1:v]fps=25,format=yuv420p[menu];[0:v]scale=-2:{ad_height},setsar=1[ad];"
                     "[menu][ad]overlay=(W-w)/2:0:shortest=1,fps=25,format=yuv420p[v]",
+                    *(["-t", f"{total:.3f}"] if total else []),
                     "-map", "[v]", "-map", "0:a:0?",
                     "-c:v", "libx264", "-preset", "superfast", "-crf", "22",
                     "-profile:v", "high", "-level", "4.0", "-g", "50", "-keyint_min", "50",
@@ -3021,13 +3076,15 @@ class Handler(BaseHTTPRequestHandler):
                 menu = menu_settings({"menu": self.json_body().get("menu") or {}})
                 preview_dir = IPTV_DIR / "menu-preview"
                 preview_dir.mkdir(parents=True, exist_ok=True)
-                target = preview_dir / f"{uuid.uuid4().hex}.png"
-                try:
-                    render_menu_frame(menu, target, preview=True)
-                    image = base64.b64encode(target.read_bytes()).decode("ascii")
-                finally:
-                    target.unlink(missing_ok=True)
-                self.send_json({"ok": True, "image": f"data:image/png;base64,{image}"})
+                images = []
+                for group in range(len(menu_groups(menu))):
+                    target = preview_dir / f"{uuid.uuid4().hex}.png"
+                    try:
+                        render_menu_frame(menu, target, preview=True, group=group)
+                        images.append("data:image/png;base64," + base64.b64encode(target.read_bytes()).decode("ascii"))
+                    finally:
+                        target.unlink(missing_ok=True)
+                self.send_json({"ok": True, "image": images[0], "images": images})
                 return
             if path == "/api/menu/pdf":
                 query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
