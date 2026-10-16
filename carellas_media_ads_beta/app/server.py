@@ -1498,8 +1498,7 @@ def expand_menu_pages(menu):
         width, height = cells[0][2], cells[0][3]
         result = []
         for page in pages:
-            probe = f"{page['title']} (9/9)" if page["title"] else ""
-            area = height - 12 - menu_text_top(menu, probe, width, height)
+            area = height - 12 - menu_text_top(menu, page["title"], width, height)
             chunks, current = [], []
             for line in (line for line in page["text"].splitlines() if line.strip()):
                 candidate = current + [line]
@@ -1513,9 +1512,9 @@ def expand_menu_pages(menu):
             if len(chunks) == 1:
                 result.append(page)
                 continue
-            for number, chunk in enumerate(chunks, start=1):
-                title = f"{page['title']} ({number}/{len(chunks)})" if page["title"] else ""
-                result.append({"title": title, "text": "\n".join(chunk)})
+            # Le parti hanno lo stesso titolo, senza numeri: il menu continua nella pagina accanto.
+            for chunk in chunks:
+                result.append({"title": page["title"], "text": "\n".join(chunk)})
         if min(3, len(result)) == slots:
             break
         slots = min(3, len(result))
