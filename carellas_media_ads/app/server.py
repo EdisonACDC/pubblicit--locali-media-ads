@@ -3347,10 +3347,38 @@ def plain_text(markup):
     return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", "", text))).strip()
 
 
+def image_aspect(path):
+    """Rapporto larghezza/altezza di un'immagine (None se non si riesce a leggere)."""
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height",
+             "-of", "csv=p=0:s=x", str(path)], capture_output=True, text=True, timeout=20)
+        width, height = (int(value) for value in result.stdout.strip().split("x")[:2])
+        return width / height if height else None
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
 def compose_event_slide(pages, target):
     """Pagina TV 1920x1080: le immagini intere e affiancate, sopra la prima sfocata come sfondo.
-    Un'immagine già orizzontale (come quelle del sito) riempie tutto lo schermo."""
+    Un'immagine orizzontale simile allo schermo (come quelle del sito) lo riempie tutto, senza bande."""
     pages = list(pages)[:2]
+    aspect = image_aspect(pages[0]) if len(pages) == 1 else None
+    if aspect and 1.45 <= aspect <= 2.2:
+        # Si tagliano solo i bordi in più: niente bande sfocate ai lati o sopra e sotto.
+        command = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(pages[0]),
+                   "-vf", "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,format=yuvj420p",
+                   "-frames:v", "1", "-q:v", "2"]
+        temporary = target.with_name(f".{target.stem}.tmp.jpg")
+        try:
+            subprocess.run(command + [str(temporary)], check=True, timeout=120,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            os.replace(temporary, target)
+        except subprocess.CalledProcessError as error:
+            raise RuntimeError(f"Pagina dell'evento non creata: {error.stderr.decode('utf-8', 'replace')[-200:]}") from None
+        finally:
+            temporary.unlink(missing_ok=True)
+        return
     box_width, box_height = (1920, 1080) if len(pages) == 1 else (900, 1000)
     command = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"]
     for page in pages:
@@ -3457,7 +3485,8 @@ class WebsiteEventsImporter(threading.Thread):
     def slides(self, event):
         """Pagine TV dell'evento: l'immagine a tutto schermo e poi il volantino (prime due pagine affiancate).
         Si creano una volta sola; se l'evento viene modificato sul sito cambiano nome e si rifanno."""
-        signature = hashlib.sha1(f"{event['modified']}|{event['flyer']}|{event['image']}".encode()).hexdigest()[:8]
+        # «v2»: le immagini del sito ora riempiono tutto lo schermo; le pagine già create si rifanno.
+        signature = hashlib.sha1(f"v2|{event['modified']}|{event['flyer']}|{event['image']}".encode()).hexdigest()[:8]
         stem = f"{EVENTS_PREFIX}{safe_channel_id(event['id'])}_{signature}"
         wanted = []
         if event["image"]:
