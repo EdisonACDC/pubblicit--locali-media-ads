@@ -2986,7 +2986,7 @@ class CarellasServerTest(unittest.TestCase):
     def test_short_schedule_blocks_stay_readable(self):
         html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
         # Zoom automatico: la fascia più corta resta larga abbastanza; con − e + si cambia a mano.
-        self.assertIn("const autoZoom=Math.max(1,Math.min(6,Math.ceil(46*(H1-H0)/(Math.max(5,shortest)*(S.laneBase||560)))));", html)
+        self.assertIn("const autoZoom=Math.max(1,Math.min(6,Math.ceil(90*(H1-H0)/(Math.max(5,shortest)*(S.laneBase||560)))));", html)
         self.assertIn("'zoom-auto':()=>{S.sel.zoom=null;render()}", html)
         # Le fasce brevi mostrano iniziali e ora e si allargano al passaggio o quando sono scelte.
         self.assertIn("narrow=(b-a)/(H1-H0)*zoom<0.1", html)
@@ -3114,6 +3114,68 @@ class CarellasServerTest(unittest.TestCase):
                 app.store.config["music"] = original
         finally:
             app.SONOS_UNRESPONSIVE.clear()
+
+    def test_automatic_mix_is_never_the_same(self):
+        from datetime import date, timedelta
+        app = self.app
+        music = app.store.config["music"]
+        saved = json.loads(json.dumps(music))
+        sources = [
+            {"content_id": "FV:2/1", "content_type": "favorite_item_id", "name": "Pranzo italiano", "kind": "playlist"},
+            {"content_id": "FV:2/2", "content_type": "favorite_item_id", "name": "Dinner Jazz", "kind": "playlist"},
+            {"content_id": "FV:2/3", "content_type": "favorite_item_id", "name": "Aperitivo Lounge", "kind": "playlist"},
+            {"content_id": "http://kiss", "content_type": "radio_url", "name": "Radio Kiss Kiss Italia", "kind": "radio"},
+            {"content_id": "FV:2/9", "content_type": "favorite_item_id", "name": "RTL 102.5", "kind": "radio"},
+        ]
+        try:
+            music["schedule"] = [{"days": [0, 1, 2, 3, 4, 5], "start": "10:00", "end": "23:00", "enabled": True}]
+            music["slots"] = [{"id": "x", "players": ["media_player.sala", "media_player.bar"], "start": "10:00",
+                               "duration_minutes": 60, "days": [0], "content_id": "FV:2/1"}]
+            music["mix"] = {"enabled": True, "block_minutes": 60, "sources": sources, "players": [], "volume": 30}
+            start = date(2026, 10, 1)
+            sequences, previous = set(), None
+            for offset in range(45):
+                day = start + timedelta(days=offset)
+                plan = app.mix_plan(day)
+                if day.weekday() == 6:
+                    # Domenica chiuso: nessun blocco; il lunedì evita le sorgenti del sabato.
+                    self.assertEqual(plan, [])
+                    continue
+                # Tutto l'orario di apertura, a blocchi di un'ora.
+                self.assertEqual((plan[0]["start"], plan[-1]["end"], len(plan)), (600, 1380, 13))
+                for one, two in zip(plan, plan[1:]):
+                    self.assertNotEqual(one["content_id"], two["content_id"])
+                    self.assertNotEqual(one["kind"], two["kind"])  # radio e playlist si alternano
+                if previous:
+                    for block in plan:
+                        same = [p for p in previous if p["start"] == block["start"]]
+                        if same:
+                            self.assertNotEqual(same[0]["content_id"], block["content_id"])
+                sequence = tuple(block["content_id"] for block in plan)
+                self.assertNotIn(sequence, sequences)
+                sequences.add(sequence)
+                previous = plan
+            # Sempre lo stesso mix per lo stesso giorno (anteprima = quello che suona).
+            app.MIX_CACHE["signature"] = None
+            self.assertEqual(app.mix_plan(start + timedelta(days=10)), app.mix_plan(start + timedelta(days=10)))
+            # La fascia in onda viene dal mix, con le casse delle fasce se il mix non ne ha.
+            moment = datetime(2026, 10, 14, 15, 30).astimezone()
+            slot = app.active_mix_slot(moment)
+            block = next(b for b in app.mix_plan(moment.date()) if b["start"] <= 930 < b["end"])
+            self.assertEqual((slot["content_id"], slot["players"], slot["volume"]),
+                             (block["content_id"], ["media_player.sala", "media_player.bar"], 30))
+            self.assertEqual(slot["id"], "mix-2026-10-14-900")
+            self.assertEqual(len(app.mix_week(moment.date())), 7)
+            # Con meno di due sorgenti il mix resta spento.
+            music["mix"]["sources"] = sources[:1]
+            self.assertIsNone(app.active_mix_slot(moment))
+        finally:
+            app.store.config["music"] = saved
+            app.MIX_CACHE["signature"] = None
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        self.assertIn("const editor=S.sel.mix?mixEditor():", html)
+        self.assertIn("${mixOn?mixBlocks(d):''}", html)
+        self.assertIn("['Mix automatico','Automatischer Mix']", html)
 
     def test_overnight_schedule(self):
         schedule = [{"days": [6], "start": "22:00", "end": "02:00", "enabled": True}]
