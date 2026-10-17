@@ -1801,6 +1801,67 @@ class CarellasServerTest(unittest.TestCase):
                                                                "media_player.bar": ["media_player.bar", "media_player.terrazza"]}))
         self.assertEqual(self.app.sonos_group_ready(players, {"media_player.terrazza": group}), "media_player.terrazza")
 
+    def test_each_sonos_returns_to_its_own_volume_after_spot(self):
+        ad = "Carellas_Ristorante_Spot_DE_Maschile.mp3"
+        players = ["media_player.sala", "media_player.terrazza", "media_player.bar"]
+        own = {"media_player.sala": 0.35, "media_player.terrazza": 0.25, "media_player.bar": 0.55}
+        self.app.SONOS_VOLUME_MEMORY.clear()
+        # Il volume del Bar è stato scelto dal pannello, ma Home Assistant non lo riporta nello stato.
+        self.request("/api/sonos/volume", "POST", {"entity_id": "media_player.bar", "volume": 55})
+        states = [{"entity_id": player, "state": "playing",
+                   "attributes": {"friendly_name": player, "group_members": players,
+                                  **({} if player == "media_player.bar" else {"volume_level": own[player]})}}
+                  for player in players]
+        self.app.store.update({"audio": {"players": players, "ads": [ad], "repeat_count": 1, "volume": 40,
+                                         "transition_seconds": 3}})
+        self.calls.clear()
+        try:
+            with mock.patch.object(self.app.ha, "states", return_value=states), mock.patch.object(
+                self.app, "probe_media_duration", return_value=20
+            ), mock.patch.object(self.app.time, "sleep"), mock.patch.object(
+                self.app.audio_stop_event, "wait", return_value=False
+            ):
+                self.app.play_audio(ad, manual=True)
+            volumes = [call[2] for call in self.calls if call[1] == "volume_set"]
+            final = {}
+            for payload in volumes[-3:]:
+                for player in payload["entity_id"]:
+                    final[player] = payload["volume_level"]
+            # Dopo lo spot ogni cassa è al suo volume (35, 25, 55), non a un valore uguale per tutte.
+            self.assertEqual(final, own)
+            # Senza musica da riprendere i Sonos tornano comunque al volume di prima.
+            self.calls.clear()
+            self.app.restore_sonos_playback(["media_player.sala"], [], players, own, 3)
+            self.assertIn(("media_player", "volume_set", {"entity_id": ["media_player.bar"], "volume_level": 0.55}), self.calls)
+            self.assertNotIn("media_play", [call[1] for call in self.calls])
+        finally:
+            self.app.SONOS_VOLUME_MEMORY.clear()
+
+    def test_sonos_rejoining_the_music_group_keeps_its_volume(self):
+        states = [
+            {"entity_id": "media_player.sala", "state": "playing",
+             "attributes": {"group_members": ["media_player.sala"], "volume_level": 0.35}},
+            {"entity_id": "media_player.bar", "state": "idle",
+             "attributes": {"group_members": ["media_player.bar"], "volume_level": 0.01}},
+        ]
+        self.app.SONOS_VOLUME_MEMORY.clear()
+        self.app.remember_sonos_volumes({"media_player.bar": 0.55})
+        self.calls.clear()
+        try:
+            levels = self.app.remembered_sonos_volumes(["media_player.sala", "media_player.bar"], 0.25)
+            self.assertEqual(levels, {"media_player.sala": 0.25, "media_player.bar": 0.55})
+            with mock.patch.object(self.app.ha, "states", return_value=states), mock.patch.object(
+                self.app, "SONOS_GROUP_SETTLE_SECONDS", 0
+            ):
+                result = self.app.repair_sonos_group(["media_player.sala", "media_player.bar"], "media_player.sala", levels)
+            self.assertEqual(result["missing"], ["media_player.bar"])
+            # Il Bar rientra con il suo 55, non con il volume della fascia musicale.
+            self.assertIn(("media_player", "volume_set", {"entity_id": ["media_player.bar"], "volume_level": 0.55}), self.calls)
+        finally:
+            self.app.SONOS_VOLUME_MEMORY.clear()
+        source = (Path(__file__).parents[1] / "carellas_media_ads/app/server.py").read_text(encoding="utf-8")
+        self.assertIn("remembered_sonos_volumes(expected, self.music_volume)", source)
+
     def test_only_selected_sonos_are_grouped_and_spot_uses_coordinator(self):
         ad = "Carellas_Ristorante_Spot_DE_Maschile.mp3"
         players = ["media_player.sala", "media_player.terrazza", "media_player.bar"]
