@@ -19,6 +19,8 @@ class CarellasServerTest(unittest.TestCase):
         cls.temp = tempfile.TemporaryDirectory()
         os.environ["CARELLAS_DATA_DIR"] = str(Path(cls.temp.name) / "data")
         os.environ["CARELLAS_MEDIA_DIR"] = str(Path(cls.temp.name) / "media")
+        # Nei test lo stato finto dei Sonos è subito quello giusto: niente attesa iniziale.
+        os.environ["CARELLAS_SONOS_START_SETTLE_SECONDS"] = "0"
         source = Path(__file__).parents[1] / "carellas_media_ads_beta/app/server.py"
         spec = importlib.util.spec_from_file_location("carellas_server", source)
         cls.app = importlib.util.module_from_spec(spec)
@@ -1541,6 +1543,90 @@ class CarellasServerTest(unittest.TestCase):
             self.assertTrue(any("non sono partiti" in item["message"] for item in self.app.store.logs[:5]))
         finally:
             self.app.store.config["music"] = original
+
+    def test_music_start_check_ignores_stale_state_and_accepts_late_start(self):
+        app = self.app
+        playing = [{"entity_id": "media_player.sala", "state": "playing", "attributes": {}}]
+        paused = [{"entity_id": "media_player.sala", "state": "paused", "attributes": {}}]
+        buffering = [{"entity_id": "media_player.sala", "state": "buffering", "attributes": {}}]
+        # Subito dopo il comando HA riporta ancora «playing» della musica di prima, poi il Sonos resta fermo:
+        # la fascia non va considerata partita.
+        with mock.patch.object(app, "SONOS_START_SETTLE_SECONDS", 2), \
+                mock.patch.object(app.ha, "states", side_effect=[playing, playing] + [paused] * 30), \
+                mock.patch.object(app.ha, "service"), mock.patch.object(app.time, "sleep"):
+            self.assertFalse(app.ensure_sonos_playing("media_player.sala"))
+        # «buffering» da solo non basta: serve «playing» per due controlli di fila.
+        with mock.patch.object(app.ha, "states", side_effect=[buffering] * 3 + [playing] * 2), \
+                mock.patch.object(app.ha, "service"), mock.patch.object(app.time, "sleep"):
+            self.assertTrue(app.ensure_sonos_playing("media_player.sala"))
+
+        # Playlist lunga: i Sonos partono dopo il controllo. La fascia si considera avviata,
+        # senza errore e senza ricominciarla da capo.
+        original = json.loads(json.dumps(app.store.config["music"]))
+        slot = {"id": "nino", "name": "Nino Fiorello", "players": ["media_player.sala"], "content_id": "FV:2/9",
+                "content_type": "favorite_item_id", "volume": 20}
+        engine = app.Scheduler()
+        app.store.config["music"] = {"enabled": True, "players": ["media_player.sala"], "slots": [slot],
+                                     "schedule": [], "stop_at_end": True, "volume": 25}
+        late = app.SonosNotStarted("I Sonos non sono partiti con «Nino Fiorello»: riprovo tra poco", ["media_player.sala"])
+        try:
+            with mock.patch.object(app, "active_music_slot", return_value=slot), \
+                    mock.patch.object(app, "start_music", side_effect=late) as start, \
+                    mock.patch.object(app.ha, "states", return_value=playing), \
+                    mock.patch.object(app.ha, "service"), mock.patch.object(app.time, "sleep"):
+                engine.music_tick()
+                engine.music_tick()
+            start.assert_called_once()
+            self.assertEqual(engine.music_slot_id, "nino")
+            self.assertIsNone(engine.music_failed_slot_key)
+            self.assertTrue(engine.music_active)
+            recent = [item["message"] for item in app.store.logs[:5]]
+            self.assertTrue(any("partita con un po' di ritardo" in message for message in recent))
+            self.assertFalse(any("Avvio musica non riuscito" in message for message in recent))
+        finally:
+            app.store.config["music"] = original
+
+    def test_music_stopped_during_slot_restarts_by_itself(self):
+        app = self.app
+        slot = {"id": "rist", "name": "Ristorante", "players": ["media_player.sala"], "content_id": "FV:2/3",
+                "content_type": "favorite_item_id", "volume": 25}
+        paused = [{"entity_id": "media_player.sala", "state": "paused", "attributes": {}}]
+        playing = [{"entity_id": "media_player.sala", "state": "playing", "attributes": {}}]
+        engine = app.Scheduler()
+        engine.music_coordinator, engine.music_selection = "media_player.sala", dict(slot)
+        clock = [1000.0]
+        calls = []
+        with mock.patch.object(app.time, "monotonic", side_effect=lambda: clock[0]), \
+                mock.patch.object(app.time, "sleep"), \
+                mock.patch.object(app.ha, "service", side_effect=lambda d, n, p: calls.append(n)):
+            with mock.patch.object(app.ha, "states", return_value=paused):
+                engine.music_watchdog(slot)          # si accorge che è ferma
+                clock[0] += 10
+                engine.music_watchdog(slot)          # ferma da 10 s: si aspetta ancora
+                self.assertEqual(calls, [])
+            # Ferma da più di 20 secondi: Play, e la musica riparte.
+            states = iter([paused] + [playing] * 10)
+            with mock.patch.object(app.ha, "states", side_effect=lambda: next(states)):
+                clock[0] += 15
+                engine.music_watchdog(slot)
+            self.assertEqual(calls, ["media_play"])
+            self.assertTrue(any("si era fermata da sola" in item["message"] for item in app.store.logs[:3]))
+            # Se Play non basta (es. playlist finita), la fascia riparte dall'inizio.
+            calls.clear()
+            with mock.patch.object(app.ha, "states", return_value=paused), \
+                    mock.patch.object(app, "start_music", return_value=["media_player.sala"]) as start:
+                clock[0] += app.MUSIC_RETRY_SECONDS + 1
+                engine.music_watchdog(slot)
+                clock[0] += app.MUSIC_RESUME_SECONDS + 11
+                engine.music_watchdog(slot)
+            start.assert_called_once()
+            # Durante uno spot non si controlla nulla.
+            with mock.patch.object(app, "audio_playback_lock") as lock, \
+                    mock.patch.object(app.ha, "states", return_value=paused):
+                lock.locked.return_value = True
+                clock[0] += app.MUSIC_RETRY_SECONDS + 100
+                engine.music_watchdog(slot)
+                self.assertIsNone(engine.music_stopped_since)
 
     def test_music_start_survives_701_on_join_and_volume(self):
         busy = RuntimeError("UPnP Error 701 received: Transition not available from 192.168.178.12")

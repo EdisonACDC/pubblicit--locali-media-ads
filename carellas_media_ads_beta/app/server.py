@@ -77,11 +77,17 @@ SONOS_RESTORE_WAIT_SECONDS = max(0, int(os.environ.get("CARELLAS_SONOS_RESTORE_W
 # Cambio di sorgente (es. dalla radio a una playlist): Sonos risponde 701 finché chiude la sorgente
 # precedente. Si riprova più a lungo e poi si controlla che la musica suoni davvero.
 SONOS_SOURCE_RETRIES = max(1, int(os.environ.get("CARELLAS_SONOS_SOURCE_RETRIES", "5")))
-SONOS_START_CHECK_SECONDS = max(0, int(os.environ.get("CARELLAS_SONOS_START_CHECK_SECONDS", "12")))
+# Secondi dopo il comando in cui lo stato letto può essere ancora quello della musica di prima.
+SONOS_START_SETTLE_SECONDS = max(0, int(os.environ.get("CARELLAS_SONOS_START_SETTLE_SECONDS", "2")))
+# Una playlist lunga può metterci più di 10 secondi a caricarsi sui Sonos prima di suonare.
+SONOS_START_CHECK_SECONDS = max(0, int(os.environ.get("CARELLAS_SONOS_START_CHECK_SECONDS", "25")))
 MUSIC_RETRY_SECONDS = max(15, int(os.environ.get("CARELLAS_MUSIC_RETRY_SECONDS", "45")))
 # Sorgente rifiutata da Sonos (es. UPnP 402 Invalid Args): riprovare spesso non serve e a ogni
 # tentativo la musica in corso si abbassa e si rialza. Si riprova molto più di rado.
 MUSIC_RETRY_REJECTED_SECONDS = max(60, int(os.environ.get("CARELLAS_MUSIC_RETRY_REJECTED_SECONDS", "900")))
+# Durante una fascia i Sonos si fermano senza che nessuno l'abbia chiesto dal pannello: dopo questi secondi
+# la musica riparte da sola (fine della playlist, ripristino dopo uno spot non riuscito, intoppo di Sonos).
+MUSIC_RESUME_SECONDS = max(10, int(os.environ.get("CARELLAS_MUSIC_RESUME_SECONDS", "20")))
 # Ultimo volume scelto per ogni Sonos (cursore del pannello o volume letto prima di uno spot).
 # Serve quando Home Assistant non riporta il volume e quando un Sonos rientra nel gruppo:
 # ogni cassa torna al suo volume invece di un valore fisso uguale per tutte.
@@ -1972,32 +1978,58 @@ def play_rejected_source_elsewhere(coordinator, selection, error):
     play_radio_url(coordinator, station["url"])
 
 
-def sonos_playing(entity_id):
+def sonos_state(entity_id):
+    """Stato del Sonos in Home Assistant, oppure None se non è leggibile."""
     try:
         item = next((item for item in ha.states() if item.get("entity_id") == entity_id), None)
     except Exception:
         return None
-    # Stato non leggibile: non si può verificare, si considera partito.
     if not item or item.get("state") in (None, "unavailable", "unknown"):
         return None
-    return item.get("state") in ("playing", "buffering")
+    return item.get("state")
+
+
+def sonos_playing(entity_id):
+    state = sonos_state(entity_id)
+    # Stato non leggibile: non si può verificare, si considera partito.
+    if state is None:
+        return None
+    return state in ("playing", "buffering")
+
+
+class SonosNotStarted(RuntimeError):
+    """Il Sonos ha accettato il comando ma non risulta in riproduzione (es. playlist lunga ancora in caricamento)."""
+
+    def __init__(self, message, players):
+        super().__init__(message)
+        self.players = list(players)
 
 
 def ensure_sonos_playing(entity_id, checks=None):
     """Dopo il comando controlla che il Sonos suoni davvero: se è fermo prova a ripartire con play."""
     checks = SONOS_START_CHECK_SECONDS if checks is None else checks
+    stable = 0
     for second in range(checks):
-        playing = sonos_playing(entity_id)
-        if playing is None or playing:
+        # Subito dopo il comando Home Assistant può riportare ancora lo stato della musica di prima:
+        # si guarda dopo qualche secondo e serve «playing» per due controlli di fila. Prima bastava
+        # «playing» o «buffering» al primo istante e una fascia mai partita sembrava in onda.
+        state = sonos_state(entity_id)
+        if state is None:
             return True
-        if second in (4, 8):
+        if second < SONOS_START_SETTLE_SECONDS:
+            time.sleep(1)
+            continue
+        stable = stable + 1 if state == "playing" else 0
+        if stable >= 2:
+            return True
+        if second in (5, 10, 16, 22) and state != "playing":
             try:
                 ha.service("media_player", "media_play", {"entity_id": entity_id})
             except Exception as error:
                 if not sonos_transition_busy(error):
                     store.log("warning", f"Ripartenza Sonos non riuscita: {error}")
         time.sleep(1)
-    return checks == 0 or sonos_playing(entity_id) is not False
+    return checks == 0 or sonos_state(entity_id) in (None, "playing")
 
 
 def select_sonos_source(entity_id, source, retries=None):
@@ -2100,7 +2132,7 @@ def start_music(selection=None, fade_in=False):
             play_rejected_source_elsewhere(coordinator, selection, play_error)
         title = selection.get("name") or selection.get("title") or content_id
         if not ensure_sonos_playing(coordinator):
-            raise RuntimeError(f"I Sonos non sono partiti con «{title}»: riprovo tra poco")
+            raise SonosNotStarted(f"I Sonos non sono partiti con «{title}»: riprovo tra poco", players)
     except Exception:
         # Se il cambio non riesce, non lasciare i diffusori muti: prova a
         # riprendere il flusso che Sonos stava già eseguendo e il suo volume.
@@ -3172,6 +3204,11 @@ class Scheduler(threading.Thread):
         self.music_failed_slot_key = None
         self.music_retry_at = 0.0
         self.music_last_error = None
+        # Fascia il cui avvio è stato accettato dai Sonos ma che non suonava ancora: (chiave, casse, attese).
+        self.music_late_start = None
+        # Controllo della musica ferma durante la fascia (vedi music_watchdog).
+        self.music_watch_at = 0.0
+        self.music_stopped_since = None
         # Musica accesa o spenta a mano dal pannello: {"mode": "on"/"off", "slot_key": ..., "name": ...}.
         self.music_override = None
         self.music_expected_players = []
@@ -3384,6 +3421,66 @@ class Scheduler(threading.Thread):
         store.log("info", {"pause": "Musica in pausa", "play": "Musica ripresa", "next": "Brano successivo",
                            "previous": "Brano precedente"}[action])
 
+    def music_started(self, slot, slot_key, players, target_players, cfg, late=False):
+        """La fascia suona: da qui in poi il motore la segue (gruppo, volumi, prossimo cambio)."""
+        self.music_players = list(players)
+        self.music_expected_players = target_players
+        self.music_coordinator = players[0] if players else None
+        self.music_group_check_at = 0.0
+        self.music_group_issue = None
+        self.music_volume = max(0, min(int(slot.get("volume", cfg.get("volume", 25))), 100)) / 100
+        self.music_slot_key = slot_key
+        self.music_slot_id = slot.get("id")
+        self.music_selection = copy.deepcopy(slot)
+        self.music_failed_slot_key = None
+        self.music_retry_at = 0.0
+        self.music_last_error = None
+        self.music_late_start = None
+        self.music_stopped_since = None
+        if late:
+            # Il ripiego dopo il primo controllo ha rimesso i volumi di prima: si danno quelli della fascia.
+            manual = manual_sonos_volumes(players)
+            set_sonos_volume_levels({player: manual.get(player, self.music_volume) for player in players})
+            title = slot.get("name") or slot.get("title") or slot.get("content_id", "")
+            store.log("info", f"Musica partita con un po' di ritardo: «{title}»")
+
+    def music_watchdog(self, slot):
+        """La fascia è in corso ma i Sonos sono fermi e nessuno l'ha chiesto dal pannello o dal tablet
+        (fine della playlist, ripristino dopo uno spot non riuscito, intoppo di Sonos): la musica riparte."""
+        now = time.monotonic()
+        if now < self.music_watch_at:
+            return
+        self.music_watch_at = now + 10
+        coordinator = self.music_coordinator
+        if not coordinator or audio_playback_lock.locked() or sonos_playing(coordinator) is not False:
+            self.music_stopped_since = None
+            return
+        if self.music_stopped_since is None:
+            self.music_stopped_since = now
+            return
+        if now - self.music_stopped_since < MUSIC_RESUME_SECONDS:
+            return
+        self.music_stopped_since = None
+        # Se non riparte, si riprova solo dopo un po': ogni tentativo può abbassare e rialzare il volume.
+        self.music_watch_at = now + MUSIC_RETRY_SECONDS
+        selection = self.music_selection or slot
+        title = selection.get("name") or selection.get("title") or selection.get("content_id", "")
+        store.log("warning", f"La musica «{title}» si era fermata da sola: la faccio ripartire")
+        try:
+            ha.service("media_player", "media_play", {"entity_id": coordinator})
+            if ensure_sonos_playing(coordinator, checks=8) and sonos_playing(coordinator) is True:
+                store.log("info", f"Musica ripartita: «{title}»")
+                return
+        except Exception as error:
+            store.log("warning", f"Ripartenza dei Sonos non riuscita: {error}")
+        # Play non basta (es. playlist finita): si riavvia la fascia dall'inizio.
+        try:
+            self.music_players = start_music(selection, fade_in=True)
+            self.music_coordinator = self.music_players[0] if self.music_players else None
+            store.log("info", f"Musica riavviata: «{title}»")
+        except Exception as error:
+            store.log("error", f"Musica non ripartita: {music_error_message(error, selection)}")
+
     def current_slot_key(self):
         """Fascia del palinsesto in corso adesso (None fuori programma)."""
         cfg = store.config["music"]
@@ -3502,6 +3599,14 @@ class Scheduler(threading.Thread):
             else:
                 # Musica spenta o accesa a mano: niente avvii, arresti o controlli automatici del gruppo.
                 return
+        late = self.music_late_start
+        if active and late and late[0] == slot_key and slot_key == self.music_failed_slot_key \
+                and sonos_playing(late[1][0]) is True:
+            # La fascia era partita in ritardo (playlist lunga): i Sonos ora suonano. Riavviarla
+            # la farebbe ricominciare da capo e interromperebbe la musica.
+            self.music_started(slot, slot_key, late[1], late[2], cfg, late=True)
+            self.music_active = True
+            return
         if active and slot_key == self.music_failed_slot_key and time.monotonic() < self.music_retry_at:
             # Un Sonos in transizione può restituire UPnP 701 per alcuni
             # secondi. Evitiamo una raffica di tentativi a ogni ciclo.
@@ -3529,20 +3634,18 @@ class Scheduler(threading.Thread):
                     })
                     if SONOS_GROUP_SETTLE_SECONDS > 0:
                         time.sleep(SONOS_GROUP_SETTLE_SECONDS)
+                self.music_late_start = None
                 players = start_music(slot, fade_in=True)
-                self.music_players = players
-                self.music_expected_players = target_players
-                self.music_coordinator = players[0] if players else None
-                self.music_group_check_at = 0.0
-                self.music_group_issue = None
-                self.music_volume = max(0, min(int(slot.get("volume", cfg.get("volume", 25))), 100)) / 100
-                self.music_slot_key = slot_key
-                self.music_slot_id = slot.get("id")
-                self.music_selection = copy.deepcopy(slot)
-                self.music_failed_slot_key = None
-                self.music_retry_at = 0.0
-                self.music_last_error = None
+                self.music_started(slot, slot_key, players, target_players, cfg)
             except Exception as error:
+                if isinstance(error, SonosNotStarted) and error.players:
+                    # Il comando è passato ma i Sonos non suonavano ancora: al prossimo controllo, se nel
+                    # frattempo sono partiti, la fascia si considera avviata senza ricominciarla.
+                    self.music_late_start = (slot_key, error.players, target_players)
+                    if ensure_sonos_playing(error.players[0], checks=5) and sonos_playing(error.players[0]) is True:
+                        self.music_started(slot, slot_key, error.players, target_players, cfg, late=True)
+                        self.music_active = True
+                        return
                 rejected = sonos_source_rejected(error)
                 message = f"Avvio musica non riuscito: {music_error_message(error, slot)}"
                 # Lo stesso errore sulla stessa fascia si scrive una volta sola nel Registro.
@@ -3602,6 +3705,8 @@ class Scheduler(threading.Thread):
             self.music_coordinator = None
             self.music_group_issue = None
         self.music_active = active
+        if active and not changed and slot_key == self.music_slot_key:
+            self.music_watchdog(slot)
         if active and not changed and time.monotonic() >= self.music_group_check_at:
             self.music_group_check_at = time.monotonic() + SONOS_GROUP_CHECK_SECONDS
             expected = self.music_expected_players or list(dict.fromkeys(
