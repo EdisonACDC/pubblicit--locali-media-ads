@@ -860,7 +860,8 @@ class CarellasServerTest(unittest.TestCase):
         ) as sleep, mock.patch.object(self.app.audio_stop_event, "wait", return_value=False) as wait:
             self.app.play_audio(ad, manual=True)
         probe.assert_called_once_with(self.app.MEDIA_DIR / ad)
-        self.assertEqual([call.args[0] for call in sleep.call_args_list], [0.6, 0.6])
+        # La cassa è già da sola: niente distacco prima dello spot, resta solo l'attesa del ripristino.
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [0.6])
         self.assertAlmostEqual(
             wait.call_args_list[0].args[0],
             42.25 + self.app.SONOS_SPOT_TAIL_GUARD_SECONDS,
@@ -2092,6 +2093,39 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(self.calls[-1], ("media_player", "media_play", {
             "entity_id": ["media_player.sala"],
         }))
+
+    def test_spot_starts_at_once_on_existing_music_group(self):
+        ad = "Carellas_Ristorante_Spot_DE_Maschile.mp3"
+        players = ["media_player.sala", "media_player.terrazza", "media_player.bar"]
+        # La musica del locale suona già su questi Sonos, raggruppati con la Terrazza come coordinatore.
+        group = ["media_player.terrazza", "media_player.sala", "media_player.bar"]
+        states = [{"entity_id": player, "state": "playing",
+                   "attributes": {"friendly_name": player, "group_members": group, "volume_level": 0.3}}
+                  for player in players]
+        self.app.store.update({"audio": {"players": players, "ads": [ad], "repeat_count": 1, "volume": 40,
+                                         "transition_seconds": 0}})
+        self.calls.clear()
+        with mock.patch.object(self.app.ha, "states", return_value=states), mock.patch.object(
+            self.app, "probe_media_duration", return_value=20
+        ), mock.patch.object(self.app.time, "sleep"), mock.patch.object(
+            self.app.audio_stop_event, "wait", return_value=False
+        ):
+            self.app.play_audio(ad, manual=True)
+        names = [call[1] for call in self.calls]
+        # Niente distacco e nuovo raggruppamento (secondi di silenzio): lo spot va subito sul coordinatore.
+        self.assertNotIn("unjoin", names[:names.index("play_media")])
+        self.assertNotIn("join", names)
+        play = next(call for call in self.calls if call[1] == "play_media")
+        self.assertEqual(play[2]["entity_id"], "media_player.terrazza")
+        # Tra la dissolvenza e lo spot c'è un solo comando: il volume dello spot.
+        before = self.calls[names.index("play_media") - 1]
+        self.assertEqual(before, ("media_player", "volume_set", {"entity_id": players, "volume_level": 0.4}))
+        self.assertIn(("sonos", "restore", {"entity_id": ["media_player.terrazza"], "with_group": True}), self.calls)
+        # Se il gruppo contiene anche un Sonos non scelto, i diffusori vanno ancora separati.
+        self.assertIsNone(self.app.sonos_group_ready(players, {"media_player.terrazza": group + ["media_player.bagni"]}))
+        self.assertIsNone(self.app.sonos_group_ready(players, {"media_player.sala": ["media_player.sala"],
+                                                               "media_player.bar": ["media_player.bar", "media_player.terrazza"]}))
+        self.assertEqual(self.app.sonos_group_ready(players, {"media_player.terrazza": group}), "media_player.terrazza")
 
     def test_only_selected_sonos_are_grouped_and_spot_uses_coordinator(self):
         ad = "Carellas_Ristorante_Spot_DE_Maschile.mp3"

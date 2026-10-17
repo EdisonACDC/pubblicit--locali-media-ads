@@ -985,6 +985,19 @@ def sonos_playback_context(players):
     return snapshot_targets, resume_targets
 
 
+def sonos_group_ready(players, groups):
+    """Coordinatore del gruppo se i Sonos scelti formano già da soli un unico gruppo (di solito quello
+    della musica del locale). Allora lo spot parte subito lì: staccare e riunire i diffusori lasciava
+    qualche secondo di silenzio tra la musica e lo spot."""
+    players = list(dict.fromkeys(players))
+    if len(groups) != 1:
+        return None
+    coordinator, members = next(iter(groups.items()))
+    if coordinator in players and set(members) == set(players):
+        return coordinator
+    return None
+
+
 def sonos_group_topology(players):
     """Memorizza i gruppi reali dei Sonos scelti prima di uno spot."""
     try:
@@ -1204,13 +1217,15 @@ def play_audio(filename=None, manual=False, players=None):
         })
         snapshot_created = True
         fade_sonos(players, SONOS_QUIET_VOLUME, transition, previous_volumes)
-        ha.service("media_player", "unjoin", {"entity_id": players})
-        if SONOS_GROUP_SETTLE_SECONDS > 0:
-            time.sleep(SONOS_GROUP_SETTLE_SECONDS)
-        coordinator = prepare_sonos_group(players, force=True)
+        coordinator = sonos_group_ready(players, original_groups)
+        if not coordinator:
+            ha.service("media_player", "unjoin", {"entity_id": players})
+            if SONOS_GROUP_SETTLE_SECONDS > 0:
+                time.sleep(SONOS_GROUP_SETTLE_SECONDS)
+            coordinator = prepare_sonos_group(players, force=True)
+        # I Sonos sono già a volume minimo dopo la dissolvenza: lo spot parte subito al suo volume.
         quiet_levels = {player: SONOS_QUIET_VOLUME for player in players}
         spot_levels = {player: volume / 100 for player in players}
-        set_sonos_volume_levels(quiet_levels)
 
         for index in range(repetitions):
             if audio_stop_event.is_set():
