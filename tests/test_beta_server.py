@@ -81,6 +81,18 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(payload["runtime"]["media_base_url"], "http://192.168.1.10:8100")
         self.assertEqual(payload["runtime"]["player_local_url"], "http://192.168.1.10:8102")
 
+    def test_operator_page_through_ingress(self):
+        # Dentro Home Assistant /operatori arriva con il prefisso di Ingress: deve aprire la pagina degli operatori.
+        with urllib.request.urlopen(self.base + "/api/hassio_ingress/example/operatori") as response:
+            html = response.read().decode("utf-8")
+        self.assertIn("api/staff/state", html)
+        with urllib.request.urlopen(self.base + "/api/hassio_ingress/example/") as response:
+            self.assertNotIn("api/staff/state", response.read().decode("utf-8"))
+        status, payload = self.request("/api/hassio_ingress/example/api/staff/state")
+        self.assertEqual(status, 200)
+        # Senza accesso con password non c'è «Esci».
+        self.assertIsNone(payload["remote_user"])
+
     def test_instagram_token_stays_on_server(self):
         self.app.INSTAGRAM_TOKEN_FILE.unlink(missing_ok=True)
         with mock.patch.object(self.app.InstagramImporter, "_get", return_value={"username": "carellas.ristorante"}) as get:

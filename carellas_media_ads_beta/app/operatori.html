@@ -503,7 +503,7 @@ function renderTop(){
   $('top').innerHTML=`<div class="brand-op"><div class="seal">C</div>Carellas <span class="label" style="margin-left:4px">${esc(L('Operatori'))}</span></div>
     <span class="mono muted2" id="clock">${hhmm(nowMin())}</span>
     <div class="seg" role="group" aria-label="${esc(L('Lingua'))}"><button type="button" data-lang="it" aria-pressed="${S.lang==='it'}">IT</button><button type="button" data-lang="de" aria-pressed="${S.lang==='de'}">DE</button></div>
-    <form method="post" action="logout"><button class="btn btn-ghost btn-sm" type="submit">${esc(L('Esci'))}</button></form>`}
+    ${S.state&&S.state.remote_user?`<form method="post" action="logout"><button class="btn btn-ghost btn-sm" type="submit">${esc(L('Esci'))}</button></form>`:''}`}
 function render(){
   if(!S.state||S.drag)return;
   renderTop();
