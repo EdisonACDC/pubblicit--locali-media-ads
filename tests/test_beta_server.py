@@ -1407,7 +1407,6 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(attempts, 2)
         self.assertIn(("media_player", "media_stop", {"entity_id": "media_player.sala"}), calls)
 
-<<<<<<< HEAD
     def test_addresses_without_protocol_are_completed(self):
         saved_media = self.app.store.config.get("media_base_url", "")
         saved_player = json.loads(json.dumps(self.app.store.config.get("browser_player", {})))
@@ -1437,7 +1436,7 @@ class CarellasServerTest(unittest.TestCase):
         block = html[html.index("const DE=new Map(["):html.index("]);", html.index("const DE=new Map(["))].splitlines()[1:]
         rows = [line.rstrip() for line in block if line.strip()]
         self.assertTrue(all(line.endswith(",") for line in rows[:-1]))
-=======
+
     def test_slot_change_waits_out_long_701_and_checks_music_really_plays(self):
         busy = RuntimeError("UPnP Error 701 received: Transition not available from 192.168.178.12")
         calls, attempts = [], {"play_media": 0, "media_stop": 0}
@@ -1515,7 +1514,6 @@ class CarellasServerTest(unittest.TestCase):
             self.assertIn("riprova tra qualche secondo", json.loads(refused.exception.read())["error"])
         finally:
             self.app.store.config["music"] = original
->>>>>>> origin/fix/cambio-fascia-musica
 
     def test_sonos_source_retries_701_then_succeeds(self):
         calls = []
