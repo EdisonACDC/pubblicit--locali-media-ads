@@ -1493,9 +1493,10 @@ class CarellasServerTest(unittest.TestCase):
             "schedule": [], "stop_at_end": True, "volume": 25, "transition_seconds": 0,
         }
         try:
+            # La musica di prima si è fermata: viene riavviata.
             with mock.patch.object(self.app, "active_music_slot", side_effect=[first, second]), mock.patch.object(
                 self.app, "fade_sonos"
-            ), mock.patch.object(
+            ), mock.patch.object(self.app, "sonos_playing", return_value=False), mock.patch.object(
                 self.app, "start_music", side_effect=[["media_player.sala"], RuntimeError("Sonos occupato"), ["media_player.sala"]]
             ) as start:
                 engine.music_tick()
@@ -1505,6 +1506,51 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(start.call_count, 3)
         self.assertEqual(start.call_args_list[-1].args[0]["id"], "one")
         self.assertEqual(engine.music_slot_id, "one")
+
+    def test_rejected_source_keeps_previous_music_and_retries_rarely(self):
+        original = json.loads(json.dumps(self.app.store.config["music"]))
+        first = {"id": "radio", "name": "RTL 102.5 FM", "players": ["media_player.sala"],
+                 "content_id": "FV:2/31", "content_type": "favorite_item_id", "volume": 30}
+        second = {"id": "pl", "name": "Pranzo italiano", "players": ["media_player.sala"],
+                  "content_id": "S:/Pranzo", "content_type": "playlist", "volume": 20}
+        rejected = RuntimeError('Home Assistant 500: {"message":"Error on media_player.sala (UPnP error code 402): '
+                                'UPnP Error 402 received: Invalid Args from 192.168.178.12"}')
+        engine = self.app.Scheduler()
+        self.app.store.config["music"] = {"enabled": True, "players": ["media_player.sala"], "slots": [first, second],
+                                          "schedule": [], "stop_at_end": True, "volume": 25, "transition_seconds": 3}
+        fades = []
+        try:
+            with mock.patch.object(self.app, "active_music_slot", side_effect=[first, second, second, second]),                     mock.patch.object(self.app, "fade_sonos", side_effect=lambda *a, **k: fades.append(a[1])),                     mock.patch.object(self.app, "sonos_volume_levels", return_value={"media_player.sala": 0.35}),                     mock.patch.object(self.app, "sonos_playing", return_value=True),                     mock.patch.object(self.app, "start_music", side_effect=[["media_player.sala"], rejected]) as start:
+                engine.music_tick()
+                logs = len(self.app.store.logs)
+                engine.music_tick()
+                engine.music_tick()
+                engine.music_tick()
+            # La radio di prima non viene riavviata: torna solo al suo volume (35).
+            self.assertEqual(start.call_count, 2)
+            self.assertEqual(fades[-1], {"media_player.sala": 0.35})
+            new_logs = [item["message"] for item in self.app.store.logs[:len(self.app.store.logs) - logs]]
+            self.assertEqual(sum("Avvio musica non riuscito" in message for message in new_logs), 1)
+            self.assertTrue(any("Sonos non accetta la sorgente della fascia «Pranzo italiano» (errore 402)" in m
+                                for m in new_logs))
+            # Niente nuovi tentativi ogni 45 secondi: la musica non si abbassa e rialza di continuo.
+            self.assertGreater(engine.music_retry_at - self.app.time.monotonic(), 600)
+        finally:
+            self.app.store.config["music"] = original
+        # Se la stessa voce è tra i Preferiti Sonos, la fascia parte per nome.
+        states = [{"entity_id": "media_player.sala", "state": "playing",
+                   "attributes": {"group_members": ["media_player.sala"], "volume_level": 0.3,
+                                  "source_list": ["RTL 102.5 FM", "Pranzo Italiano"]}}]
+        calls = []
+
+        def service(domain, name, payload):
+            calls.append((name, payload))
+            if name == "play_media":
+                raise rejected
+
+        with mock.patch.object(self.app.ha, "states", return_value=states),                 mock.patch.object(self.app.ha, "service", side_effect=service),                 mock.patch.object(self.app.time, "sleep"):
+            self.app.start_music(second)
+        self.assertIn(("select_source", {"entity_id": "media_player.sala", "source": "Pranzo Italiano"}), calls)
 
     def test_scheduler_waits_before_retrying_failed_music_slot(self):
         original = json.loads(json.dumps(self.app.store.config["music"]))
