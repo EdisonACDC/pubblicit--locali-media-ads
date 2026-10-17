@@ -71,7 +71,7 @@ SONOS_SPOT_TAIL_GUARD_SECONDS = max(
     0.0, min(float(os.environ.get("CARELLAS_SONOS_SPOT_TAIL_GUARD_SECONDS", "0.4")), 2.0)
 )
 SONOS_QUIET_VOLUME = 0.01
-HA_SERVICE_TIMEOUT = max(5, int(os.environ.get("CARELLAS_HA_SERVICE_TIMEOUT", "30")))
+HA_SERVICE_TIMEOUT = max(5, int(os.environ.get("CARELLAS_HA_SERVICE_TIMEOUT", "20")))
 SONOS_RESTORE_WAIT_SECONDS = max(0, int(os.environ.get("CARELLAS_SONOS_RESTORE_WAIT_SECONDS", "25")))
 # Cambio di sorgente (es. dalla radio a una playlist): Sonos risponde 701 finché chiude la sorgente
 # precedente. Si riprova più a lungo e poi si controlla che la musica suoni davvero.
@@ -909,6 +909,48 @@ def sonos_state_detail(state, configured=()):
     }
 
 
+# Sonos spento o scollegato che Home Assistant non segna ancora come «non disponibile»: i comandi
+# inviati a più Sonos insieme fallivano tutti per colpa sua. Viene saltato per qualche minuto.
+SONOS_UNRESPONSIVE = {}
+SONOS_UNRESPONSIVE_SECONDS = 180
+
+
+def sonos_unresponsive(player):
+    until = SONOS_UNRESPONSIVE.get(player)
+    if until and time.monotonic() < until:
+        return True
+    SONOS_UNRESPONSIVE.pop(player, None)
+    return False
+
+
+def mark_sonos_unresponsive(player, error):
+    if not sonos_unresponsive(player):
+        store.log("warning", f"Il Sonos {player.removeprefix('media_player.')} non risponde ({error}): "
+                             "lo salto per 3 minuti, gli altri continuano")
+    SONOS_UNRESPONSIVE[player] = time.monotonic() + SONOS_UNRESPONSIVE_SECONDS
+
+
+def sonos_service_each(domain, name, payload, call=None, split_on_timeout=True):
+    """Comando a più Sonos insieme; se fallisce lo ripete uno alla volta e salta quelli che non rispondono."""
+    call = call or ha.service
+    entities = payload.get("entity_id")
+    try:
+        return call(domain, name, payload)
+    except Exception as error:
+        if not isinstance(entities, list) or len(entities) < 2 or sonos_transition_busy(error)                 or (not split_on_timeout and sonos_request_timed_out(error)):
+            raise
+        done = 0
+        for entity in entities:
+            try:
+                call(domain, name, {**payload, "entity_id": [entity]})
+                done += 1
+            except Exception as single_error:
+                mark_sonos_unresponsive(entity, single_error)
+        if not done:
+            raise
+        return []
+
+
 def available_sonos_players(players):
     """Scarta entità eliminate, non disponibili o non appartenenti all'integrazione Sonos."""
     requested = list(dict.fromkeys(player for player in players if player))
@@ -935,6 +977,8 @@ def available_sonos_players(players):
     removed = [player for player in requested if player not in valid]
     if removed:
         store.log("warning", "Altoparlanti ignorati perché non sono Sonos disponibili: " + ", ".join(removed))
+    # Sonos che non hanno risposto da poco: si saltano senza aspettare un altro errore.
+    valid = [player for player in valid if not sonos_unresponsive(player)]
     return valid
 
 
@@ -956,10 +1000,20 @@ def prepare_sonos_group(players, force=False):
         store.log("warning", f"Stato gruppo Sonos non leggibile: {error}")
 
     if force or not already_grouped:
-        sonos_service("media_player", "join", {
-            "entity_id": coordinator,
-            "group_members": players[1:],
-        })
+        try:
+            sonos_service("media_player", "join", {
+                "entity_id": coordinator,
+                "group_members": players[1:],
+            })
+        except Exception as error:
+            if len(players) < 3 or sonos_transition_busy(error):
+                raise
+            # Un Sonos spento fa fallire tutto il raggruppamento: si aggiungono uno alla volta.
+            for member in players[1:]:
+                try:
+                    sonos_service("media_player", "join", {"entity_id": coordinator, "group_members": [member]})
+                except Exception as member_error:
+                    mark_sonos_unresponsive(member, member_error)
         if SONOS_GROUP_SETTLE_SECONDS > 0:
             time.sleep(SONOS_GROUP_SETTLE_SECONDS)
         store.log("info", f"Gruppo Sonos sincronizzato: {len(players)} altoparlanti")
@@ -1035,7 +1089,7 @@ def repair_sonos_group(players, preferred_coordinator=None, volume_level=None):
 
     reachable = [
         player for player in requested
-        if player in states and states[player].get("state") != "unavailable"
+        if player in states and states[player].get("state") != "unavailable" and not sonos_unresponsive(player)
     ]
     unavailable = [player for player in requested if player not in reachable]
     if not reachable:
@@ -1088,6 +1142,76 @@ def remember_sonos_volumes(levels):
                 continue
 
 
+# Volumi scelti a mano (cursori del pannello o app Sonos): valgono per tutta la giornata, anche quando
+# cambia la fascia musicale. Il giorno dopo si riparte dal volume delle fasce. Restano salvati su file
+# così sopravvivono a un riavvio dell'add-on.
+SONOS_MANUAL_FILE = DATA_DIR / "carellas_sonos_volumes.json"
+SONOS_LAST_SET = {}
+SONOS_MANUAL_CANDIDATES = {}
+
+
+def _load_manual_volumes():
+    try:
+        data = json.loads(SONOS_MANUAL_FILE.read_text(encoding="utf-8"))
+        return {str(player): (float(item[0]), str(item[1])) for player, item in data.items()}
+    except (FileNotFoundError, OSError, ValueError, TypeError, IndexError, AttributeError):
+        return {}
+
+
+SONOS_MANUAL_VOLUMES = _load_manual_volumes()
+
+
+def _save_manual_volumes():
+    try:
+        SONOS_MANUAL_FILE.parent.mkdir(parents=True, exist_ok=True)
+        temporary = SONOS_MANUAL_FILE.with_suffix(".tmp")
+        temporary.write_text(json.dumps({p: list(v) for p, v in SONOS_MANUAL_VOLUMES.items()}), encoding="utf-8")
+        os.replace(temporary, SONOS_MANUAL_FILE)
+    except OSError as error:
+        store.log("warning", f"Volumi scelti a mano non salvati: {error}")
+
+
+def set_manual_sonos_volume(player, level):
+    level = max(0.0, min(float(level), 1.0))
+    with SONOS_VOLUME_MEMORY_LOCK:
+        SONOS_MANUAL_VOLUMES[player] = (level, datetime.now().date().isoformat())
+        SONOS_VOLUME_MEMORY[player] = level
+        SONOS_LAST_SET[player] = level
+        SONOS_MANUAL_CANDIDATES.pop(player, None)
+        _save_manual_volumes()
+
+
+def manual_sonos_volumes(players):
+    """Volumi scelti a mano oggi per questi Sonos."""
+    today = datetime.now().date().isoformat()
+    with SONOS_VOLUME_MEMORY_LOCK:
+        return {player: SONOS_MANUAL_VOLUMES[player][0] for player in dict.fromkeys(players)
+                if player in SONOS_MANUAL_VOLUMES and SONOS_MANUAL_VOLUMES[player][1] == today}
+
+
+def detect_manual_sonos_volumes(live_levels):
+    """Volume cambiato fuori dall'add-on (es. app Sonos): se resta uguale per due controlli di fila
+    e diverso da quello impostato dall'add-on, diventa il volume scelto a mano per oggi."""
+    changed = []
+    with SONOS_VOLUME_MEMORY_LOCK:
+        for player, level in (live_levels or {}).items():
+            last = SONOS_LAST_SET.get(player)
+            if last is None or abs(level - last) < 0.02:
+                SONOS_MANUAL_CANDIDATES.pop(player, None)
+                continue
+            candidate = SONOS_MANUAL_CANDIDATES.get(player)
+            if candidate is not None and abs(candidate - level) < 0.01:
+                SONOS_MANUAL_CANDIDATES.pop(player, None)
+                changed.append((player, level))
+            else:
+                SONOS_MANUAL_CANDIDATES[player] = level
+    for player, level in changed:
+        set_manual_sonos_volume(player, level)
+        store.log("info", f"Volume di {player.removeprefix('media_player.')} cambiato a mano ({round(level * 100)}): "
+                          "lo mantengo per oggi")
+    return changed
+
+
 def remembered_sonos_volumes(players, fallback):
     with SONOS_VOLUME_MEMORY_LOCK:
         return {player: SONOS_VOLUME_MEMORY.get(player, fallback) for player in dict.fromkeys(players)}
@@ -1132,10 +1256,14 @@ def set_sonos_volume_levels(levels):
     for player, level in levels.items():
         grouped.setdefault(round(max(0.0, min(float(level), 1.0)), 3), []).append(player)
     for level, players in grouped.items():
-        sonos_service("media_player", "volume_set", {
+        sonos_service_each("media_player", "volume_set", {
             "entity_id": players,
             "volume_level": level,
-        })
+        }, call=sonos_service)
+        # Ultimo volume dato dall'add-on: serve a riconoscere quello cambiato a mano dall'app Sonos.
+        with SONOS_VOLUME_MEMORY_LOCK:
+            for player in players:
+                SONOS_LAST_SET[player] = level
 
 
 def fade_sonos(players, target, seconds, start_levels=None):
@@ -1193,10 +1321,12 @@ def restore_sonos_playback(snapshot_targets, resume_targets, selected_players=No
     last_error = None
     for attempt in range(SONOS_RESTORE_RETRIES):
         try:
-            ha.service("sonos", "restore", {
+            # Con un Sonos spento il ripristino di tutti fallirebbe: si ripristinano gli altri.
+            # Se Home Assistant è solo lento (timeout) non si ripete: vedi sotto.
+            sonos_service_each("sonos", "restore", {
                 "entity_id": snapshot_targets,
                 "with_group": True,
-            })
+            }, split_on_timeout=False)
             last_error = None
             break
         except Exception as error:
@@ -1224,7 +1354,7 @@ def restore_sonos_playback(snapshot_targets, resume_targets, selected_players=No
             set_sonos_volume_levels({player: SONOS_QUIET_VOLUME for player in selected_players})
         elif volume_levels:
             set_sonos_volume_levels(volume_levels)
-        ha.service("media_player", "media_play", {"entity_id": resume_targets})
+        sonos_service_each("media_player", "media_play", {"entity_id": resume_targets})
         if volume_levels and transition_seconds > 0:
             fade_sonos(
                 selected_players,
@@ -1286,7 +1416,7 @@ def play_audio(filename=None, manual=False, players=None):
         # normale flusso sul coordinatore del gruppo temporaneo.
         snapshot_targets, resume_targets = sonos_playback_context(players)
         original_groups = sonos_group_topology(players)
-        ha.service("sonos", "snapshot", {
+        sonos_service_each("sonos", "snapshot", {
             "entity_id": snapshot_targets,
             "with_group": True,
         })
@@ -1294,7 +1424,7 @@ def play_audio(filename=None, manual=False, players=None):
         fade_sonos(players, SONOS_QUIET_VOLUME, transition, previous_volumes)
         coordinator = sonos_group_ready(players, original_groups)
         if not coordinator:
-            ha.service("media_player", "unjoin", {"entity_id": players})
+            sonos_service_each("media_player", "unjoin", {"entity_id": players})
             if SONOS_GROUP_SETTLE_SECONDS > 0:
                 time.sleep(SONOS_GROUP_SETTLE_SECONDS)
             coordinator = prepare_sonos_group(players, force=True)
@@ -1612,11 +1742,18 @@ def start_music(selection=None, fade_in=False):
     if not players or not content_id:
         raise RuntimeError("Configurazione musica incompleta")
     coordinator = prepare_sonos_group(players)
-    target_volume = max(0, min(int(selection.get("volume", cfg.get("volume", 25))), 100)) / 100
+    slot_volume = max(0, min(int(selection.get("volume", cfg.get("volume", 25))), 100)) / 100
+    # Ogni Sonos con un volume scelto a mano oggi lo mantiene; gli altri prendono il volume della fascia.
+    manual = manual_sonos_volumes(players)
+    target_volume = {player: manual.get(player, slot_volume) for player in players}
     transition = max(0.0, min(float(cfg.get("transition_seconds", 3)), 10.0)) if fade_in else 0
-    previous_levels = sonos_volume_levels(players, target_volume)
-    start_level = SONOS_QUIET_VOLUME if transition > 0 else target_volume
-    set_sonos_volume_levels({player: start_level for player in players})
+    previous_levels = sonos_volume_levels(players, slot_volume)
+    start_level = SONOS_QUIET_VOLUME if transition > 0 else None
+    set_sonos_volume_levels({player: start_level if start_level is not None else target_volume[player]
+                             for player in players})
+    if manual:
+        store.log("info", "Volumi scelti a mano mantenuti: " + ", ".join(
+            f"{player.removeprefix('media_player.')} {round(level * 100)}" for player, level in manual.items()))
     content_type = selection.get("content_type", "music")
     payload = {
         "entity_id": coordinator,
@@ -1675,7 +1812,7 @@ def start_music(selection=None, fade_in=False):
                     players,
                     previous_levels,
                     transition,
-                    {player: start_level for player in players},
+                    {player: SONOS_QUIET_VOLUME for player in players},
                 )
             else:
                 set_sonos_volume_levels(previous_levels)
@@ -1687,7 +1824,7 @@ def start_music(selection=None, fade_in=False):
             players,
             target_volume,
             transition,
-            {player: start_level for player in players},
+            {player: SONOS_QUIET_VOLUME for player in players},
         )
     title = selection.get("name") or selection.get("title") or content_id
     store.log("success", f"Musica del locale avviata sul gruppo Sonos sincronizzato: {title}")
@@ -1699,7 +1836,7 @@ def stop_music(players=None, fade_seconds=0):
     if players:
         if fade_seconds:
             fade_sonos(players, SONOS_QUIET_VOLUME, fade_seconds)
-        ha.service("media_player", "media_stop", {"entity_id": players})
+        sonos_service_each("media_player", "media_stop", {"entity_id": players})
         store.log("info", "Musica del locale arrestata dalla programmazione")
 
 
@@ -2446,8 +2583,8 @@ class Scheduler(threading.Thread):
                     group_kept = False
                     # Scioglie il vecchio gruppo prima di crearne uno diverso:
                     # un Sonos rimosso dalla fascia non deve continuare a suonare.
-                    ha.service("media_player", "media_stop", {"entity_id": previous})
-                    ha.service("media_player", "unjoin", {
+                    sonos_service_each("media_player", "media_stop", {"entity_id": previous})
+                    sonos_service_each("media_player", "unjoin", {
                         "entity_id": list(dict.fromkeys(previous + target_players)),
                     })
                     if SONOS_GROUP_SETTLE_SECONDS > 0:
@@ -2531,15 +2668,28 @@ class Scheduler(threading.Thread):
                 slot.get("players") or cfg.get("players") or []
             ))
             try:
+                lost = self.music_coordinator
                 # Un Sonos rientrato nel gruppo riprende il suo ultimo volume, non quello della fascia.
                 result = repair_sonos_group(expected, self.music_coordinator,
                                             remembered_sonos_volumes(expected, self.music_volume))
+                if lost and result["coordinator"] and result["coordinator"] != lost and self.music_selection \
+                        and lost in result["unavailable"] and not audio_playback_lock.locked():
+                    # Si è spento il Sonos che guidava il gruppo: il gruppo si scioglie e la musica si
+                    # ferma ovunque. La si fa ripartire sugli altri.
+                    store.log("warning", f"Il Sonos {lost.removeprefix('media_player.')} che guidava il gruppo "
+                                         "non risponde: faccio ripartire la musica sugli altri")
+                    self.music_players = start_music(self.music_selection, fade_in=True)
+                    result["coordinator"] = self.music_players[0] if self.music_players else None
                 if result["coordinator"]:
                     self.music_coordinator = result["coordinator"]
-                if not result["missing"]:
-                    # Gruppo a posto: aggiorna i volumi noti, anche se cambiati dall'app Sonos.
-                    remember_sonos_volumes(sonos_volume_levels(
-                        [player for player in expected if player not in result["unavailable"]], self.music_volume))
+                if not result["missing"] and not audio_playback_lock.locked():
+                    # Gruppo a posto: aggiorna i volumi noti e riconosce quelli cambiati dall'app Sonos.
+                    # Durante uno spot i volumi sono quelli dello spot: non vanno letti.
+                    live = sonos_volume_levels(
+                        [player for player in expected if player not in result["unavailable"]], self.music_volume)
+                    if not audio_playback_lock.locked():
+                        detect_manual_sonos_volumes(live)
+                        remember_sonos_volumes(live)
                 issue = tuple(sorted(result["unavailable"]))
                 if result["missing"]:
                     store.log("warning", "Sonos riagganciati automaticamente: " + ", ".join(result["missing"]))
@@ -3756,7 +3906,8 @@ class Handler(BaseHTTPRequestHandler):
                     raise RuntimeError("Altoparlante Sonos non valido")
                 volume = max(0, min(int(body.get("volume", 0)), 100))
                 ha.service("media_player", "volume_set", {"entity_id": entity_id, "volume_level": volume / 100})
-                remember_sonos_volumes({entity_id: volume / 100})
+                # Volume scelto dal pannello: resta per oggi anche quando cambia la fascia musicale.
+                set_manual_sonos_volume(entity_id, volume / 100)
                 self.send_json({"ok": True, "volume": volume})
                 return
             if path == "/api/sonos/refresh":
