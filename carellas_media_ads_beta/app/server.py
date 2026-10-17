@@ -2473,6 +2473,14 @@ class Scheduler(threading.Thread):
             store.log("info", "Pubblicità automatica ripresa")
         return self.audio_paused_until
 
+    def take_next_audio(self):
+        """«Riproduci ora»: lo spot in arrivo parte subito e conta come quello di questo intervallo,
+        così il programma non lo ripete appena dopo e la rotazione passa al successivo."""
+        cfg = store.config["audio"]
+        selected = self.pick_audio(cfg.get("ads", []), cfg.get("mode", "rotate"))
+        self.last_audio = time.monotonic()
+        return selected
+
     def skip_audio(self):
         """Salta lo spot in arrivo: riparte l'intervallo e la rotazione passa al successivo."""
         cfg = store.config["audio"]
@@ -2525,6 +2533,9 @@ class Scheduler(threading.Thread):
         if self.audio_today() >= max(1, int(cfg.get("daily_limit", 20))):
             return
         if cfg.get("only_when_playing", True) and not self.selected_playing():
+            return
+        # Uno spot avviato a mano è ancora in onda: si aspetta che finisca invece di segnalare un errore.
+        if audio_playback_lock.locked():
             return
         if not self.busy.acquire(blocking=False):
             return
@@ -3843,6 +3854,11 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/test/audio":
                 body = self.json_body()
                 players = [p for p in body.get("players") or [] if isinstance(p, str) and p.startswith("media_player.")]
+                if audio_playback_lock.locked():
+                    self.send_json({"error": "C’è già uno spot in onda: aspetta che finisca"}, 409)
+                    return
+                if body.get("next"):
+                    body["name"] = scheduler.take_next_audio() or body.get("name")
 
                 def manual_spot():
                     try:
