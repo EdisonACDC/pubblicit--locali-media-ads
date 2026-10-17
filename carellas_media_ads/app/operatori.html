@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#14100D">
+<title>Carellas · Operatori</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#14100D;--card:#1C1612;--card2:#241A14;--line:#33291F;--line2:#4A3B2F;--track:#2E241C;--chip:#2A2019;
+  --gold:#E0AC4A;--gold2:#F2C873;--gold-ink:#1E1408;--gold-soft:#3B2C1A;
+  --text:#F4EADB;--title:#FFF4E0;--muted:#A8977F;--muted2:#B9A994;
+  --green:#5CC38F;--green-soft:#1F2A26;--red:#E8857E;--red-soft:#3A1915;--warn:#F0A35E;
+  --display:'Fraunces',Georgia,serif;--sans:'IBM Plex Sans',system-ui,-apple-system,'Segoe UI',sans-serif;--mono:'IBM Plex Mono',ui-monospace,Consolas,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font:400 16px/1.45 var(--sans);-webkit-text-size-adjust:100%}
+button{font:inherit;color:inherit;touch-action:manipulation}
+.top{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:12px;padding:12px 20px;background:rgba(20,16,13,.94);border-bottom:1px solid var(--line);backdrop-filter:blur(6px)}
+.seal{width:38px;height:38px;border-radius:50%;border:1.5px solid var(--gold);display:grid;place-items:center;color:var(--gold);font:600 18px var(--display)}
+.brand{font:600 20px var(--display);color:var(--title)}
+.clock{margin-left:auto;font:500 18px var(--mono);color:var(--muted2)}
+.out button{min-height:44px;padding:0 16px;border-radius:10px;border:1px solid var(--line2);background:transparent;cursor:pointer}
+main{max-width:1180px;margin:0 auto;padding:18px 20px 40px;display:grid;gap:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:18px}
+.label{font:600 12px var(--sans);letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}
+h2{margin:2px 0 0;font:600 26px var(--display);color:var(--title);overflow-wrap:anywhere}
+.sub{color:var(--muted2);margin-top:2px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.btn{min-height:56px;padding:0 20px;border-radius:12px;border:1px solid var(--line2);background:var(--card2);font-weight:600;cursor:pointer;display:inline-flex;align-items:center;gap:8px}
+.btn:active{transform:scale(.98)}
+.btn.primary{background:var(--gold);border-color:var(--gold);color:var(--gold-ink)}
+.btn.danger{background:var(--red-soft);border-color:#5A2E2A;color:#FFD3CF}
+.btn[disabled]{opacity:.45;cursor:default}
+.dot{width:10px;height:10px;border-radius:50%;background:#5A4A3A;display:inline-block}
+.dot.on{background:var(--green)}.dot.off{background:var(--red)}
+.music{display:grid;grid-template-columns:1fr auto;gap:16px;align-items:center}
+.zones{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}
+.zone{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;display:grid;gap:12px}
+.zone h3{margin:0;font:600 19px var(--sans);color:var(--title);display:flex;align-items:center;gap:8px}
+.zone .state{font-size:14px;color:var(--muted2);margin-left:auto;font-weight:500}
+.vol{display:grid;grid-template-columns:56px 1fr 56px;gap:10px;align-items:center}
+.vol button{height:56px;border-radius:12px;border:1px solid var(--line2);background:var(--card2);font:600 26px var(--sans);cursor:pointer}
+.vol .val{font:600 30px var(--mono);color:var(--title);text-align:center}
+input[type=range]{width:100%;height:44px;accent-color:var(--gold)}
+.spots{display:grid;grid-template-columns:1fr;gap:14px}
+.overlay{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.6);display:flex;align-items:flex-end;justify-content:center}
+.sheet{width:min(720px,100%);max-height:86vh;overflow:auto;background:var(--card);border:1px solid var(--line2);border-radius:20px 20px 0 0;padding:18px}
+.tabs{display:flex;gap:6px;margin:12px 0}
+.tabs button{flex:1;min-height:50px;border-radius:12px;border:1px solid var(--line2);background:transparent;font-weight:600;cursor:pointer}
+.tabs button[aria-pressed=true]{background:var(--chip);border-color:var(--gold);color:var(--title)}
+.list{display:grid;gap:8px}
+.list button{min-height:58px;text-align:left;padding:0 16px;border-radius:12px;border:1px solid var(--line);background:var(--card2);font-weight:600;cursor:pointer}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--card2);border:1px solid var(--line2);padding:12px 18px;border-radius:12px;z-index:30;display:none;max-width:90vw}
+.toast.show{display:block}.toast.bad{border-color:var(--red);color:#FFD3CF}
+.note{font-size:14px;color:var(--muted2)}
+.warn{color:var(--warn)}
+@media(max-width:640px){.music,.spots{grid-template-columns:1fr}.clock{display:none}h2{font-size:22px}}
+</style>
+</head>
+<body>
+<header class="top"><div class="seal">C</div><div class="brand">Carellas</div><span class="label" id="role">Operatori</span><span class="clock" id="clock"></span><form class="out" method="post" action="logout"><button type="submit" id="logout">Esci</button></form></header>
+<main id="app"><div class="card">…</div></main>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script>
+// Pagina Operatori: musica, casse e pubblicità per i tablet del locale. Nessuna impostazione.
+const S={state:null,lang:'it',sheet:null,tab:'radio',busy:false,drag:null};
+const DE={'Operatori':'Personal','Esci':'Abmelden','Musica':'Musik','In riproduzione':'Läuft','Ferma':'Gestoppt','Musica spenta':'Musik aus','Spegni la musica':'Musik ausschalten','Accendi la musica':'Musik einschalten','Cambia musica':'Musik wechseln','Casse':'Lautsprecher','Suona':'Spielt','Offline':'Offline','Pubblicità':'Werbung','Prossimo spot':'Nächster Spot','tra {0} min':'in {0} Min.','Spot in onda adesso':'Spot läuft gerade','Riproduci ora':'Jetzt abspielen','Salta':'Überspringen','Ferma lo spot':'Spot stoppen','Pausa 30 min':'Pause 30 Min.','Pausa 1 ora':'Pause 1 Std.','Riprendi la pubblicità':'Werbung fortsetzen','Pubblicità in pausa fino alle {0}':'Werbung pausiert bis {0}','Pubblicità automatica spenta':'Automatische Werbung aus','Cosa vuoi suonare?':'Was soll laufen?','Radio':'Radio','Playlist':'Playlists','Musica del palinsesto':'Programm-Musik','Chiudi':'Schließen','Accesa a mano':'Von Hand eingeschaltet','Spenta a mano: riprende con la prossima fascia':'Von Hand aus: geht mit dem nächsten Zeitraum weiter','Fatto':'Erledigt','Home Assistant non risponde':'Home Assistant antwortet nicht','Nessuna':'Keine','Muto':'Stumm','Tutte le casse':'Alle Lautsprecher','Fuori programma':'Außerhalb des Programms'};
+const L=t=>S.lang==='de'&&DE[t]?DE[t]:t;
+const Lf=(t,...v)=>L(t).replace(/\{(\d)\}/g,(_,i)=>v[+i]);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const $=id=>document.getElementById(id);
+const toMin=t=>{const [h,m]=String(t||'0:0').split(':').map(Number);return h*60+(m||0)};
+const hhmm=m=>`${String(Math.floor(m/60)%24).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`;
+const pretty=n=>String(n||'').replace(/\.[a-z0-9]{2,4}$/i,'').replace(/[_]+/g,' ').trim();
+function toast(msg,bad){const t=$('toast');t.textContent=L(msg);t.className='toast show'+(bad?' bad':'');clearTimeout(toast.t);toast.t=setTimeout(()=>t.className='toast',3500)}
+async function api(path,body){const r=await fetch(path,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined,cache:'no-store'});
+  if(r.status===401){location.href='login';throw new Error('login')}const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||('HTTP '+r.status));return j}
+async function act(path,body,ok){try{S.busy=true;await api(path,body);if(ok)toast(ok);setTimeout(load,600)}catch(e){if(e.message!=='login')toast(e.message,true)}finally{S.busy=false}}
+async function load(){try{S.state=await api('api/staff/state');S.lang=S.state.config.language==='de'?'de':'it';document.documentElement.lang=S.lang;render()}catch(e){if(e.message!=='login')$('app').innerHTML=`<div class="card warn">${esc(e.message)}</div>`}}
+const rt=()=>S.state.runtime||{},cfg=()=>S.state.config;
+const sonos=()=>S.state.sonos||[];
+const sonosById=id=>sonos().find(s=>s.entity_id===id);
+const sonosName=id=>{const s=sonosById(id);return s?String(s.name).replace(/^sonos\s+/i,''):id};
+function zones(){const z=(cfg().zones||[]).filter(z=>(z.players||[]).length);return z.length?z:[{id:'all',name:L('Tutte le casse'),players:sonos().map(s=>s.entity_id)}]}
+function todayIdx(){const d=new Date().getDay();return d===0?6:d-1}
+function nowMin(){const d=new Date();return d.getHours()*60+d.getMinutes()}
+function currentMusic(){
+  const r=rt(),o=r.music_override,id=String(r.music_slot_id||'');
+  if(o&&o.mode==='on')return {title:o.name,note:L('Accesa a mano')};
+  if(o&&o.mode==='off')return {title:L('Musica spenta'),note:L('Spenta a mano: riprende con la prossima fascia'),off:true};
+  if(id.startsWith('mix-')){const d=(r.mix_week||[]).find(x=>x.weekday===todayIdx());const b=d&&d.blocks.find(b=>`mix-${d.date}-${b.start}`===id);if(b)return {title:b.name,note:`${hhmm(b.start)}–${hhmm(b.end)}`}}
+  const s=(cfg().music.slots||[]).find(x=>String(x.id)===id);
+  if(s){const a=toMin(s.start),d=+s.duration_minutes||60;return {title:s.title||s.name,note:`${s.start}–${hhmm(a+d)}`}}
+  // Musica avviata fuori dal palinsesto (es. dall'app Sonos): si mostra cosa suona.
+  const p=sonos().find(s=>s.state==='playing'&&s.media_title&&!/\.(mp3|wav|m4a)$/i.test(s.media_title));
+  if(p)return {title:p.media_title,note:L('Fuori programma')};
+  return {title:L('Musica spenta'),note:'',off:true};
+}
+function playing(){return sonos().some(s=>s.state==='playing'&&!/\.(mp3|wav|m4a)$/i.test(s.media_title||''))}
+function zoneVolume(z){const v=(z.players||[]).map(sonosById).filter(s=>s&&s.available!==false&&s.volume!=null).map(s=>s.volume);return v.length?Math.round(v.reduce((a,b)=>a+b,0)/v.length):null}
+function zoneState(z){const st=(z.players||[]).map(sonosById).filter(Boolean);if(!st.length||st.every(s=>s.available===false))return 'off';return st.some(s=>s.state==='playing')?'on':'idle'}
+function sourceKind(f){return f.kind?f.kind:(/playlist|SQ:|^S:/i.test(String(f.type||'')+String(f.id||''))||!(f.type==='sonos_radio_source'||/radio|\bfm\b|\d{2,3}[.,]\d/i.test(String(f.name||''))))?'playlist':'radio'}
+function sources(){
+  const seen=new Map();
+  for(const f of S.state.sonos_favorites||[]){if(/^(tv|line-in)$/i.test(String(f.name).trim()))continue;const k=String(f.name).trim().toLowerCase(),old=seen.get(k);if(!old||(old.type==='sonos_source'&&f.type!=='sonos_source'))seen.set(k,{id:String(f.id),name:f.name,type:f.type,kind:sourceKind(f)})}
+  for(const s of cfg().music.mix?.sources||[]){if(s.content_type==='radio_url'&&!seen.has(s.name.toLowerCase()))seen.set(s.name.toLowerCase(),{id:s.content_id,name:s.name,type:'radio_url',kind:'radio'})}
+  return [...seen.values()].sort((a,b)=>a.name.localeCompare(b.name));
+}
+function contentType(f){const t=String(f.type||'').toLowerCase();return t==='radio_url'?'radio_url':t==='sonos_source'?(/radio|fm/i.test(f.name)?'sonos_radio_source':'sonos_playlist_source'):(f.type||'favorite_item_id')}
+function render(){
+  if(!S.state)return;
+  if(S.drag)return; // non ridisegnare mentre si muove un cursore
+  $('role').textContent=L('Operatori');$('logout').textContent=L('Esci');
+  const r=rt(),m=currentMusic(),on=playing()&&!m.off;
+  const paused=r.audio_paused_until?new Date(r.audio_paused_until):null;
+  const spotText=r.spot_playing?L('Spot in onda adesso'):!cfg().audio.enabled?L('Pubblicità automatica spenta'):paused&&paused>new Date()?Lf('Pubblicità in pausa fino alle {0}',paused.toTimeString().slice(0,5)):r.next_spot?`${pretty(r.next_spot)} · ${r.next_spot_in_seconds!=null?Lf('tra {0} min',Math.max(0,Math.round(r.next_spot_in_seconds/60))):''}`:L('Nessuna');
+  $('app').innerHTML=`${S.state.ha_error?`<div class="card warn">${esc(L('Home Assistant non risponde'))}</div>`:''}
+    <section class="card music"><div><div class="label row"><span class="dot ${on?'on':''}"></span>${esc(L('Musica'))} · ${esc(L(on?'In riproduzione':'Ferma'))}</div><h2>${esc(m.title)}</h2><div class="sub">${esc(m.note||'')}</div></div>
+      <div class="row">${on||(r.music_override&&r.music_override.mode==='on')?`<button class="btn danger" data-act="off">■ ${esc(L('Spegni la musica'))}</button>`:''}<button class="btn primary" data-act="choose">▶ ${esc(L(on?'Cambia musica':'Accendi la musica'))}</button></div></section>
+    <section><div class="label" style="margin:4px 4px 10px">${esc(L('Casse'))}</div><div class="zones">${zones().map(z=>{const v=zoneVolume(z),st=zoneState(z);return `<div class="zone"><h3><span class="dot ${st==='on'?'on':st==='off'?'off':''}"></span>${esc(z.name)}<span class="state">${esc(L(st==='on'?'Suona':st==='off'?'Offline':'Ferma'))}</span></h3>
+      ${v==null?`<div class="note">${esc(L('Offline'))}</div>`:`<div class="vol"><button data-step="-5" data-z="${esc(z.id)}" aria-label="−">−</button><div class="val" data-out="${esc(z.id)}">${v}</div><button data-step="5" data-z="${esc(z.id)}" aria-label="+">+</button></div>
+      <input type="range" min="0" max="100" value="${v}" data-zvol="${esc(z.id)}" aria-label="${esc(z.name)}">
+      <div class="row"><button class="btn" style="min-height:44px" data-mute="${esc(z.id)}">${esc(L('Muto'))}</button><span class="note">${esc((z.players||[]).map(sonosName).join(', '))}</span></div>`}</div>`}).join('')}</div></section>
+    <section class="card spots"><div><div class="label">${esc(L('Pubblicità'))} · ${esc(L('Prossimo spot'))}</div><h2 style="font-size:21px">${esc(spotText)}</h2></div>
+      <div class="row">${r.spot_playing?`<button class="btn danger" data-act="spot-stop">■ ${esc(L('Ferma lo spot'))}</button>`:`<button class="btn primary" data-act="spot-now" ${r.next_spot?'':'disabled'}>▶ ${esc(L('Riproduci ora'))}</button><button class="btn" data-act="spot-skip" ${r.next_spot?'':'disabled'}>${esc(L('Salta'))}</button>`}
+      ${paused&&paused>new Date()?`<button class="btn" data-act="resume">${esc(L('Riprendi la pubblicità'))}</button>`:`<button class="btn" data-pause="30">${esc(L('Pausa 30 min'))}</button><button class="btn" data-pause="60">${esc(L('Pausa 1 ora'))}</button>`}</div></section>
+    ${S.sheet?sheet():''}`;
+}
+function sheet(){
+  const list=sources().filter(f=>f.kind===S.tab);
+  return `<div class="overlay" data-act="close"><div class="sheet" role="dialog" aria-label="${esc(L('Cosa vuoi suonare?'))}">
+    <div class="row" style="justify-content:space-between"><h2 style="font-size:22px">${esc(L('Cosa vuoi suonare?'))}</h2><button class="btn" style="min-height:44px" data-act="close">${esc(L('Chiudi'))}</button></div>
+    <div class="list" style="margin-top:12px"><button data-src="__sched__">♫ ${esc(L('Musica del palinsesto'))}</button></div>
+    <div class="tabs"><button aria-pressed="${S.tab==='radio'}" data-tab="radio">📻 ${esc(L('Radio'))}</button><button aria-pressed="${S.tab==='playlist'}" data-tab="playlist">♪ ${esc(L('Playlist'))}</button></div>
+    <div class="list">${list.map(f=>`<button data-src="${esc(f.id)}">${esc(f.name)}</button>`).join('')||`<div class="note">${esc(L('Nessuna'))}</div>`}</div></div></div>`;
+}
+function setZone(id,value){const z=zones().find(x=>String(x.id)===String(id));if(!z)return;value=Math.max(0,Math.min(100,value));
+  const ids=(z.players||[]).filter(p=>sonosById(p)&&sonosById(p).available!==false);
+  for(const p of ids){const s=sonosById(p);if(s)s.volume=value}
+  Promise.all(ids.map(p=>api('api/sonos/volume',{entity_id:p,volume:value}))).then(()=>{setTimeout(load,700)}).catch(e=>toast(e.message,true))}
+document.addEventListener('click',e=>{
+  const t=e.target.closest('button,[data-act]');if(!t)return;
+  const a=t.dataset.act;
+  if(a==='off')return act('api/music/manual',{action:'off'},'Fatto');
+  if(a==='choose'){S.sheet=true;render();return}
+  // Il menu si chiude con «Chiudi» o toccando fuori, non toccando dentro.
+  if(a==='close'){if(t.classList.contains('overlay')&&e.target!==t)return;S.sheet=null;render();return}
+  if(t.dataset.tab){S.tab=t.dataset.tab;render();return}
+  if(t.dataset.src){const v=t.dataset.src;S.sheet=null;render();if(v==='__sched__')return act('api/music/manual',{action:'on'},'Fatto');const f=sources().find(x=>x.id===v);if(f)return act('api/music/manual',{action:'on',content_id:f.id,content_type:contentType(f),name:f.name},'Fatto');return}
+  if(a==='spot-now')return act('api/test/audio',{name:rt().next_spot,next:true},'Fatto');
+  if(a==='spot-skip')return act('api/audio/skip',{},'Fatto');
+  if(a==='spot-stop')return act('api/audio/stop',{},'Fatto');
+  if(a==='resume')return act('api/audio/pause',{minutes:0},'Fatto');
+  if(t.dataset.pause)return act('api/audio/pause',{minutes:+t.dataset.pause},'Fatto');
+  if(t.dataset.step){const z=zones().find(x=>String(x.id)===t.dataset.z);const v=zoneVolume(z)??0;setZone(t.dataset.z,v+(+t.dataset.step));render();return}
+  if(t.dataset.mute){setZone(t.dataset.mute,0);render();return}
+});
+document.addEventListener('input',e=>{const t=e.target;if(t.dataset.zvol!==undefined){S.drag=t.dataset.zvol;const o=document.querySelector(`[data-out="${CSS.escape(t.dataset.zvol)}"]`);if(o)o.textContent=t.value}});
+document.addEventListener('change',e=>{const t=e.target;if(t.dataset.zvol!==undefined){S.drag=null;setZone(t.dataset.zvol,+t.value)}});
+function tick(){const d=new Date();$('clock').textContent=d.toTimeString().slice(0,5)}
+tick();setInterval(tick,10000);load();setInterval(()=>{if(!S.busy&&!S.sheet)load()},4000);
+</script>
+</body>
+</html>

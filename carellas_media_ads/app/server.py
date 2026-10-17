@@ -278,6 +278,8 @@ class Store:
             if not encoded.startswith("pbkdf2_sha256$"):
                 raise RuntimeError(f"Imposta una password per l'accesso da Internet di {username}")
             remote_users.append({"username": username, "enabled": raw.get("enabled", True) is not False,
+                                 # Operatore: dal tablet gestisce solo musica, casse e pubblicità.
+                                 "role": "staff" if raw.get("role") == "staff" else "admin",
                                  "password_hash": encoded})
         remote["users"] = remote_users
         # Zone: informazione dell'interfaccia (luoghi del ristorante). Lo Scheduler non le usa.
@@ -3744,9 +3746,58 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Max-Age", "86400")
         self.end_headers()
 
+    def staff_state(self):
+        """Stato per la pagina Operatori: casse, musica e pubblicità, senza impostazioni né password."""
+        captured = {}
+        original_send, original_path = self.send_json, self.path
+        self.send_json = lambda payload, status=200: captured.update(payload=payload)
+        self.path = "/api/state"
+        try:
+            Handler.do_GET(self)
+        finally:
+            self.send_json, self.path = original_send, original_path
+        data = captured.get("payload") or {}
+        config = data.get("config") or {}
+        music = config.get("music") or {}
+        audio = config.get("audio") or {}
+        mix = music.get("mix") or {}
+        runtime = data.get("runtime") or {}
+        slot_keys = ("id", "name", "title", "start", "end", "duration_minutes", "days", "players", "volume",
+                     "content_id", "content_type", "enabled")
+        return {
+            "config": {
+                "language": config.get("language", "it"),
+                "zones": [{"id": z.get("id"), "name": z.get("name"), "players": z.get("players") or []}
+                          for z in config.get("zones") or []],
+                "music": {
+                    "enabled": music.get("enabled"), "schedule": music.get("schedule") or [],
+                    "slots": [{k: s.get(k) for k in slot_keys} for s in music.get("slots") or []],
+                    "mix": {"enabled": mix.get("enabled"), "players": mix.get("players") or [],
+                            "volume": mix.get("volume"),
+                            "sources": [{k: s.get(k) for k in ("content_id", "content_type", "name", "kind")}
+                                        for s in mix.get("sources") or []]},
+                },
+                "audio": {"enabled": audio.get("enabled"), "players": audio.get("players") or [],
+                          "volume": audio.get("volume"), "interval_minutes": audio.get("interval_minutes")},
+            },
+            "sonos": data.get("sonos") or [],
+            "sonos_favorites": data.get("sonos_favorites") or [],
+            "runtime": {key: runtime.get(key) for key in (
+                "music_active", "music_slot_id", "music_override", "mix_week", "next_spot", "next_spot_in_seconds",
+                "spot_playing", "audio_paused_until", "audio_waiting", "audio_today")},
+            "ha_error": data.get("ha_error"),
+        }
+
     def do_GET(self):
         path = self.route_path()
         try:
+            if path == "/api/staff/state":
+                self.send_json(self.staff_state())
+                return
+            if path in ("/operatori", "/operatori/"):
+                # Pagina semplice per i tablet degli operatori (vedi anche l'accesso con password).
+                self.send_file(APP_DIR / "operatori.html")
+                return
             if path == "/api/iptv/status":
                 self.send_json({"channels": iptv.runtime_status()})
                 return
@@ -4568,6 +4619,9 @@ REMOTE_LOCK = threading.Lock()
 REMOTE_SESSIONS = {}
 REMOTE_FAILURES = {}
 REMOTE_COOKIE = "carellas_admin"
+# Le sole operazioni permesse agli operatori (pagina per tablet).
+STAFF_POST_PATHS = {"/api/sonos/volume", "/api/music/manual", "/api/audio/pause", "/api/audio/skip",
+                    "/api/audio/stop", "/api/test/audio"}
 
 
 def remote_account(username):
@@ -4793,6 +4847,14 @@ class RemoteAdminHandler(Handler):
     def do_HEAD(self):
         self.do_GET()
 
+    def staff(self):
+        """Utente con ruolo Operatore: solo musica, casse e pubblicità."""
+        account = remote_account(self.remote_user)
+        return bool(account and account.get("role") == "staff")
+
+    def staff_forbidden(self):
+        self.send_json({"error": "Gli operatori possono gestire solo musica, casse e pubblicità"}, 403)
+
     def do_GET(self):
         path = urllib.parse.urlsplit(self.path).path.rstrip("/") or "/"
         if path == "/login":
@@ -4804,6 +4866,14 @@ class RemoteAdminHandler(Handler):
                 self.send_page(remote_login_page())
             return
         if self.authorized():
+            if self.staff():
+                if path in ("/", "/operatori"):
+                    self.send_file(APP_DIR / "operatori.html")
+                elif self.route_path() == "/api/staff/state":
+                    super().do_GET()
+                else:
+                    self.staff_forbidden()
+                return
             super().do_GET()
 
     def do_POST(self):
@@ -4823,6 +4893,9 @@ class RemoteAdminHandler(Handler):
             self.login()
             return
         if self.authorized():
+            if self.staff() and self.route_path() not in STAFF_POST_PATHS:
+                self.staff_forbidden()
+                return
             super().do_POST()
 
     def do_DELETE(self):
@@ -4830,6 +4903,9 @@ class RemoteAdminHandler(Handler):
             self.send_json({"error": "Richiesta da un altro sito bloccata"}, 403)
             return
         if self.authorized():
+            if self.staff():
+                self.staff_forbidden()
+                return
             super().do_DELETE()
 
 
