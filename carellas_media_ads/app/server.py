@@ -67,7 +67,7 @@ SONOS_GROUP_SETTLE_SECONDS = float(os.environ.get("CARELLAS_SONOS_GROUP_SETTLE_S
 SONOS_RESTORE_SETTLE_SECONDS = float(os.environ.get("CARELLAS_SONOS_RESTORE_SETTLE_SECONDS", "0.6"))
 SONOS_RESTORE_RETRIES = max(1, int(os.environ.get("CARELLAS_SONOS_RESTORE_RETRIES", "3")))
 SONOS_FADE_STEPS = max(2, int(os.environ.get("CARELLAS_SONOS_FADE_STEPS", "6")))
-SONOS_GROUP_CHECK_SECONDS = max(5.0, float(os.environ.get("CARELLAS_SONOS_GROUP_CHECK_SECONDS", "15")))
+SONOS_GROUP_CHECK_SECONDS = max(5.0, float(os.environ.get("CARELLAS_SONOS_GROUP_CHECK_SECONDS", "8")))
 SONOS_SPOT_TAIL_GUARD_SECONDS = max(
     0.0, min(float(os.environ.get("CARELLAS_SONOS_SPOT_TAIL_GUARD_SECONDS", "0.4")), 2.0)
 )
@@ -1169,9 +1169,17 @@ def available_sonos_players(players):
     return valid
 
 
+def leader_first(players):
+    """La cassa principale (scelta nel Palinsesto) guida il gruppo: se si spegne il coordinatore, Sonos
+    ferma la musica su tutte le casse. Conviene che guidi una cassa che non viene mai spenta."""
+    leader = str(store.config.get("music", {}).get("leader") or "")
+    players = list(players)
+    return [leader] + [p for p in players if p != leader] if leader in players else players
+
+
 def prepare_sonos_group(players, force=False):
     """Raggruppa gli altoparlanti e restituisce il coordinatore Sonos."""
-    players = available_sonos_players(players)
+    players = leader_first(available_sonos_players(players))
     if not players:
         raise RuntimeError("Nessun altoparlante Sonos disponibile tra quelli selezionati")
     coordinator = players[0]
@@ -1282,14 +1290,32 @@ def repair_sonos_group(players, preferred_coordinator=None, volume_level=None):
     if not reachable:
         return {"coordinator": None, "missing": [], "unavailable": unavailable}
 
-    coordinator = preferred_coordinator if preferred_coordinator in reachable else reachable[0]
+    coordinator = preferred_coordinator if preferred_coordinator in reachable else leader_first(reachable)[0]
     members = states.get(coordinator, {}).get("attributes", {}).get("group_members") or [coordinator]
     missing = [player for player in reachable if player not in members]
     if missing:
-        ha.service("media_player", "join", {
-            "entity_id": coordinator,
-            "group_members": missing,
-        })
+        try:
+            ha.service("media_player", "join", {
+                "entity_id": coordinator,
+                "group_members": missing,
+            })
+        except Exception as error:
+            # Un Sonos appena spento risulta ancora acceso per qualche secondo: riprovare ogni
+            # controllo bloccava tutto fino al timeout. Si salta per qualche minuto.
+            if len(missing) == 1:
+                mark_sonos_unresponsive(missing[0], error)
+                return {"coordinator": coordinator, "missing": [], "unavailable": unavailable + missing}
+            joined = []
+            for member in missing:
+                try:
+                    ha.service("media_player", "join", {"entity_id": coordinator, "group_members": [member]})
+                    joined.append(member)
+                except Exception as member_error:
+                    mark_sonos_unresponsive(member, member_error)
+            unavailable = unavailable + [m for m in missing if m not in joined]
+            missing = joined
+            if not missing:
+                return {"coordinator": coordinator, "missing": [], "unavailable": unavailable}
         if SONOS_GROUP_SETTLE_SECONDS > 0:
             time.sleep(SONOS_GROUP_SETTLE_SECONDS)
         if isinstance(volume_level, dict):
@@ -1929,6 +1955,8 @@ def start_music(selection=None, fade_in=False):
     if not players or not content_id:
         raise RuntimeError("Configurazione musica incompleta")
     coordinator = prepare_sonos_group(players)
+    # Il coordinatore (la cassa principale, se scelta) va per primo: lo usano i controlli del gruppo.
+    players = [coordinator] + [player for player in players if player != coordinator]
     slot_volume = max(0, min(int(selection.get("volume", cfg.get("volume", 25))), 100)) / 100
     # Ogni Sonos con un volume scelto a mano oggi lo mantiene; gli altri prendono il volume della fascia.
     manual = manual_sonos_volumes(players)
