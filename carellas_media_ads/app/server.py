@@ -71,6 +71,8 @@ SONOS_SPOT_TAIL_GUARD_SECONDS = max(
     0.0, min(float(os.environ.get("CARELLAS_SONOS_SPOT_TAIL_GUARD_SECONDS", "0.4")), 2.0)
 )
 SONOS_QUIET_VOLUME = 0.01
+HA_SERVICE_TIMEOUT = max(5, int(os.environ.get("CARELLAS_HA_SERVICE_TIMEOUT", "30")))
+SONOS_RESTORE_WAIT_SECONDS = max(0, int(os.environ.get("CARELLAS_SONOS_RESTORE_WAIT_SECONDS", "25")))
 # Cambio di sorgente (es. dalla radio a una playlist): Sonos risponde 701 finché chiude la sorgente
 # precedente. Si riprova più a lungo e poi si controlla che la musica suoni davvero.
 SONOS_SOURCE_RETRIES = max(1, int(os.environ.get("CARELLAS_SONOS_SOURCE_RETRIES", "5")))
@@ -376,7 +378,8 @@ class HomeAssistant:
         return self.request("GET", "/config") or {}
 
     def service(self, domain, service, payload):
-        return self.request("POST", f"/services/{domain}/{service}", payload) or []
+        # Alcuni comandi Sonos (ripristino di 10 diffusori con la radio) richiedono più di 12 secondi.
+        return self.request("POST", f"/services/{domain}/{service}", payload, timeout=HA_SERVICE_TIMEOUT) or []
 
     def service_response(self, domain, service, payload):
         response = self.request("POST", f"/services/{domain}/{service}?return_response", payload) or {}
@@ -1160,8 +1163,32 @@ def fade_sonos(players, target, seconds, start_levels=None):
             time.sleep(seconds / SONOS_FADE_STEPS)
 
 
+def sonos_request_timed_out(error):
+    return isinstance(error, TimeoutError) or "timed out" in str(error).lower()
+
+
+def wait_sonos_groups(groups, seconds=None):
+    """Aspetta che i gruppi Sonos tornino come prima (Home Assistant sta ancora eseguendo il ripristino)."""
+    seconds = SONOS_RESTORE_WAIT_SECONDS if seconds is None else seconds
+    for _second in range(seconds):
+        try:
+            states = {item.get("entity_id"): item for item in ha.states()}
+        except Exception:
+            states = {}
+        ready = True
+        for coordinator, members in (groups or {}).items():
+            current = set(states.get(coordinator, {}).get("attributes", {}).get("group_members") or [coordinator])
+            reachable = {m for m in members if states.get(m, {}).get("state") not in (None, "unavailable")}
+            if not reachable.issubset(current):
+                ready = False
+        if ready:
+            return True
+        time.sleep(1)
+    return False
+
+
 def restore_sonos_playback(snapshot_targets, resume_targets, selected_players=None, volume_levels=None,
-                           transition_seconds=0):
+                           transition_seconds=0, groups=None):
     """Ripristina gruppi/coda e riavvia la musica che proveniva direttamente da Sonos."""
     last_error = None
     for attempt in range(SONOS_RESTORE_RETRIES):
@@ -1173,6 +1200,13 @@ def restore_sonos_playback(snapshot_targets, resume_targets, selected_players=No
             last_error = None
             break
         except Exception as error:
+            if sonos_request_timed_out(error):
+                # Home Assistant continua il ripristino anche se non risponde in tempo: ripeterlo
+                # raddoppiava l'attesa (circa 35 secondi di silenzio dopo lo spot). Si aspetta che finisca.
+                store.log("info", "Ripristino Sonos lento: attendo che Home Assistant lo completi")
+                wait_sonos_groups(groups or {target: [target] for target in snapshot_targets})
+                last_error = None
+                break
             last_error = error
             store.log("warning", f"Ripristino Sonos, tentativo {attempt + 1}/{SONOS_RESTORE_RETRIES}: {error}")
             if attempt + 1 < SONOS_RESTORE_RETRIES:
@@ -1308,6 +1342,7 @@ def play_audio(filename=None, manual=False, players=None):
                     players,
                     previous_volumes,
                     transition,
+                    groups=original_groups,
                 )
                 repaired, unavailable = repair_sonos_topology(original_groups, previous_volumes)
                 if repaired:
