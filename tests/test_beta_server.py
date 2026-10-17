@@ -3370,7 +3370,7 @@ class CarellasServerTest(unittest.TestCase):
 
     def test_volumes_chosen_by_hand_survive_slot_changes(self):
         app = self.app
-        for store_ in (app.SONOS_MANUAL_VOLUMES, app.SONOS_LAST_SET, app.SONOS_MANUAL_CANDIDATES, app.SONOS_VOLUME_MEMORY):
+        for store_ in (app.SONOS_MANUAL_VOLUMES, app.SONOS_LAST_SET, app.SONOS_LAST_SET_AT, app.SONOS_MANUAL_CANDIDATES, app.SONOS_VOLUME_MEMORY):
             store_.clear()
         players = ["media_player.sala", "media_player.terrazza", "media_player.bar"]
         states = [{"entity_id": p, "state": "playing", "attributes": {"group_members": players, "volume_level": 0.25}}
@@ -3393,6 +3393,12 @@ class CarellasServerTest(unittest.TestCase):
             app.detect_manual_sonos_volumes({"media_player.bar": 0.01})
             app.detect_manual_sonos_volumes({"media_player.bar": 0.25})
             self.assertNotIn("media_player.bar", app.manual_sonos_volumes(players))
+            # Subito dopo un cambio fatto dall'add-on (es. dissolvenza) i volumi letti non contano.
+            app.SONOS_LAST_SET["media_player.bar"] = 0.25
+            app.SONOS_LAST_SET_AT["media_player.bar"] = app.time.monotonic()
+            app.detect_manual_sonos_volumes({"media_player.bar": 0.11})
+            app.detect_manual_sonos_volumes({"media_player.bar": 0.11})
+            self.assertNotIn("media_player.bar", app.manual_sonos_volumes(players))
             calls = []
             with mock.patch.object(app.ha, "states", return_value=states),                     mock.patch.object(app.ha, "service", side_effect=lambda d, n, p: calls.append((n, p))),                     mock.patch.object(app.time, "sleep"):
                 app.start_music(slot, fade_in=True)
@@ -3405,7 +3411,7 @@ class CarellasServerTest(unittest.TestCase):
             self.assertEqual(final, {"media_player.sala": 0.35, "media_player.terrazza": 0.4, "media_player.bar": 0.25})
             self.assertTrue(any("Volumi scelti a mano mantenuti" in item["message"] for item in app.store.logs[:3]))
         finally:
-            for store_ in (app.SONOS_MANUAL_VOLUMES, app.SONOS_LAST_SET, app.SONOS_MANUAL_CANDIDATES, app.SONOS_VOLUME_MEMORY):
+            for store_ in (app.SONOS_MANUAL_VOLUMES, app.SONOS_LAST_SET, app.SONOS_LAST_SET_AT, app.SONOS_MANUAL_CANDIDATES, app.SONOS_VOLUME_MEMORY):
                 store_.clear()
             app.SONOS_MANUAL_FILE.unlink(missing_ok=True)
         source = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/server.py").read_text(encoding="utf-8")
@@ -3714,6 +3720,74 @@ class CarellasServerTest(unittest.TestCase):
                     self.assertIn("force_original_aspect_ratio=decrease", filters)
         finally:
             target.unlink(missing_ok=True)
+
+    def test_operators_zone_music_spots_and_player_controls(self):
+        app = self.app
+        app.MUSIC_EXCLUDED.clear()
+        saved_zones = json.loads(json.dumps(app.store.config.get("zones", [])))
+        saved_audio = list(app.store.config["audio"].get("players", []))
+        engine = app.Scheduler()
+        players = ["media_player.sala", "media_player.terrazza", "media_player.bar"]
+        engine.music_players, engine.music_coordinator, engine.music_active = list(players), "media_player.sala", True
+        engine.music_expected_players = list(players)
+        engine.music_selection = {"name": "Pranzo", "players": players, "content_id": "FV:2/1"}
+        calls = []
+        try:
+            app.store.update({"zones": [{"id": "terrazza", "name": "Terrazza", "players": ["media_player.terrazza"]}],
+                              "audio": {"players": players}})
+            with mock.patch.object(app.ha, "service", side_effect=lambda d, n, p: calls.append((n, p))),                     mock.patch.object(app, "available_sonos_players", side_effect=lambda p: list(p)),                     mock.patch.object(app.time, "sleep"):
+                # Musica tolta solo dalla Terrazza: esce dal gruppo e si ferma, le altre continuano.
+                engine.zone_music(["media_player.terrazza"], False)
+                self.assertIn(("unjoin", {"entity_id": ["media_player.terrazza"]}), calls)
+                self.assertIn(("media_stop", {"entity_id": ["media_player.terrazza"]}), calls)
+                self.assertEqual(app.music_excluded_players(), {"media_player.terrazza"})
+                self.assertNotIn("media_player.terrazza", engine.music_expected_players)
+                # La prossima fascia non la raggruppa.
+                with mock.patch.object(app.ha, "states", return_value=[]), mock.patch.object(app, "prepare_sonos_group",
+                                                                                              return_value="media_player.sala") as prep,                         mock.patch.object(app, "ensure_sonos_playing", return_value=True):
+                    result = app.start_music({"name": "Sera", "players": players, "content_id": "FV:2/2",
+                                              "content_type": "favorite_item_id", "volume": 25})
+                self.assertNotIn("media_player.terrazza", prep.call_args.args[0])
+                self.assertNotIn("media_player.terrazza", result)
+                # Rimessa: rientra nel gruppo e riparte.
+                calls.clear()
+                engine.zone_music(["media_player.terrazza"], True)
+                self.assertIn(("join", {"entity_id": "media_player.sala", "group_members": ["media_player.terrazza"]}), calls)
+                self.assertEqual(app.music_excluded_players(), set())
+                # Pausa: il motore non la fa ripartire; Play la riprende.
+                calls.clear()
+                engine.music_control("pause")
+                self.assertIn(("media_pause", {"entity_id": "media_player.sala"}), calls)
+                self.assertEqual(engine.music_override["mode"], "paused")
+                engine.music_control("play")
+                self.assertIsNone(engine.music_override)
+                # Musica accesa a mano fuori programma: dopo Pausa e Play resta accesa a mano.
+                engine.music_override = {"mode": "on", "slot_key": None, "name": "Radio"}
+                engine.music_control("pause")
+                engine.music_control("play")
+                self.assertEqual(engine.music_override["mode"], "on")
+                engine.music_override = None
+                engine.music_control("next")
+                self.assertIn(("media_next_track", {"entity_id": "media_player.sala"}), calls)
+
+            def radio(domain, name, payload):
+                raise RuntimeError("Home Assistant 500: not supported")
+
+            with mock.patch.object(app.ha, "service", side_effect=radio):
+                with self.assertRaisesRegex(RuntimeError, "non ha brani da saltare"):
+                    engine.music_control("next")
+            # Spot sì/no per zona dal tablet.
+            self.assertEqual(self.request("/api/zone/spots", "POST", {"zone_id": "terrazza", "on": False})[0], 200)
+            self.assertNotIn("media_player.terrazza", app.store.config["audio"]["players"])
+            self.assertEqual(self.request("/api/zone/spots", "POST", {"zone_id": "terrazza", "on": True})[0], 200)
+            self.assertIn("media_player.terrazza", app.store.config["audio"]["players"])
+            self.assertTrue({"/api/zone/music", "/api/zone/spots", "/api/music/control"} <= app.STAFF_POST_PATHS)
+        finally:
+            app.MUSIC_EXCLUDED.clear()
+            app.store.update({"zones": saved_zones, "audio": {"players": saved_audio}})
+        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/operatori.html").read_text(encoding="utf-8")
+        for marker in ("data-zmusic=", "data-zspots=", "data-pvol=", 'data-ctl="next"'):
+            self.assertIn(marker, html)
 
     def test_overnight_schedule(self):
         schedule = [{"days": [6], "start": "22:00", "end": "02:00", "enabled": True}]
