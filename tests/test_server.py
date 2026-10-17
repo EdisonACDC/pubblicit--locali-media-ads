@@ -3227,6 +3227,15 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn('data-bind="music.leader"', html)
         self.assertIn("['Cassa principale (guida il gruppo)','Hauptlautsprecher (führt die Gruppe)']", html)
 
+    def test_today_timeline_is_as_clear_as_the_schedule(self):
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        # Oggi → «La giornata»: blocchi colorati con nome e orario, zoom automatico, mix e ora attuale.
+        self.assertIn("const todayBlocks=mixOnNow()?mixToday():slotsOn(day);", html)
+        self.assertIn("const tlZoom=Math.max(1,Math.min(6,Math.ceil(90*(h1-h0)/(Math.max(5,shortestToday)*(S.tlBase||560)))));", html)
+        self.assertIn("""<div class="tl-block music ${narrow?'narrow':''} """, html)
+        self.assertIn("tw.onscroll=()=>{S.tlScroll=tw.scrollLeft}", html)
+        self.assertIn("['Musica (mix)','Musik (Mix)']", html)
+
     def test_overnight_schedule(self):
         schedule = [{"days": [6], "start": "22:00", "end": "02:00", "enabled": True}]
         self.assertTrue(self.app.is_schedule_active(schedule, datetime(2026, 9, 13, 23, 0)))
