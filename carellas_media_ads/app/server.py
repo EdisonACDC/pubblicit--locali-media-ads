@@ -4016,6 +4016,7 @@ class Handler(BaseHTTPRequestHandler):
             "sonos_favorites": data.get("sonos_favorites") or [],
             "runtime": {key: runtime.get(key) for key in (
                 "music_active", "music_slot_id", "music_override", "music_excluded", "spots_excluded", "ads_excluded",
+                "manual_volumes",
                 "music_coordinator",
                 "mix_week", "next_spot", "next_spot_in_seconds",
                 "spot_playing", "audio_paused_until", "audio_waiting", "audio_today")},
@@ -4169,6 +4170,9 @@ class Handler(BaseHTTPRequestHandler):
                         "mix_week": mix_week(),
                         "music_excluded": sorted(music_excluded_players()),
                         "spots_excluded": sorted(spots_excluded_players()),
+                        # Volumi scelti a mano oggi (0-100): restano anche quando la fascia ne prevede un altro.
+                        "manual_volumes": {player: round(level * 100) for player, level in
+                                           manual_sonos_volumes(list(SONOS_MANUAL_VOLUMES)).items()},
                         "ads_excluded": sorted(ads_excluded_today()),
                         "music_coordinator": scheduler.music_coordinator,
                         "music_override": (

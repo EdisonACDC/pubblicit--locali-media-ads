@@ -3516,6 +3516,26 @@ class CarellasServerTest(unittest.TestCase):
         for marker in ("L('Spot oggi')", "L('Prossimo cambio')", "L('La giornata')", 'class="tl-block music', "data-tl-wrap"):
             self.assertIn(marker, html)
 
+    def test_now_playing_shows_real_sonos_volume(self):
+        # «Ora in onda» mostra il volume letto dai Sonos, non quello della fascia, e dice se è scelto a mano.
+        app = self.app
+        app.SONOS_MANUAL_VOLUMES.clear()
+        try:
+            app.SONOS_MANUAL_VOLUMES["media_player.sala"] = (0.25, datetime.now().date().isoformat())
+            app.SONOS_MANUAL_VOLUMES["media_player.bar"] = (0.55, "2000-01-01")
+            status, payload = self.request("/api/state")
+            self.assertEqual(status, 200)
+            self.assertEqual(payload["runtime"]["manual_volumes"], {"media_player.sala": 25})
+            status, payload = self.request("/api/staff/state")
+            self.assertEqual(payload["runtime"]["manual_volumes"], {"media_player.sala": 25})
+        finally:
+            app.SONOS_MANUAL_VOLUMES.clear()
+        for page in ("index.html", "operatori.html"):
+            html = (Path(__file__).parents[1] / "carellas_media_ads/app" / page).read_text(encoding="utf-8")
+            self.assertIn("function musicVolumeLabel(players,planned)", html, page)
+            self.assertIn("musicVolumeLabel(slot.players,", html, page)
+            self.assertIn("'scelto a mano, fascia {0}'", html, page)
+
     def test_operators_remove_spots_only_for_today(self):
         app = self.app
         app.SPOTS_EXCLUDED.clear()
