@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<title>Regia — Ora in onda</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&amp;family=IBM+Plex+Sans:wght@400;500;600&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#14100D}
+a{color:#E0AC4A}a:hover{color:#F2C873}
+.btn{display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:0 18px;border-radius:10px;font:600 14px 'IBM Plex Sans',sans-serif;cursor:pointer;border:1px solid transparent}
+.btn:focus-visible{outline:2px solid #E0AC4A;outline-offset:2px}
+.btn-primary{background:#E0AC4A;color:#1E1408}
+.btn-ghost{background:transparent;color:#F4EADB;border-color:#4A3B2F}
+.btn-quiet{background:transparent;color:#E8857E;border-color:#5A2E2A}
+.nav a{display:inline-flex;align-items:center;min-height:40px;padding:0 14px;border-radius:8px;color:#B9A994;text-decoration:none;font-weight:500}
+.nav a:hover{color:#F4EADB;background:#221B16}
+.card{background:#1C1612;border:1px solid #33291F;border-radius:16px}
+.label{font:500 12px 'IBM Plex Sans',sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#A8977F}
+.mono{font-family:'IBM Plex Mono',monospace}
+</style>
+</helmet>
+<div style="min-height: 100vh; background: #14100D; color: #F4EADB; font: 400 15px/1.5 'IBM Plex Sans', sans-serif">
+  <header style="border-bottom: 1px solid #2A211A; background: #17120F">
+    <div style="max-width: 1360px; margin: 0 auto; padding: 14px 24px; display: flex; flex-wrap: wrap; align-items: center; gap: 16px 28px">
+      <div style="display: flex; align-items: center; gap: 12px">
+        <div style="width: 40px; height: 40px; border-radius: 50%; border: 1.5px solid #E0AC4A; display: grid; place-items: center; color: #E0AC4A; font: 600 19px 'Fraunces', serif">C</div>
+        <div style="font: 600 19px 'Fraunces', serif; color: #FFF4E0">Carellas Media Ads</div>
+      </div>
+      <nav class="nav" aria-label="Sezioni" style="display: flex; flex-wrap: wrap; gap: 2px; flex: 1 1 auto">
+        <a href="#" aria-current="page" style="background: #2A2019; color: #FFF4E0">Oggi</a>
+        <a href="#">Palinsesto</a>
+        <a href="#">Zone e schermi</a>
+        <a href="#">Contenuti</a>
+        <a href="#">Registro</a>
+        <a href="#">Impostazioni</a>
+      </nav>
+      <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap">
+        <div style="display: inline-flex; align-items: center; gap: 6px; color: #A8977F; font-size: 13px">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5CC38F" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"></path></svg>
+          Modifiche salvate
+        </div>
+        <div role="group" aria-label="Lingua" style="display: inline-flex; border: 1px solid #3A2E25; border-radius: 8px; overflow: hidden">
+          <button type="button" aria-pressed="true" style="min-height: 34px; padding: 0 12px; background: #2E241C; color: #FFF4E0; border: 0; font: 600 13px 'IBM Plex Sans', sans-serif">IT</button>
+          <button type="button" aria-pressed="false" style="min-height: 34px; padding: 0 12px; background: transparent; color: #A8977F; border: 0; font: 600 13px 'IBM Plex Sans', sans-serif">DE</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main style="max-width: 1360px; margin: 0 auto; padding: 28px 24px 48px; display: flex; flex-direction: column; gap: 20px">
+    <div style="display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px">
+      <div>
+        <div class="label">Lunedì 12 ottobre · aperto 10:00–23:00</div>
+        <h1 style="margin: 4px 0 0; font: 500 40px/1.1 'Fraunces', serif; color: #FFF4E0">Ora in onda</h1>
+      </div>
+      <div style="display: flex; gap: 10px; flex-wrap: wrap">
+        <button class="btn btn-ghost" type="button">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1"></rect><rect x="14" y="5" width="4" height="14" rx="1"></rect></svg>
+          Pausa pubblicità 1 ora
+        </button>
+        <button class="btn btn-quiet" type="button">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>
+          Ferma tutto
+        </button>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start">
+      <div style="flex: 999 1 640px; min-width: 0; display: flex; flex-direction: column; gap: 20px">
+
+        <section class="card" aria-labelledby="now-h" style="padding: 24px; display: flex; flex-wrap: wrap; gap: 24px">
+          <h2 id="now-h" style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0)">Riproduzione attuale</h2>
+          <div style="flex: 1 1 300px; min-width: 0; display: flex; flex-direction: column; gap: 14px">
+            <div class="label" style="display: flex; align-items: center; gap: 8px">
+              <span style="width: 8px; height: 8px; border-radius: 50%; background: #5CC38F"></span> Musica · in riproduzione
+            </div>
+            <div style="display: flex; gap: 16px; align-items: center">
+              <div style="width: 72px; height: 72px; border-radius: 12px; background: #2A2019; display: grid; place-items: center; flex: none">
+                <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#E0AC4A" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
+              </div>
+              <div style="min-width: 0">
+                <div style="font: 500 22px/1.25 'Fraunces', serif; color: #FFF4E0">[Playlist pranzo]</div>
+                <div style="color: #B9A994">Sala, Terrazza · volume 25</div>
+              </div>
+            </div>
+            <div>
+              <div style="height: 6px; background: #2E241C; border-radius: 3px; overflow: hidden"><div style="width: 70%; height: 100%; background: #E0AC4A"></div></div>
+              <div class="mono" style="display: flex; justify-content: space-between; font-size: 12px; color: #A8977F; margin-top: 6px"><span>10:00</span><span>alle 14:00 → [Radio pomeriggio]</span></div>
+            </div>
+          </div>
+          <div style="width: 1px; background: #33291F; align-self: stretch"></div>
+          <div style="flex: 1 1 280px; min-width: 0; display: flex; flex-direction: column; gap: 14px">
+            <div class="label" style="display: flex; align-items: center; gap: 8px">
+              <span style="width: 8px; height: 8px; border-radius: 2px; background: #E0AC4A"></span> Prossimo spot
+            </div>
+            <div style="display: flex; gap: 16px; align-items: center">
+              <div style="width: 72px; height: 72px; border-radius: 50%; flex: none; background: conic-gradient(#E0AC4A 0 60%, #2E241C 60% 100%); display: grid; place-items: center">
+                <div style="width: 60px; height: 60px; border-radius: 50%; background: #1C1612; display: grid; place-items: center; text-align: center; line-height: 1">
+                  <div><div class="mono" style="font-size: 20px; color: #FFF4E0">12</div><div style="font-size: 11px; color: #A8977F">min</div></div>
+                </div>
+              </div>
+              <div style="min-width: 0">
+                <div style="font-weight: 600; color: #FFF4E0; overflow-wrap: anywhere">Spot DE Femminile</div>
+                <div style="color: #B9A994">alle 13:00 · Sala, Terrazza · vol. 35</div>
+              </div>
+            </div>
+            <div style="display: flex; gap: 10px; flex-wrap: wrap">
+              <button class="btn btn-primary" type="button">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"></path></svg>
+                Riproduci ora
+              </button>
+              <button class="btn btn-ghost" type="button">Salta questo</button>
+            </div>
+          </div>
+        </section>
+
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px">
+          <div class="card" style="padding: 16px 18px">
+            <div class="label">Spot oggi</div>
+            <div style="display: flex; align-items: baseline; gap: 6px; margin-top: 6px"><span style="font: 500 30px 'Fraunces', serif; color: #FFF4E0">6</span><span style="color: #A8977F">/ 20 max</span></div>
+            <div style="height: 4px; background: #2E241C; border-radius: 2px; margin-top: 10px"><div style="width: 30%; height: 100%; background: #E0AC4A; border-radius: 2px"></div></div>
+          </div>
+          <div class="card" style="padding: 16px 18px">
+            <div class="label">Musica</div>
+            <div style="font: 500 22px 'Fraunces', serif; color: #FFF4E0; margin-top: 8px">In riproduzione</div>
+            <div style="color: #A8977F; font-size: 13px">2 di 3 Sonos</div>
+          </div>
+          <div class="card" style="padding: 16px 18px">
+            <div class="label">Schermi</div>
+            <div style="font: 500 22px 'Fraunces', serif; color: #FFF4E0; margin-top: 8px">1 canale in onda</div>
+            <div style="color: #A8977F; font-size: 13px">TV Demo Carellas</div>
+          </div>
+          <div class="card" style="padding: 16px 18px">
+            <div class="label">Prossimo cambio</div>
+            <div class="mono" style="font-size: 22px; color: #FFF4E0; margin-top: 8px">14:00</div>
+            <div style="color: #A8977F; font-size: 13px">→ [Radio pomeriggio]</div>
+          </div>
+        </div>
+
+        <section class="card" aria-labelledby="tl-h" style="padding: 22px 24px">
+          <div style="display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; margin-bottom: 16px">
+            <h2 id="tl-h" style="margin: 0; font: 500 20px 'Fraunces', serif; color: #FFF4E0">La giornata</h2>
+            <a href="#" style="font-weight: 500">Apri palinsesto</a>
+          </div>
+          <div style="overflow-x: auto">
+            <div style="min-width: 640px; display: grid; grid-template-columns: 76px 1fr; row-gap: 10px; column-gap: 12px; align-items: center">
+              <div></div>
+              <div class="mono" style="display: flex; justify-content: space-between; font-size: 11px; color: #8F8070"><span>10</span><span>12</span><span>14</span><span>16</span><span>18</span><span>20</span><span>23</span></div>
+              <div style="font-size: 13px; color: #B9A994">Musica</div>
+              <div style="position: relative; height: 34px">
+                <div style="position: absolute; left: 0; width: 30.5%; top: 0; bottom: 0; background: #3B2C1A; border: 1px solid #6E5228; border-radius: 6px; padding: 0 10px; display: flex; align-items: center; font-size: 12px; color: #F4D9A6; overflow: hidden; white-space: nowrap">[Playlist pranzo]</div>
+                <div style="position: absolute; left: 31%; width: 22.5%; top: 0; bottom: 0; background: #2C2620; border: 1px solid #4A3B2F; border-radius: 6px; padding: 0 10px; display: flex; align-items: center; font-size: 12px; color: #D6C6B0; overflow: hidden; white-space: nowrap">[Radio pomeriggio]</div>
+                <div style="position: absolute; left: 54%; right: 0; top: 0; bottom: 0; background: #2C2620; border: 1px solid #4A3B2F; border-radius: 6px; padding: 0 10px; display: flex; align-items: center; font-size: 12px; color: #D6C6B0; overflow: hidden; white-space: nowrap">[Playlist sera]</div>
+                <div style="position: absolute; left: 21.5%; top: -6px; bottom: -58px; width: 2px; background: #5CC38F"></div>
+              </div>
+              <div style="font-size: 13px; color: #B9A994">Spot</div>
+              <div style="position: relative; height: 18px">
+                <sc-for list="{{ticks}}" as="t" hint-placeholder-count="26">
+                  <div style="position: absolute; top: 3px; width: 4px; height: 12px; border-radius: 2px; left: {{t.left}}; background: {{t.color}}"></div>
+                </sc-for>
+              </div>
+              <div style="font-size: 13px; color: #B9A994">TV</div>
+              <div style="position: relative; height: 22px">
+                <div style="position: absolute; left: 0; right: 0; top: 0; bottom: 0; background: #1F2A26; border: 1px solid #2F4A3E; border-radius: 6px; padding: 0 10px; display: flex; align-items: center; font-size: 12px; color: #A9DCC2">TV Demo Carellas · loop 4 elementi</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section aria-labelledby="zones-h">
+          <h2 id="zones-h" style="margin: 4px 0 12px; font: 500 20px 'Fraunces', serif; color: #FFF4E0">Zone</h2>
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px">
+            <div class="card" style="padding: 16px">
+              <div style="display: flex; justify-content: space-between; align-items: center"><strong style="color: #FFF4E0">Sala</strong><span style="font-size: 12px; color: #5CC38F">● Suona</span></div>
+              <div style="color: #A8977F; font-size: 13px; margin: 2px 0 12px">Sonos Sala</div>
+              <label style="display: block; font-size: 12px; color: #A8977F">Volume 25
+                <input type="range" min="0" max="100" value="25" aria-label="Volume Sala" style="width: 100%; accent-color: #E0AC4A">
+              </label>
+            </div>
+            <div class="card" style="padding: 16px">
+              <div style="display: flex; justify-content: space-between; align-items: center"><strong style="color: #FFF4E0">Terrazza</strong><span style="font-size: 12px; color: #5CC38F">● Suona</span></div>
+              <div style="color: #A8977F; font-size: 13px; margin: 2px 0 12px">Sonos Terrazza</div>
+              <label style="display: block; font-size: 12px; color: #A8977F">Volume 30
+                <input type="range" min="0" max="100" value="30" aria-label="Volume Terrazza" style="width: 100%; accent-color: #E0AC4A">
+              </label>
+            </div>
+            <div class="card" style="padding: 16px; border-color: #6A3A24">
+              <div style="display: flex; justify-content: space-between; align-items: center"><strong style="color: #FFF4E0">Bar</strong><span style="font-size: 12px; color: #F0A35E">▲ Offline</span></div>
+              <div style="color: #A8977F; font-size: 13px; margin: 2px 0 12px">Sonos Bar · non risponde da 4 min</div>
+              <button class="btn btn-ghost" type="button" style="min-height: 36px; padding: 0 12px; font-size: 13px">Riprova collegamento</button>
+            </div>
+            <div class="card" style="padding: 16px">
+              <div style="display: flex; justify-content: space-between; align-items: center"><strong style="color: #FFF4E0">TV Sala</strong><span style="font-size: 12px; color: #5CC38F">● In onda</span></div>
+              <div style="color: #A8977F; font-size: 13px; margin: 2px 0 12px">Canale TV Demo Carellas</div>
+              <div style="display: flex; gap: 4px">
+                <img src="/_blob/c0a1aecb5e605d0700e5c5fd54795639" alt="" style="width: 33%; aspect-ratio: 16/9; object-fit: cover; border-radius: 4px">
+                <img src="/_blob/c74ea9a6d9bff73eb456381a868f0a4e" alt="" style="width: 33%; aspect-ratio: 16/9; object-fit: cover; border-radius: 4px">
+                <img src="/_blob/65a1089b70dcc46466c85417b0cb66f9" alt="" style="width: 33%; aspect-ratio: 16/9; object-fit: cover; border-radius: 4px">
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <aside style="flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; gap: 20px">
+        <section class="card" aria-labelledby="att-h" style="padding: 20px">
+          <h2 id="att-h" style="margin: 0 0 12px; font: 500 20px 'Fraunces', serif; color: #FFF4E0">Da sistemare <span class="mono" style="font-size: 13px; color: #1E1408; background: #F0A35E; border-radius: 99px; padding: 2px 8px; vertical-align: middle">3</span></h2>
+          <ul style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px">
+            <li style="padding: 12px; border-radius: 10px; background: #241A14; display: flex; gap: 10px">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F0A35E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex: none; margin-top: 2px"><path d="M12 3 2 21h20L12 3z"></path><path d="M12 10v5"></path><path d="M12 18h.01"></path></svg>
+              <div><div style="color: #FFF4E0; font-weight: 500">Sonos Bar non raggiungibile</div><div style="font-size: 13px; color: #A8977F">Escluso dagli spot finché non torna online.</div><a href="#" style="font-size: 13px; font-weight: 500">Riprova collegamento</a></div>
+            </li>
+            <li style="padding: 12px; border-radius: 10px; background: #241A14; display: flex; gap: 10px">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#E0AC4A" stroke-width="2" stroke-linecap="round" aria-hidden="true" style="flex: none; margin-top: 2px"><path d="M21 12a9 9 0 1 1-3-6.7"></path><path d="M21 4v5h-5"></path></svg>
+              <div><div style="color: #FFF4E0; font-weight: 500">Sequenza TV modificata</div><div style="font-size: 13px; color: #A8977F">Le TV mostrano ancora la versione precedente.</div><a href="#" style="font-size: 13px; font-weight: 500">Genera e invia alle TV</a></div>
+            </li>
+            <li style="padding: 12px; border-radius: 10px; background: #241A14; display: flex; gap: 10px">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#E0AC4A" stroke-width="2" stroke-linecap="round" aria-hidden="true" style="flex: none; margin-top: 2px"><circle cx="12" cy="8" r="4"></circle><path d="M4 21a8 8 0 0 1 16 0"></path></svg>
+              <div><div style="color: #FFF4E0; font-weight: 500">Nessun accesso Player TV</div><div style="font-size: 13px; color: #A8977F">Serve per aprire il canale dal browser della TV.</div><a href="#" style="font-size: 13px; font-weight: 500">Crea accesso TV</a></div>
+            </li>
+          </ul>
+        </section>
+
+        <section class="card" aria-labelledby="log-h" style="padding: 20px">
+          <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px">
+            <h2 id="log-h" style="margin: 0; font: 500 20px 'Fraunces', serif; color: #FFF4E0">Attività</h2>
+            <a href="#" style="font-size: 13px; font-weight: 500">Tutto il registro</a>
+          </div>
+          <ol style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column">
+            <li style="display: grid; grid-template-columns: 48px 1fr; gap: 10px; padding: 10px 0; border-bottom: 1px solid #2A211A"><span class="mono" style="font-size: 12px; color: #8F8070">12:44</span><span style="font-size: 13px; color: #D6C6B0">Sonos Bar non raggiungibile dopo lo spot</span></li>
+            <li style="display: grid; grid-template-columns: 48px 1fr; gap: 10px; padding: 10px 0; border-bottom: 1px solid #2A211A"><span class="mono" style="font-size: 12px; color: #8F8070">12:31</span><span style="font-size: 13px; color: #D6C6B0">Musica e gruppi ripristinati su 2 Sonos</span></li>
+            <li style="display: grid; grid-template-columns: 48px 1fr; gap: 10px; padding: 10px 0; border-bottom: 1px solid #2A211A"><span class="mono" style="font-size: 12px; color: #8F8070">12:30</span><span style="font-size: 13px; color: #D6C6B0">Spot DE Maschile riprodotto su Sala, Terrazza</span></li>
+            <li style="display: grid; grid-template-columns: 48px 1fr; gap: 10px; padding: 10px 0"><span class="mono" style="font-size: 12px; color: #8F8070">12:00</span><span style="font-size: 13px; color: #D6C6B0">Spot DE Femminile riprodotto su Sala, Terrazza</span></li>
+          </ol>
+        </section>
+      </aside>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1260}}'>
+class Component extends DCLogic {
+  renderVals() {
+    var ticks = [];
+    var now = 2.8 / 13;
+    for (var i = 0; i < 26; i++) {
+      var pos = (i * 0.5) / 13;
+      ticks.push({ left: (pos * 100).toFixed(2) + '%', color: pos <= now ? '#E0AC4A' : '#5A4A3A' });
+    }
+    return { ticks: ticks };
+  }
+}
+</script>
+</body>
+</html>

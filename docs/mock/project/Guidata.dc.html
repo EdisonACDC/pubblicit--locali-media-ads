@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<title>Configurazione guidata</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&amp;family=Public+Sans:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#F7F1E8}
+a{color:#8A2B22}a:hover{color:#5F1C16}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:48px;padding:0 20px;border-radius:999px;font:600 15px 'Public Sans',sans-serif;cursor:pointer;border:1px solid transparent}
+.btn:focus-visible,.pick:focus-visible{outline:2px solid #8A2B22;outline-offset:3px}
+.btn-primary{background:#8A2B22;color:#FFFFFF}
+.btn-ghost{background:transparent;color:#2A1C14;border-color:#D4C4B0}
+.pick{display:inline;font:inherit;color:#8A2B22;background:#F6E3DA;border:0;border-bottom:2px solid #8A2B22;border-radius:6px 6px 0 0;padding:0 6px;cursor:pointer}
+.cap{font:600 12px 'Public Sans',sans-serif;letter-spacing:.08em;text-transform:uppercase;color:#6B5A4C}
+</style>
+</helmet>
+<div style="min-height: 100vh; background: #F7F1E8; color: #2A1C14; font: 400 15px/1.55 'Public Sans', sans-serif">
+  <header style="border-bottom: 1px solid #E6DACB">
+    <div style="max-width: 1360px; margin: 0 auto; padding: 14px 24px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px">
+      <div style="font: 600 20px 'Newsreader', serif">Carellas Media Ads</div>
+      <div style="color: #6B5A4C; font-size: 14px">Configurazione guidata · passo 3 di 6</div>
+      <div style="flex: 1 1 auto"></div>
+      <label style="display: inline-flex; align-items: center; gap: 10px; font-size: 14px; color: #4A3A2E; min-height: 44px; cursor: pointer">
+        <input type="checkbox" style="width: 18px; height: 18px; accent-color: #8A2B22">
+        Modalità esperto
+      </label>
+      <a href="#" style="font-size: 14px; font-weight: 600">Esci e continua dopo</a>
+    </div>
+  </header>
+
+  <div style="max-width: 1360px; margin: 0 auto; padding: 32px 24px 48px; display: flex; flex-wrap: wrap; gap: 32px; align-items: flex-start">
+    <nav aria-label="Passi della configurazione" style="flex: 1 1 220px; min-width: 0">
+      <ol style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px">
+        <li style="display: flex; gap: 12px; padding: 10px 12px; border-radius: 12px">
+          <span style="width: 28px; height: 28px; border-radius: 50%; background: #2F6B47; display: grid; place-items: center; flex: none">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"></path></svg>
+          </span>
+          <div><a href="#" style="color: #2A1C14; font-weight: 600; text-decoration: none">Dispositivi</a><div style="font-size: 13px; color: #6B5A4C">3 Sonos, 1 TV</div></div>
+        </li>
+        <li style="display: flex; gap: 12px; padding: 10px 12px; border-radius: 12px">
+          <span style="width: 28px; height: 28px; border-radius: 50%; background: #2F6B47; display: grid; place-items: center; flex: none">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"></path></svg>
+          </span>
+          <div><a href="#" style="color: #2A1C14; font-weight: 600; text-decoration: none">Contenuti</a><div style="font-size: 13px; color: #6B5A4C">2 spot, 3 foto, 1 video</div></div>
+        </li>
+        <li aria-current="step" style="display: flex; gap: 12px; padding: 10px 12px; border-radius: 12px; background: #FFFDF9; border: 1px solid #E6DACB">
+          <span style="width: 28px; height: 28px; border-radius: 50%; background: #8A2B22; color: #FFFFFF; display: grid; place-items: center; flex: none; font-weight: 700; font-size: 13px">3</span>
+          <div><div style="font-weight: 700">Pubblicità audio</div><div style="font-size: 13px; color: #6B5A4C">Quando e dove</div></div>
+        </li>
+        <li style="display: flex; gap: 12px; padding: 10px 12px; color: #6B5A4C">
+          <span style="width: 28px; height: 28px; border-radius: 50%; border: 1.5px solid #C9B8A3; display: grid; place-items: center; flex: none; font-weight: 600; font-size: 13px">4</span>
+          <div style="font-weight: 500; padding-top: 2px">Musica di sottofondo</div>
+        </li>
+        <li style="display: flex; gap: 12px; padding: 10px 12px; color: #6B5A4C">
+          <span style="width: 28px; height: 28px; border-radius: 50%; border: 1.5px solid #C9B8A3; display: grid; place-items: center; flex: none; font-weight: 600; font-size: 13px">5</span>
+          <div style="font-weight: 500; padding-top: 2px">Schermi TV</div>
+        </li>
+        <li style="display: flex; gap: 12px; padding: 10px 12px; color: #6B5A4C">
+          <span style="width: 28px; height: 28px; border-radius: 50%; border: 1.5px solid #C9B8A3; display: grid; place-items: center; flex: none; font-weight: 600; font-size: 13px">6</span>
+          <div style="font-weight: 500; padding-top: 2px">Prova finale</div>
+        </li>
+      </ol>
+    </nav>
+
+    <main style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 28px">
+      <div>
+        <div class="cap">Passo 3 · Pubblicità audio</div>
+        <h1 style="margin: 6px 0 8px; font: 500 44px/1.1 'Newsreader', serif; letter-spacing: -0.01em">Quando deve suonare la pubblicità?</h1>
+        <p style="margin: 0; color: #6B5A4C; font-size: 16px">Tocca le parole evidenziate per cambiarle. Potrai modificare tutto anche dopo.</p>
+      </div>
+
+      <p style="margin: 0; font: 400 28px/1.65 'Newsreader', serif; max-width: 820px">
+        Riproduci <button class="pick" type="button" aria-haspopup="listbox">uno spot</button>
+        ogni <button class="pick" type="button" aria-haspopup="listbox">30 minuti</button>
+        in <button class="pick" type="button" aria-haspopup="listbox">Sala e Terrazza</button>,
+        dalle <button class="pick" type="button" aria-haspopup="dialog">10:00</button>
+        alle <button class="pick" type="button" aria-haspopup="dialog">23:00</button>,
+        <button class="pick" type="button" aria-haspopup="listbox">dal lunedì al venerdì</button>,
+        al massimo <button class="pick" type="button" aria-haspopup="listbox">20 volte</button> al giorno.
+      </p>
+
+      <label style="display: flex; gap: 12px; align-items: flex-start; max-width: 820px; cursor: pointer">
+        <input type="checkbox" checked style="width: 20px; height: 20px; margin-top: 2px; accent-color: #8A2B22">
+        <span><strong>Solo quando la musica sta già suonando</strong> <span style="color: #6B5A4C">(consigliato)</span><br><span style="color: #6B5A4C; font-size: 14px">Così uno spot non parte mai in una sala silenziosa.</span></span>
+      </label>
+
+      <section aria-labelledby="spots-h" style="background: #FFFDF9; border: 1px solid #E6DACB; border-radius: 18px; padding: 22px; display: flex; flex-direction: column; gap: 14px; max-width: 820px">
+        <div style="display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px">
+          <h2 id="spots-h" style="margin: 0; font: 500 24px 'Newsreader', serif">Quali spot, e in che ordine?</h2>
+          <a href="#" style="font-size: 14px; font-weight: 600">Carica un altro spot</a>
+        </div>
+        <ol style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px">
+          <li style="display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid #E6DACB; border-radius: 12px">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="#B4A390" aria-hidden="true"><circle cx="9" cy="6" r="1.5"></circle><circle cx="15" cy="6" r="1.5"></circle><circle cx="9" cy="12" r="1.5"></circle><circle cx="15" cy="12" r="1.5"></circle><circle cx="9" cy="18" r="1.5"></circle><circle cx="15" cy="18" r="1.5"></circle></svg>
+            <span style="font-weight: 700; color: #8A2B22; width: 20px">1</span>
+            <button type="button" aria-label="Ascolta Spot DE Femminile" style="width: 44px; height: 44px; border-radius: 50%; border: 1px solid #D4C4B0; background: #FFFFFF; display: grid; place-items: center; cursor: pointer; flex: none">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="#2A1C14" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"></path></svg>
+            </button>
+            <div style="flex: 1; min-width: 0"><div style="font-weight: 600">Spot ristorante, voce femminile</div><div style="font-size: 13px; color: #6B5A4C">Carellas_Ristorante_Spot_DE_Femminile.mp3 · tedesco</div></div>
+          </li>
+          <li style="display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid #E6DACB; border-radius: 12px">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="#B4A390" aria-hidden="true"><circle cx="9" cy="6" r="1.5"></circle><circle cx="15" cy="6" r="1.5"></circle><circle cx="9" cy="12" r="1.5"></circle><circle cx="15" cy="12" r="1.5"></circle><circle cx="9" cy="18" r="1.5"></circle><circle cx="15" cy="18" r="1.5"></circle></svg>
+            <span style="font-weight: 700; color: #8A2B22; width: 20px">2</span>
+            <button type="button" aria-label="Ascolta Spot DE Maschile" style="width: 44px; height: 44px; border-radius: 50%; border: 1px solid #D4C4B0; background: #FFFFFF; display: grid; place-items: center; cursor: pointer; flex: none">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="#2A1C14" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"></path></svg>
+            </button>
+            <div style="flex: 1; min-width: 0"><div style="font-weight: 600">Spot ristorante, voce maschile</div><div style="font-size: 13px; color: #6B5A4C">Carellas_Ristorante_Spot_DE_Maschile.mp3 · tedesco</div></div>
+          </li>
+        </ol>
+        <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 14px; padding-top: 6px">
+          <label for="vol" style="font-weight: 600">Volume degli spot</label>
+          <input id="vol" type="range" min="1" max="100" value="35" style="flex: 1 1 200px; accent-color: #8A2B22">
+          <span style="font-weight: 700; width: 28px">35</span>
+          <button class="btn btn-ghost" type="button" style="min-height: 44px">Prova il volume in Sala</button>
+        </div>
+      </section>
+
+      <section aria-labelledby="prev-h" style="max-width: 820px">
+        <h2 id="prev-h" class="cap" style="margin: 0 0 10px">Ecco come andrà oggi</h2>
+        <ol style="list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; font-size: 14px">
+          <li style="padding: 6px 12px; border-radius: 999px; background: #FFFDF9; border: 1px solid #E6DACB"><strong>10:00</strong> Femminile</li>
+          <li style="padding: 6px 12px; border-radius: 999px; background: #FFFDF9; border: 1px solid #E6DACB"><strong>10:30</strong> Maschile</li>
+          <li style="padding: 6px 12px; border-radius: 999px; background: #FFFDF9; border: 1px solid #E6DACB"><strong>11:00</strong> Femminile</li>
+          <li style="padding: 6px 12px; border-radius: 999px; background: #FFFDF9; border: 1px solid #E6DACB"><strong>11:30</strong> Maschile</li>
+          <li style="padding: 6px 12px; border-radius: 999px; background: #FFFDF9; border: 1px solid #E6DACB"><strong>12:00</strong> Femminile</li>
+          <li style="padding: 6px 12px; border-radius: 999px; color: #6B5A4C">… altri 15, fino alle 19:30 (limite 20 raggiunto)</li>
+        </ol>
+      </section>
+
+      <div style="display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; max-width: 820px; padding-top: 8px; border-top: 1px solid #E6DACB">
+        <button class="btn btn-ghost" type="button">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m15 18-6-6 6-6"></path></svg>
+          Indietro
+        </button>
+        <button class="btn btn-primary" type="button">
+          Salva e continua: Musica
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg>
+        </button>
+      </div>
+    </main>
+
+    <aside aria-labelledby="how-h" style="flex: 1 1 260px; min-width: 0; background: #EFE5D7; border-radius: 18px; padding: 22px">
+      <h2 id="how-h" style="margin: 0 0 14px; font: 500 22px 'Newsreader', serif">Cosa succede durante uno spot</h2>
+      <ol style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 14px; font-size: 14px">
+        <li style="display: flex; gap: 12px"><span style="font: 600 18px 'Newsreader', serif; color: #8A2B22; width: 16px">1</span><span>La musica in Sala e Terrazza si abbassa dolcemente in 3 secondi.</span></li>
+        <li style="display: flex; gap: 12px"><span style="font: 600 18px 'Newsreader', serif; color: #8A2B22; width: 16px">2</span><span>I diffusori scelti vengono uniti e lo spot suona sincronizzato, per intero.</span></li>
+        <li style="display: flex; gap: 12px"><span style="font: 600 18px 'Newsreader', serif; color: #8A2B22; width: 16px">3</span><span>Musica, volumi e gruppi tornano esattamente com'erano, anche se la musica era partita dall'app Sonos.</span></li>
+      </ol>
+      <div style="height: 1px; background: #D9C9B5; margin: 18px 0"></div>
+      <div class="cap" style="margin-bottom: 6px">In modalità esperto</div>
+      <p style="margin: 0; font-size: 14px; color: #4A3A2E">Dissolvenza, ripetizioni, URI Sonos e regole per singolo diffusore.</p>
+    </aside>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1080}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>
