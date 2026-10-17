@@ -3351,6 +3351,31 @@ class CarellasServerTest(unittest.TestCase):
         html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
         self.assertIn("data-bind=\"${p}.role\"", html)
 
+    def test_website_event_image_fills_the_screen(self):
+        commands = []
+
+        def fake_run(command, **kwargs):
+            commands.append(command)
+            Path(command[-1]).write_bytes(b"jpg")
+
+        target = self.app.MEDIA_DIR / "Evento_test_immagine.jpg"
+        try:
+            for aspect in (2560 / 1439, 1.0):
+                commands.clear()
+                with mock.patch.object(self.app, "image_aspect", return_value=aspect),                         mock.patch.object(self.app.subprocess, "run", side_effect=fake_run):
+                    self.app.compose_event_slide([Path("immagine.jpg")], target)
+                filters = " ".join(commands[0])
+                if aspect > 1.4:
+                    # Immagine orizzontale del sito: riempie tutto lo schermo, senza bande sfocate.
+                    self.assertIn("force_original_aspect_ratio=increase,crop=1920:1080", filters)
+                    self.assertNotIn("boxblur", filters)
+                else:
+                    # Immagine quadrata: resta intera sopra lo sfondo sfocato.
+                    self.assertIn("boxblur", filters)
+                    self.assertIn("force_original_aspect_ratio=decrease", filters)
+        finally:
+            target.unlink(missing_ok=True)
+
     def test_overnight_schedule(self):
         schedule = [{"days": [6], "start": "22:00", "end": "02:00", "enabled": True}]
         self.assertTrue(self.app.is_schedule_active(schedule, datetime(2026, 9, 13, 23, 0)))
