@@ -3449,6 +3449,10 @@ class CarellasServerTest(unittest.TestCase):
         html = (Path(__file__).parents[1] / "carellas_media_ads/app/operatori.html").read_text(encoding="utf-8")
         for marker in ("data-zmusic=", "data-zspots=", "data-pvol=", 'data-ctl="next"'):
             self.assertIn(marker, html)
+        # Stessa grafica di «Ora in onda» e scelta della lingua IT/DE (ricordata sul tablet).
+        for marker in ('<section class="card now">', "L('Ora in onda')", 'data-lang="de"', "localStorage.setItem('carellas.oplang',S.lang)",
+                       "'Ora in onda':'Jetzt läuft'", "function icon(name,size=18){"):
+            self.assertIn(marker, html)
 
     def test_overnight_schedule(self):
         schedule = [{"days": [6], "start": "22:00", "end": "02:00", "enabled": True}]
