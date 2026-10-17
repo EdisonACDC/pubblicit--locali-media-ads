@@ -3792,6 +3792,9 @@ class CarellasServerTest(unittest.TestCase):
         for marker in ('<section class="card now">', "L('Ora in onda')", 'data-lang="de"', "localStorage.setItem('carellas.oplang',S.lang)",
                        "'Ora in onda':'Jetzt läuft'", "function icon(name,size=18){"):
             self.assertIn(marker, html)
+        # Come nel pannello: riepilogo (spot oggi, musica, prossimo cambio) e «La giornata».
+        for marker in ("L('Spot oggi')", "L('Prossimo cambio')", "L('La giornata')", 'class="tl-block music', "data-tl-wrap"):
+            self.assertIn(marker, html)
 
     def test_overnight_schedule(self):
         schedule = [{"days": [6], "start": "22:00", "end": "02:00", "enabled": True}]
