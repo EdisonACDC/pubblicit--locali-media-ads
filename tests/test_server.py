@@ -2973,6 +2973,15 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("'spot-now':()=>command('api/test/audio',{name:rt().next_spot||cfg().audio.ads?.[0],next:true}", html)
         self.assertIn('data-act="spot-test"', html)
 
+    def test_schedule_blocks_are_easy_to_tell_apart(self):
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        # Ogni fascia ha il suo colore, spazio tra i blocchi, nome e orario dentro il blocco e le linee delle ore.
+        self.assertIn("const SLOT_COLORS=[", html)
+        self.assertIn('<span class="t">${esc(slotTitle(s))}</span><span class="h">${esc(s.start+'–'+slotEnd(s))}</span>', html)
+        self.assertIn("width:calc(${span(a,b)} - 4px);${slotColor(s)}", html)
+        self.assertIn('<div class="lane">${hourLines.join('')}', html)
+        self.assertIn("['Musica (un colore per fascia)','Musik (eine Farbe pro Zeitraum)']", html)
+
     def test_overnight_schedule(self):
         schedule = [{"days": [6], "start": "22:00", "end": "02:00", "enabled": True}]
         self.assertTrue(self.app.is_schedule_active(schedule, datetime(2026, 9, 13, 23, 0)))
