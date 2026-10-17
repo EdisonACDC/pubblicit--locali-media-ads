@@ -3339,7 +3339,7 @@ class CarellasServerTest(unittest.TestCase):
     def test_short_schedule_blocks_stay_readable(self):
         html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
         # Zoom automatico: la fascia più corta resta larga abbastanza; con − e + si cambia a mano.
-        self.assertIn("const autoZoom=Math.max(1,Math.min(6,Math.ceil(46*(H1-H0)/(Math.max(5,shortest)*(S.laneBase||560)))));", html)
+        self.assertIn("const autoZoom=Math.max(1,Math.min(6,Math.ceil(90*(H1-H0)/(Math.max(5,shortest)*(S.laneBase||560)))));", html)
         self.assertIn("'zoom-auto':()=>{S.sel.zoom=null;render()}", html)
         # Le fasce brevi mostrano iniziali e ora e si allargano al passaggio o quando sono scelte.
         self.assertIn("narrow=(b-a)/(H1-H0)*zoom<0.1", html)
@@ -3467,6 +3467,118 @@ class CarellasServerTest(unittest.TestCase):
                 app.store.config["music"] = original
         finally:
             app.SONOS_UNRESPONSIVE.clear()
+
+    def test_automatic_mix_is_never_the_same(self):
+        from datetime import date, timedelta
+        app = self.app
+        music = app.store.config["music"]
+        saved = json.loads(json.dumps(music))
+        sources = [
+            {"content_id": "FV:2/1", "content_type": "favorite_item_id", "name": "Pranzo italiano", "kind": "playlist"},
+            {"content_id": "FV:2/2", "content_type": "favorite_item_id", "name": "Dinner Jazz", "kind": "playlist"},
+            {"content_id": "FV:2/3", "content_type": "favorite_item_id", "name": "Aperitivo Lounge", "kind": "playlist"},
+            {"content_id": "http://kiss", "content_type": "radio_url", "name": "Radio Kiss Kiss Italia", "kind": "radio"},
+            {"content_id": "FV:2/9", "content_type": "favorite_item_id", "name": "RTL 102.5", "kind": "radio"},
+        ]
+        try:
+            music["schedule"] = [{"days": [0, 1, 2, 3, 4, 5], "start": "10:00", "end": "23:00", "enabled": True}]
+            music["slots"] = [{"id": "x", "players": ["media_player.sala", "media_player.bar"], "start": "10:00",
+                               "duration_minutes": 60, "days": [0], "content_id": "FV:2/1"}]
+            music["mix"] = {"enabled": True, "block_minutes": 60, "sources": sources, "players": [], "volume": 30}
+            start = date(2026, 10, 1)
+            sequences, previous = set(), None
+            for offset in range(45):
+                day = start + timedelta(days=offset)
+                plan = app.mix_plan(day)
+                if day.weekday() == 6:
+                    # Domenica chiuso: nessun blocco; il lunedì evita le sorgenti del sabato.
+                    self.assertEqual(plan, [])
+                    continue
+                # Tutto l'orario di apertura, a blocchi di un'ora.
+                self.assertEqual((plan[0]["start"], plan[-1]["end"], len(plan)), (600, 1380, 13))
+                for one, two in zip(plan, plan[1:]):
+                    self.assertNotEqual(one["content_id"], two["content_id"])
+                    self.assertNotEqual(one["kind"], two["kind"])  # radio e playlist si alternano
+                if previous:
+                    for block in plan:
+                        same = [p for p in previous if p["start"] == block["start"]]
+                        if same:
+                            self.assertNotEqual(same[0]["content_id"], block["content_id"])
+                sequence = tuple(block["content_id"] for block in plan)
+                self.assertNotIn(sequence, sequences)
+                sequences.add(sequence)
+                previous = plan
+            # Sempre lo stesso mix per lo stesso giorno (anteprima = quello che suona).
+            app.MIX_CACHE["signature"] = None
+            self.assertEqual(app.mix_plan(start + timedelta(days=10)), app.mix_plan(start + timedelta(days=10)))
+            # La fascia in onda viene dal mix, con le casse delle fasce se il mix non ne ha.
+            moment = datetime(2026, 10, 14, 15, 30).astimezone()
+            slot = app.active_mix_slot(moment)
+            block = next(b for b in app.mix_plan(moment.date()) if b["start"] <= 930 < b["end"])
+            self.assertEqual((slot["content_id"], slot["players"], slot["volume"]),
+                             (block["content_id"], ["media_player.sala", "media_player.bar"], 30))
+            self.assertEqual(slot["id"], "mix-2026-10-14-900")
+            self.assertEqual(len(app.mix_week(moment.date())), 7)
+            # Con meno di due sorgenti il mix resta spento.
+            music["mix"]["sources"] = sources[:1]
+            self.assertIsNone(app.active_mix_slot(moment))
+        finally:
+            app.store.config["music"] = saved
+            app.MIX_CACHE["signature"] = None
+        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        self.assertIn("const editor=S.sel.mix?mixEditor():", html)
+        self.assertIn("${mixOn?mixBlocks(d):''}", html)
+        self.assertIn("['Mix automatico','Automatischer Mix']", html)
+
+    def test_main_speaker_leads_the_group_and_dead_member_is_skipped(self):
+        app = self.app
+        app.SONOS_UNRESPONSIVE.clear()
+        music = app.store.config["music"]
+        saved_leader = music.get("leader")
+        players = ["media_player.terrazza", "media_player.sala", "media_player.bar"]
+        states = [{"entity_id": p, "state": "playing", "attributes": {"group_members": [p], "volume_level": 0.3}}
+                  for p in players]
+        calls = []
+        try:
+            # La Sala è la cassa principale: guida il gruppo anche se nella fascia è la seconda.
+            music["leader"] = "media_player.sala"
+            with mock.patch.object(app.ha, "states", return_value=states),                     mock.patch.object(app.ha, "service", side_effect=lambda d, n, p: calls.append((n, p))),                     mock.patch.object(app.time, "sleep"):
+                result = app.start_music({"name": "RTL", "players": players, "content_id": "FV:2/9",
+                                          "content_type": "favorite_item_id", "volume": 25})
+            self.assertEqual(result[0], "media_player.sala")
+            join = next(p for n, p in calls if n == "join")
+            self.assertEqual(join["entity_id"], "media_player.sala")
+            play = next(p for n, p in calls if n == "play_media")
+            self.assertEqual(play["entity_id"], "media_player.sala")
+            # Il Bar è appena stato spento (HA lo mostra ancora acceso): il join fallisce, viene saltato
+            # per qualche minuto e il controllo successivo non riprova (prima si bloccava ogni volta).
+            group = [{"entity_id": "media_player.sala", "state": "playing",
+                      "attributes": {"group_members": ["media_player.sala", "media_player.terrazza"]}},
+                     {"entity_id": "media_player.terrazza", "state": "playing",
+                      "attributes": {"group_members": ["media_player.sala", "media_player.terrazza"]}},
+                     {"entity_id": "media_player.bar", "state": "playing", "attributes": {"group_members": ["media_player.bar"]}}]
+            attempts = []
+
+            def service(domain, name, payload):
+                attempts.append(name)
+                if name == "join":
+                    raise RuntimeError("Home Assistant 500: Unable to connect to 192.168.178.20")
+
+            with mock.patch.object(app.ha, "states", return_value=group),                     mock.patch.object(app.ha, "service", side_effect=service), mock.patch.object(app.time, "sleep"):
+                first = app.repair_sonos_group(players, "media_player.sala")
+                second = app.repair_sonos_group(players, "media_player.sala")
+            self.assertEqual(first["missing"], [])
+            self.assertIn("media_player.bar", first["unavailable"])
+            self.assertEqual(attempts.count("join"), 1)
+            self.assertNotIn("media_play", attempts)
+            self.assertIn("media_player.bar", second["unavailable"])
+            self.assertEqual(app.SONOS_GROUP_CHECK_SECONDS, 8)
+        finally:
+            music["leader"] = saved_leader
+            app.SONOS_UNRESPONSIVE.clear()
+        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        self.assertIn('data-bind="music.leader"', html)
+        self.assertIn("['Cassa principale (guida il gruppo)','Hauptlautsprecher (führt die Gruppe)']", html)
 
     def test_overnight_schedule(self):
         schedule = [{"days": [6], "start": "22:00", "end": "02:00", "enabled": True}]

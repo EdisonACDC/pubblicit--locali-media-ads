@@ -15,6 +15,7 @@ import json
 import math
 import mimetypes
 import os
+import random
 import re
 import shutil
 import secrets
@@ -66,7 +67,7 @@ SONOS_GROUP_SETTLE_SECONDS = float(os.environ.get("CARELLAS_SONOS_GROUP_SETTLE_S
 SONOS_RESTORE_SETTLE_SECONDS = float(os.environ.get("CARELLAS_SONOS_RESTORE_SETTLE_SECONDS", "0.6"))
 SONOS_RESTORE_RETRIES = max(1, int(os.environ.get("CARELLAS_SONOS_RESTORE_RETRIES", "3")))
 SONOS_FADE_STEPS = max(2, int(os.environ.get("CARELLAS_SONOS_FADE_STEPS", "6")))
-SONOS_GROUP_CHECK_SECONDS = max(5.0, float(os.environ.get("CARELLAS_SONOS_GROUP_CHECK_SECONDS", "15")))
+SONOS_GROUP_CHECK_SECONDS = max(5.0, float(os.environ.get("CARELLAS_SONOS_GROUP_CHECK_SECONDS", "8")))
 SONOS_SPOT_TAIL_GUARD_SECONDS = max(
     0.0, min(float(os.environ.get("CARELLAS_SONOS_SPOT_TAIL_GUARD_SECONDS", "0.4")), 2.0)
 )
@@ -222,6 +223,7 @@ class Store:
             music["transition_seconds"] = max(0.0, min(float(music.get("transition_seconds", 3)), 10.0))
         except (TypeError, ValueError):
             music["transition_seconds"] = 3
+        music.setdefault("mix", {"enabled": False, "block_minutes": 60, "sources": [], "players": [], "volume": 25})
         if self.config.get("language") not in {"it", "de"}:
             self.config["language"] = "it"
         social = self.config.setdefault("social", {})
@@ -785,6 +787,191 @@ def active_music_slot(music, moment=None):
     return None
 
 
+# Mix automatico: per tutto l'orario di apertura alterna a blocchi le radio e le playlist scelte.
+# Due blocchi vicini non hanno mai la stessa sorgente, alla stessa ora non si ripete quella del giorno
+# prima e ogni giorno l'ordine cambia. Il calcolo parte sempre dalla stessa data, così il mix di un
+# giorno è sempre lo stesso (anteprima del Palinsesto = quello che suona davvero).
+MIX_ANCHOR = datetime(2024, 1, 1).date()
+MIX_CACHE = {"signature": None, "days": {}}
+MIX_CACHE_LOCK = threading.Lock()
+MIX_CONTENT_TYPES = {"favorite_item_id", "playlist", "sonos_playlist_source", "sonos_radio_source",
+                     "sonos_source", "radio_url", "music"}
+
+
+def mix_settings():
+    music = store.config.get("music", {})
+    raw = music.get("mix") or {}
+    sources = []
+    seen = set()
+    for item in raw.get("sources") or []:
+        if not isinstance(item, dict):
+            continue
+        content_id = str(item.get("content_id") or "").strip()
+        content_type = str(item.get("content_type") or "favorite_item_id")
+        if not content_id or content_type not in MIX_CONTENT_TYPES or content_id in seen:
+            continue
+        seen.add(content_id)
+        sources.append({
+            "content_id": content_id, "content_type": content_type,
+            "name": str(item.get("name") or content_id)[:120],
+            "kind": "radio" if item.get("kind") == "radio" or content_type in ("radio_url", "sonos_radio_source")
+            else "playlist",
+        })
+    try:
+        block = int(raw.get("block_minutes", 60))
+    except (TypeError, ValueError):
+        block = 60
+    try:
+        volume = int(raw.get("volume", music.get("volume", 25)))
+    except (TypeError, ValueError):
+        volume = 25
+    return {
+        "enabled": raw.get("enabled") is True and len(sources) >= 2,
+        "sources": sources,
+        "block_minutes": max(15, min(block, 240)),
+        # Casse del mix; se non ne è scelta nessuna, quelle della musica o di tutte le fasce del Palinsesto.
+        "players": [p for p in dict.fromkeys(
+            raw.get("players") or music.get("players")
+            or [player for slot in music.get("slots") or [] for player in slot.get("players") or []]
+        ) if isinstance(p, str)],
+        "volume": max(0, min(volume, 100)),
+    }
+
+
+def opening_windows(schedule, weekday):
+    """Finestre di apertura di un giorno in minuti (come nel pannello); senza orari, tutto il giorno."""
+    rows = [row for row in schedule or [] if row.get("enabled", True) is not False]
+    if not rows:
+        return [(0, 1440)]
+    windows = []
+    for row in rows:
+        try:
+            sh, sm = map(int, str(row.get("start", "00:00")).split(":"))
+            eh, em = map(int, str(row.get("end", "23:59")).split(":"))
+        except (TypeError, ValueError):
+            continue
+        start, end = sh * 60 + sm, eh * 60 + em
+        days = row.get("days") or []
+        if weekday in days:
+            windows.append((start, end) if start < end else (start, 1440))
+        if start >= end and (weekday - 1) % 7 in days:
+            windows.append((0, end))
+    merged = []
+    for start, end in sorted(windows):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _mix_day(day, settings, schedule, previous, signature, recent=()):
+    """Mix di un giorno; se la sequenza è già uscita in uno dei giorni precedenti si rifà."""
+    plan = []
+    for attempt in range(25):
+        plan = _mix_day_attempt(day, settings, schedule, previous, f"{signature}|{day.isoformat()}|{attempt}")
+        if tuple(item["content_id"] for item in plan) not in recent:
+            break
+    return plan
+
+
+def _mix_day_attempt(day, settings, schedule, previous, seed):
+    rng = random.Random(seed)
+    block = settings["block_minutes"]
+    blocks = []
+    for start, end in opening_windows(schedule, day.weekday()):
+        moment = start
+        while moment < end:
+            stop = min(end, moment + block)
+            if end - stop < block / 2:
+                stop = end
+            blocks.append((moment, stop))
+            moment = stop
+
+    def yesterday_at(minute):
+        return next((item["content_id"] for item in previous if item["start"] <= minute < item["end"]), None)
+
+    sources = settings["sources"]
+    kinds = {source["kind"] for source in sources}
+    usage = {source["content_id"]: 0 for source in sources}
+    plan, last = [], None
+    for start, end in blocks:
+        avoid = {yesterday_at(start), yesterday_at(end - 1), yesterday_at((start + end) // 2)}
+        pool = [s for s in sources if s["content_id"] != (last or {}).get("content_id") and s["content_id"] not in avoid]
+        if not pool:
+            pool = [s for s in sources if s["content_id"] != (last or {}).get("content_id")] or sources
+        # Radio e playlist si alternano quando ci sono tutte e due.
+        if last and len(kinds) > 1:
+            other = [s for s in pool if s["kind"] != last["kind"]]
+            pool = other or pool
+        fewest = min(usage[s["content_id"]] for s in pool)
+        choice = rng.choice([s for s in pool if usage[s["content_id"]] == fewest])
+        usage[choice["content_id"]] += 1
+        plan.append({"start": start, "end": end, **choice})
+        last = choice
+    return plan
+
+
+def mix_plan(day):
+    """Blocchi del mix per una data, calcolati a catena dal giorno di partenza (in memoria)."""
+    settings = mix_settings()
+    schedule = store.config.get("music", {}).get("schedule", [])
+    signature = hashlib.sha1(json.dumps([settings["sources"], settings["block_minutes"], schedule],
+                                        sort_keys=True).encode()).hexdigest()[:12]
+    with MIX_CACHE_LOCK:
+        if MIX_CACHE["signature"] != signature:
+            MIX_CACHE["signature"], MIX_CACHE["days"] = signature, {}
+        days = MIX_CACHE["days"]
+        if day in days:
+            return days[day]
+        known = [d for d in days if d < day]
+        current = max(known) if known else MIX_ANCHOR - timedelta(days=1)
+        # «Giorno prima» = l'ultimo giorno in cui il locale era aperto (dopo la domenica chiusa, il sabato).
+        previous = next((days[d] for d in sorted(known, reverse=True) if days[d]), [])
+        while current < day:
+            current += timedelta(days=1)
+            # Ultimi 60 giorni: nessun giorno ripete la stessa sequenza.
+            recent = {tuple(item["content_id"] for item in days[current - timedelta(days=back)])
+                      for back in range(1, 61) if current - timedelta(days=back) in days}
+            plan = days[current] = _mix_day(current, settings, schedule, previous, signature, recent)
+            if plan:
+                previous = plan
+        return days[day]
+
+
+def active_mix_slot(moment=None):
+    """La fascia del mix in onda adesso, nello stesso formato delle fasce del Palinsesto."""
+    settings = mix_settings()
+    if not settings["enabled"]:
+        return None
+    moment = moment or datetime.now().astimezone()
+    minute = moment.hour * 60 + moment.minute
+    for item in mix_plan(moment.date()):
+        if item["start"] <= minute < item["end"]:
+            return {
+                "id": f"mix-{moment.date().isoformat()}-{item['start']}",
+                "name": item["name"], "title": item["name"],
+                "content_id": item["content_id"], "content_type": item["content_type"],
+                "players": settings["players"], "volume": settings["volume"], "mix": True,
+            }
+    return None
+
+
+def mix_week(today=None):
+    """Mix della settimana in corso (da lunedì) per l'anteprima nel Palinsesto."""
+    if not mix_settings()["enabled"]:
+        return []
+    today = today or datetime.now().date()
+    monday = today - timedelta(days=today.weekday())
+    week = []
+    for offset in range(7):
+        day = monday + timedelta(days=offset)
+        week.append({"date": day.isoformat(), "weekday": day.weekday(), "blocks": [
+            {"start": item["start"], "end": item["end"], "name": item["name"], "kind": item["kind"],
+             "content_id": item["content_id"]} for item in mix_plan(day)]})
+    return week
+
+
 def is_music_slot_active(slot, moment=None):
     """Verifica una sorgente con ora di partenza e durata, anche oltre mezzanotte."""
     moment = moment or datetime.now().astimezone()
@@ -1009,9 +1196,17 @@ def available_sonos_players(players):
     return valid
 
 
+def leader_first(players):
+    """La cassa principale (scelta nel Palinsesto) guida il gruppo: se si spegne il coordinatore, Sonos
+    ferma la musica su tutte le casse. Conviene che guidi una cassa che non viene mai spenta."""
+    leader = str(store.config.get("music", {}).get("leader") or "")
+    players = list(players)
+    return [leader] + [p for p in players if p != leader] if leader in players else players
+
+
 def prepare_sonos_group(players, force=False):
     """Raggruppa gli altoparlanti e restituisce il coordinatore Sonos."""
-    players = available_sonos_players(players)
+    players = leader_first(available_sonos_players(players))
     if not players:
         raise RuntimeError("Nessun altoparlante Sonos disponibile tra quelli selezionati")
     coordinator = players[0]
@@ -1122,14 +1317,32 @@ def repair_sonos_group(players, preferred_coordinator=None, volume_level=None):
     if not reachable:
         return {"coordinator": None, "missing": [], "unavailable": unavailable}
 
-    coordinator = preferred_coordinator if preferred_coordinator in reachable else reachable[0]
+    coordinator = preferred_coordinator if preferred_coordinator in reachable else leader_first(reachable)[0]
     members = states.get(coordinator, {}).get("attributes", {}).get("group_members") or [coordinator]
     missing = [player for player in reachable if player not in members]
     if missing:
-        ha.service("media_player", "join", {
-            "entity_id": coordinator,
-            "group_members": missing,
-        })
+        try:
+            ha.service("media_player", "join", {
+                "entity_id": coordinator,
+                "group_members": missing,
+            })
+        except Exception as error:
+            # Un Sonos appena spento risulta ancora acceso per qualche secondo: riprovare ogni
+            # controllo bloccava tutto fino al timeout. Si salta per qualche minuto.
+            if len(missing) == 1:
+                mark_sonos_unresponsive(missing[0], error)
+                return {"coordinator": coordinator, "missing": [], "unavailable": unavailable + missing}
+            joined = []
+            for member in missing:
+                try:
+                    ha.service("media_player", "join", {"entity_id": coordinator, "group_members": [member]})
+                    joined.append(member)
+                except Exception as member_error:
+                    mark_sonos_unresponsive(member, member_error)
+            unavailable = unavailable + [m for m in missing if m not in joined]
+            missing = joined
+            if not missing:
+                return {"coordinator": coordinator, "missing": [], "unavailable": unavailable}
         if SONOS_GROUP_SETTLE_SECONDS > 0:
             time.sleep(SONOS_GROUP_SETTLE_SECONDS)
         if isinstance(volume_level, dict):
@@ -1769,6 +1982,8 @@ def start_music(selection=None, fade_in=False):
     if not players or not content_id:
         raise RuntimeError("Configurazione musica incompleta")
     coordinator = prepare_sonos_group(players)
+    # Il coordinatore (la cassa principale, se scelta) va per primo: lo usano i controlli del gruppo.
+    players = [coordinator] + [player for player in players if player != coordinator]
     slot_volume = max(0, min(int(selection.get("volume", cfg.get("volume", 25))), 100)) / 100
     # Ogni Sonos con un volume scelto a mano oggi lo mantiene; gli altri prendono il volume della fascia.
     manual = manual_sonos_volumes(players)
@@ -3015,6 +3230,9 @@ class Scheduler(threading.Thread):
         slot = active_music_slot(cfg) if cfg.get("enabled") and cfg.get("slots") else None
         if cfg.get("enabled") and not cfg.get("slots") and is_schedule_active(cfg.get("schedule", [])):
             slot = cfg
+        if cfg.get("enabled") and mix_settings()["enabled"]:
+            # Mix automatico acceso: prende il posto delle fasce del Palinsesto.
+            slot = active_mix_slot()
         active = bool(slot)
         slot_key = None
         if slot:
@@ -4054,6 +4272,7 @@ class Handler(BaseHTTPRequestHandler):
                         **scheduler.audio_status(),
                         "music_active": scheduler.music_active,
                         "music_slot_id": scheduler.music_slot_id,
+                        "mix_week": mix_week(),
                         "tv_active": scheduler.tv_active,
                         "media_base_url": local_base_url(),
                         "player_url": player_public_url(),
