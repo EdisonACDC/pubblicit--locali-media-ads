@@ -2977,9 +2977,9 @@ class CarellasServerTest(unittest.TestCase):
         html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
         # Ogni fascia ha il suo colore, spazio tra i blocchi, nome e orario dentro il blocco e le linee delle ore.
         self.assertIn("const SLOT_COLORS=[", html)
-        self.assertIn('<span class="t">${esc(slotTitle(s))}</span><span class="h">${esc(s.start+'–'+slotEnd(s))}</span>', html)
+        self.assertIn("""<span class="t">${esc(slotTitle(s))}</span><span class="h">${esc(s.start+'–'+slotEnd(s))}</span>""", html)
         self.assertIn("width:calc(${span(a,b)} - 4px);${slotColor(s)}", html)
-        self.assertIn('<div class="lane">${hourLines.join('')}', html)
+        self.assertIn("""<div class="lane">${hourLines.join('')}""", html)
         self.assertIn("['Musica (un colore per fascia)','Musik (eine Farbe pro Zeitraum)']", html)
 
     def test_overnight_schedule(self):
