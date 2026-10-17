@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import copy
 import csv
+import difflib
 import io
 import base64
 import hashlib
@@ -509,11 +510,10 @@ def load_sonos_catalog():
             or media_type in {"favorite_item_id", "sonos_playlist", "sonos_source"}
         ):
             continue
-        result.append({
-            "id": media_id,
-            "name": str(item.get("name") or media_id),
-            "type": media_type,
-        })
+        entry = {"id": media_id, "name": str(item.get("name") or media_id), "type": media_type}
+        if item.get("kind") in ("radio", "playlist"):
+            entry["kind"] = item["kind"]
+        result.append(entry)
     return result
 
 
@@ -524,6 +524,8 @@ def save_sonos_catalog(items):
             "id": str(item["id"]),
             "name": str(item.get("name") or item["id"]),
             "type": str(item.get("type") or "music"),
+            # Radio o playlist, se Sonos lo ha indicato: serve alle due cartelle del Palinsesto.
+            **({"kind": item["kind"]} if item.get("kind") in ("radio", "playlist") else {}),
         }
         for item in items
         if isinstance(item, dict) and item.get("id")
@@ -553,6 +555,20 @@ def _is_sonos_browser_node(node):
         text,
         re.IGNORECASE,
     ))
+
+
+def sonos_item_kind(node, folder=None):
+    """Radio o playlist, dalla classe del contenuto o dalla cartella dei Preferiti in cui si trova."""
+    media_class = str(node.get("media_class") or "").lower()
+    media_id = str(node.get("media_content_id") or "")
+    folder_text = " ".join(str((folder or {}).get(key) or "") for key in (
+        "title", "media_content_id", "media_class")).lower()
+    if media_class == "playlist" or media_id.startswith(("SQ:", "S:")) or "playlist" in folder_text:
+        return "playlist"
+    if media_class in ("genre", "channel") or "audiobroadcast" in folder_text \
+            or re.search(r"\bradio|sender|station", folder_text):
+        return "radio"
+    return ""
 
 
 def _is_native_sonos_item(node):
@@ -619,6 +635,7 @@ def refresh_sonos_catalog(entity_id, max_depth=5, max_folders=120, max_items=300
                     "id": media_id,
                     "name": str(child.get("title") or media_id),
                     "type": str(child.get("media_content_type") or "music"),
+                    "kind": sonos_item_kind(child, browser),
                 }
 
     # ``media_player/browse_media`` può restituire la radice generale di Home
@@ -1353,8 +1370,8 @@ def sonos_source_rejected(error):
 def music_error_message(error, selection):
     title = (selection or {}).get("name") or (selection or {}).get("title") or (selection or {}).get("content_id", "")
     if sonos_source_rejected(error):
-        return (f"Sonos non accetta la sorgente della fascia «{title}» (errore 402): "
-                "sceglila di nuovo nel Palinsesto o salvala tra i Preferiti Sonos")
+        return (f"Sonos non accetta la sorgente della fascia «{title}» (errore 402): nel Palinsesto "
+                "scegli di nuovo la sorgente oppure cerca la radio in «Radio da Internet»")
     return str(error)
 
 
@@ -1370,6 +1387,133 @@ def matching_sonos_source(entity_id, selection):
         if found:
             return found
     return None
+
+
+# Radio da Internet: archivio pubblico e gratuito Radio Browser (radio-browser.info), senza chiavi.
+# Serve quando Sonos rifiuta una radio dei Preferiti (es. TuneIn con errore 402): i Sonos
+# suonano direttamente l'indirizzo della trasmissione.
+RADIO_BROWSER_API = os.environ.get("CARELLAS_RADIO_BROWSER_API", "https://all.api.radio-browser.info").rstrip("/")
+RADIO_STATION_CACHE = {}
+RADIO_STATION_CACHE_SECONDS = 24 * 60 * 60
+
+
+def radio_browser_search(query, limit=8):
+    query = re.sub(r"\s+", " ", str(query or "")).strip()[:80]
+    if len(query) < 2:
+        raise RuntimeError("Scrivi almeno due lettere del nome della radio")
+    params = urllib.parse.urlencode({
+        "name": query, "limit": str(max(1, min(int(limit), 20))), "hidebroken": "true",
+        "order": "clickcount", "reverse": "true",
+    })
+    request = urllib.request.Request(f"{RADIO_BROWSER_API}/json/stations/search?{params}",
+                                     headers={"User-Agent": "CarellasMediaAds", "Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            data = json.loads(response.read() or b"[]")
+    except (urllib.error.URLError, OSError, ValueError) as error:
+        raise RuntimeError(f"Archivio delle radio non raggiungibile: {getattr(error, 'reason', error)}") from None
+    stations, seen = [], set()
+    for item in data if isinstance(data, list) else []:
+        url = str(item.get("url_resolved") or item.get("url") or "").strip()
+        name = re.sub(r"\s+", " ", str(item.get("name") or "")).strip()[:120]
+        if not name or not re.match(r"^https?://", url) or url in seen:
+            continue
+        seen.add(url)
+        stations.append({
+            "name": name, "url": url, "codec": str(item.get("codec") or "")[:12],
+            "bitrate": int(item.get("bitrate") or 0), "country": str(item.get("countrycode") or "")[:4],
+        })
+    return stations
+
+
+def sonos_radio_uris(url):
+    """Indirizzi da provare: con «x-rincon-mp3radio» Sonos tratta il flusso come una radio."""
+    plain = str(url)
+    rincon = "x-rincon-mp3radio://" + plain.split("://", 1)[1]
+    return [rincon, plain] if plain.startswith("http://") else [plain, rincon]
+
+
+def play_radio_url(entity_id, url):
+    last_error = None
+    for uri in sonos_radio_uris(url):
+        try:
+            play_sonos_media({"entity_id": entity_id, "media_content_type": "music", "media_content_id": uri})
+            return
+        except Exception as error:
+            last_error = error
+    raise last_error
+
+
+def slot_looks_like_radio(selection):
+    content_id = str(selection.get("content_id") or "")
+    if selection.get("content_type") in ("playlist", "sonos_playlist_source") or re.match(r"^(S:|SQ:)", content_id):
+        return False
+    title = str(selection.get("title") or selection.get("name") or "")
+    # Un Preferito può essere anche una playlist: si cerca una radio solo se il nome lo dice.
+    return selection.get("content_type") == "sonos_radio_source" \
+        or bool(re.search(r"radio|\bfm\b|\d{2,3}[.,]\d", title, re.I))
+
+
+def internet_radio_station(selection):
+    """Stazione di Radio Browser con lo stesso nome della radio della fascia (controllata, in memoria per un giorno)."""
+    title = re.sub(r"\s+", " ", str(selection.get("title") or selection.get("name") or "")).strip()
+    if not title or not slot_looks_like_radio(selection):
+        return None
+    key = title.lower()
+    cached = RADIO_STATION_CACHE.get(key)
+    if cached and time.time() - cached[0] < RADIO_STATION_CACHE_SECONDS:
+        return cached[1]
+    best, best_score = None, 0.0
+    shorter = re.sub(r"\s+(fm|radio|live|italia)$", "", re.sub(r"^radio\s+", "", title, flags=re.I), flags=re.I)
+    queries = list(dict.fromkeys([title, re.sub(r"^radio\s+", "", title, flags=re.I), shorter]))
+    targets = {query.lower() for query in queries}
+    for query in queries:
+        try:
+            stations = radio_browser_search(query, limit=20)
+        except RuntimeError as error:
+            store.log("warning", str(error))
+            continue
+        for station in stations:
+            # «RTL 102.5 [Mobile 48kbps]» è la stessa radio di «RTL 102.5 FM»; «RTL 102.5 Best» no.
+            name = re.sub(r"\s+", " ", re.sub(r"[\[(].*?[\])]", "", station["name"])).strip().lower()
+            score = difflib.SequenceMatcher(None, key, name).ratio()
+            if name in targets:
+                score = 1.0
+            elif key in name or name in key:
+                score = max(score, 0.9)
+            # I flussi HLS (.m3u8) funzionano male sui Sonos: meglio un flusso MP3/AAC classico.
+            if ".m3u8" in station["url"].lower() or "hls" in station["codec"].lower():
+                score -= 0.3
+            # A parità di nome, il flusso con qualità migliore.
+            score += min(station["bitrate"], 320) / 100000
+            if score > best_score:
+                best, best_score = station, score
+        # Nome identico trovato: inutile cercare ancora.
+        if best_score >= 1.0:
+            break
+    station = best if best_score >= 0.75 else None
+    RADIO_STATION_CACHE[key] = (time.time(), station)
+    return station
+
+
+def play_rejected_source_elsewhere(coordinator, selection, error):
+    """Sonos rifiuta la sorgente della fascia: prima il Preferito con lo stesso nome, poi la radio da Internet."""
+    title = selection.get("title") or selection.get("name") or selection.get("content_id", "")
+    if selection.get("content_type") not in ("sonos_radio_source", "sonos_source", "sonos_playlist_source"):
+        source = matching_sonos_source(coordinator, selection)
+        if source:
+            store.log("warning", f"Sonos ha rifiutato l'ID della fascia, provo il Preferito «{source}»")
+            try:
+                select_sonos_source(coordinator, source)
+                return
+            except Exception as source_error:
+                if not sonos_source_rejected(source_error):
+                    raise
+    station = internet_radio_station(selection)
+    if not station:
+        raise error
+    store.log("warning", f"Sonos non suona «{title}» dai Preferiti: la avvio come radio da Internet ({station['name']})")
+    play_radio_url(coordinator, station["url"])
 
 
 def sonos_playing(entity_id):
@@ -1445,43 +1589,44 @@ def start_music(selection=None, fade_in=False):
         "media_content_id": content_id,
     }
     try:
-        if content_type == "sonos_radio_source":
-            select_sonos_source(coordinator, content_id)
-        elif content_type == "sonos_playlist_source":
-            # Le playlist Sonos vengono riprodotte in modo più affidabile con
-            # play_media. Alcune versioni espongono invece la stessa voce come
-            # source: in quel caso usiamo select_source come ripiego.
-            try:
-                play_sonos_media({
-                    "entity_id": coordinator,
-                    "media_content_type": "playlist",
-                    "media_content_id": content_id,
-                })
-            except Exception as playlist_error:
-                store.log("warning", f"Playlist Sonos non avviata direttamente, provo come sorgente: {playlist_error}")
+        try:
+            if content_type == "radio_url":
+                # Radio da Internet scelta nel Palinsesto: indirizzo diretto della trasmissione.
+                play_radio_url(coordinator, content_id)
+            elif content_type == "sonos_radio_source":
                 select_sonos_source(coordinator, content_id)
-        elif content_type == "sonos_source":
-            # Compatibilita con le configurazioni delle versioni precedenti.
-            try:
-                select_sonos_source(coordinator, content_id)
-            except Exception as source_error:
-                store.log("warning", f"Sorgente Sonos precedente non selezionabile, provo come playlist: {source_error}")
-                play_sonos_media({
-                    "entity_id": coordinator,
-                    "media_content_type": "playlist",
-                    "media_content_id": content_id,
-                })
-        else:
-            try:
+            elif content_type == "sonos_playlist_source":
+                # Le playlist Sonos vengono riprodotte in modo più affidabile con
+                # play_media. Alcune versioni espongono invece la stessa voce come
+                # source: in quel caso usiamo select_source come ripiego.
+                try:
+                    play_sonos_media({
+                        "entity_id": coordinator,
+                        "media_content_type": "playlist",
+                        "media_content_id": content_id,
+                    })
+                except Exception as playlist_error:
+                    store.log("warning", f"Playlist Sonos non avviata direttamente, provo come sorgente: {playlist_error}")
+                    select_sonos_source(coordinator, content_id)
+            elif content_type == "sonos_source":
+                # Compatibilita con le configurazioni delle versioni precedenti.
+                try:
+                    select_sonos_source(coordinator, content_id)
+                except Exception as source_error:
+                    store.log("warning", f"Sorgente Sonos precedente non selezionabile, provo come playlist: {source_error}")
+                    play_sonos_media({
+                        "entity_id": coordinator,
+                        "media_content_type": "playlist",
+                        "media_content_id": content_id,
+                    })
+            else:
                 play_sonos_media(payload)
-            except Exception as play_error:
-                # Sonos rifiuta l'ID salvato (es. 402 Invalid Args): se la stessa voce è tra i Preferiti
-                # Sonos, la si avvia per nome come sorgente.
-                fallback = matching_sonos_source(coordinator, selection) if sonos_source_rejected(play_error) else None
-                if not fallback:
-                    raise
-                store.log("warning", f"Sonos ha rifiutato l'ID della fascia, provo il Preferito «{fallback}»")
-                select_sonos_source(coordinator, fallback)
+        except Exception as play_error:
+            # Sonos rifiuta la sorgente (es. 402 Invalid Args con le radio TuneIn dei Preferiti):
+            # si prova il Preferito con lo stesso nome e poi la stessa radio da Internet.
+            if content_type == "radio_url" or not sonos_source_rejected(play_error):
+                raise
+            play_rejected_source_elsewhere(coordinator, selection, play_error)
         title = selection.get("name") or selection.get("title") or content_id
         if not ensure_sonos_playing(coordinator):
             raise RuntimeError(f"I Sonos non sono partiti con «{title}»: riprovo tra poco")
@@ -3625,6 +3770,9 @@ class Handler(BaseHTTPRequestHandler):
                     "source": selected.get("name") or selected.get("title")
                     or selected.get("content_id", ""),
                 })
+                return
+            if path == "/api/radio/search":
+                self.send_json({"ok": True, "stations": radio_browser_search(self.json_body().get("q", ""))})
                 return
             if path == "/api/music/refresh":
                 body = self.json_body()
