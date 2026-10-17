@@ -445,8 +445,55 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual([item["duration"] for item in metadata["sequence"]], [4, 7, 5])
         self.assertEqual([item["effect"] for item in metadata["sequence"]], ["zoom_in", "none", "pan"])
         concat = (self.app.iptv.output("ordine-effetti").parent / "parts" / "concat.txt").read_text()
-        self.assertLess(concat.index("0000.mp4"), concat.index("0001.mp4"))
-        self.assertLess(concat.index("0001.mp4"), concat.index("0002.mp4"))
+        # Le parti (in memoria per nome dell'impronta) seguono l'ordine salvato.
+        keys = metadata["parts"]
+        self.assertEqual(len(set(keys)), 3)
+        self.assertLess(concat.index(keys[0]), concat.index(keys[1]))
+        self.assertLess(concat.index(keys[1]), concat.index(keys[2]))
+
+    def test_iptv_rebuild_reuses_unchanged_parts(self):
+        # Dopo una modifica si riconverte solo l'elemento cambiato: le altre parti sono già pronte.
+        names = ["riuso-a.jpg", "riuso-b.jpg", "riuso-c.jpg"]
+        for name in names:
+            (self.app.MEDIA_DIR / name).write_bytes(b"source")
+        playlist = [{"name": name, "kind": "image", "duration": 4, "effect": "fade"} for name in names]
+        self.app.store.update({"iptv": {"channels": [{"id": "riuso", "name": "Riuso", "enabled": True,
+                                                      "playlist": playlist, "schedule": []}]}})
+        encoded = []
+
+        def fake_run(command, **kwargs):
+            if command[0] == "ffprobe":
+                return mock.Mock(stdout="h264\n" if "stream=codec_name" in command else "12.0\n")
+            target = Path(command[-1])
+            if "-loop" in command:
+                encoded.append(command[command.index("-loop") + 3])
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"built" * 300)
+            return mock.Mock(stdout="")
+
+        with mock.patch.object(self.app.subprocess, "run", side_effect=fake_run):
+            self.app.iptv.build("riuso")
+            self.assertEqual(len(encoded), 3)
+            # Cambia solo la durata della seconda foto e l'ordine: FFmpeg converte una sola foto.
+            encoded.clear()
+            changed = [playlist[2], dict(playlist[1], duration=8), playlist[0]]
+            self.app.store.update({"iptv": {"channels": [{"id": "riuso", "name": "Riuso", "enabled": True,
+                                                          "playlist": changed, "schedule": []}]}})
+            self.app.iptv.build("riuso")
+            self.assertEqual([Path(source).name for source in encoded], ["riuso-b.jpg"])
+            metadata = json.loads(self.app.iptv.build_metadata("riuso").read_text(encoding="utf-8"))
+            self.assertEqual([item["name"] for item in metadata["sequence"]], ["riuso-c.jpg", "riuso-b.jpg", "riuso-a.jpg"])
+            self.assertEqual([item["duration"] for item in metadata["sequence"]], [4, 8, 4])
+            # La parte vecchia della seconda foto (4 secondi) non resta in memoria.
+            cache = self.app.iptv.output("riuso").parent / "cache"
+            self.assertEqual({p.name.split(".")[0] for p in cache.iterdir()}, set(metadata["parts"]))
+            # Se il file della foto viene sostituito, quella parte si riconverte.
+            encoded.clear()
+            source = self.app.MEDIA_DIR / "riuso-a.jpg"
+            source.write_bytes(b"nuova foto")
+            os.utime(source, ns=(source.stat().st_atime_ns, source.stat().st_mtime_ns + 5_000_000_000))
+            self.app.iptv.build("riuso")
+            self.assertEqual([Path(source).name for source in encoded], ["riuso-a.jpg"])
 
     def test_image_effects_are_deliberately_visible(self):
         zoom_in = self.app.IPTVEngine._effect_filter("zoom_in", 10)
@@ -3807,6 +3854,26 @@ class CarellasServerTest(unittest.TestCase):
         # Come nel pannello: riepilogo (spot oggi, musica, prossimo cambio) e «La giornata».
         for marker in ("L('Spot oggi')", "L('Prossimo cambio')", "L('La giornata')", 'class="tl-block music', "data-tl-wrap"):
             self.assertIn(marker, html)
+
+    def test_now_playing_shows_real_sonos_volume(self):
+        # «Ora in onda» mostra il volume letto dai Sonos, non quello della fascia, e dice se è scelto a mano.
+        app = self.app
+        app.SONOS_MANUAL_VOLUMES.clear()
+        try:
+            app.SONOS_MANUAL_VOLUMES["media_player.sala"] = (0.25, datetime.now().date().isoformat())
+            app.SONOS_MANUAL_VOLUMES["media_player.bar"] = (0.55, "2000-01-01")
+            status, payload = self.request("/api/state")
+            self.assertEqual(status, 200)
+            self.assertEqual(payload["runtime"]["manual_volumes"], {"media_player.sala": 25})
+            status, payload = self.request("/api/staff/state")
+            self.assertEqual(payload["runtime"]["manual_volumes"], {"media_player.sala": 25})
+        finally:
+            app.SONOS_MANUAL_VOLUMES.clear()
+        for page in ("index.html", "operatori.html"):
+            html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app" / page).read_text(encoding="utf-8")
+            self.assertIn("function musicVolumeLabel(players,planned)", html, page)
+            self.assertIn("musicVolumeLabel(slot.players,", html, page)
+            self.assertIn("'scelto a mano, fascia {0}'", html, page)
 
     def test_operators_remove_spots_only_for_today(self):
         app = self.app
