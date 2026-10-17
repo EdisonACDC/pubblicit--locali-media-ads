@@ -75,6 +75,9 @@ SONOS_QUIET_VOLUME = 0.01
 SONOS_SOURCE_RETRIES = max(1, int(os.environ.get("CARELLAS_SONOS_SOURCE_RETRIES", "5")))
 SONOS_START_CHECK_SECONDS = max(0, int(os.environ.get("CARELLAS_SONOS_START_CHECK_SECONDS", "12")))
 MUSIC_RETRY_SECONDS = max(15, int(os.environ.get("CARELLAS_MUSIC_RETRY_SECONDS", "45")))
+# Sorgente rifiutata da Sonos (es. UPnP 402 Invalid Args): riprovare spesso non serve e a ogni
+# tentativo la musica in corso si abbassa e si rialza. Si riprova molto più di rado.
+MUSIC_RETRY_REJECTED_SECONDS = max(60, int(os.environ.get("CARELLAS_MUSIC_RETRY_REJECTED_SECONDS", "900")))
 # Ultimo volume scelto per ogni Sonos (cursore del pannello o volume letto prima di uno spot).
 # Serve quando Home Assistant non riporta il volume e quando un Sonos rientra nel gruppo:
 # ogni cassa torna al suo volume invece di un valore fisso uguale per tutte.
@@ -1341,6 +1344,34 @@ def play_sonos_media(payload, retries=None):
     raise last_error
 
 
+def sonos_source_rejected(error):
+    """Errore che non passa riprovando: Sonos non accetta la sorgente indicata."""
+    message = str(error).lower()
+    return ("402" in message and "invalid args" in message) or "upnp error 714" in message         or "upnp error 711" in message or "upnp error 712" in message
+
+
+def music_error_message(error, selection):
+    title = (selection or {}).get("name") or (selection or {}).get("title") or (selection or {}).get("content_id", "")
+    if sonos_source_rejected(error):
+        return (f"Sonos non accetta la sorgente della fascia «{title}» (errore 402): "
+                "sceglila di nuovo nel Palinsesto o salvala tra i Preferiti Sonos")
+    return str(error)
+
+
+def matching_sonos_source(entity_id, selection):
+    """Nome della sorgente Sonos (Preferiti) che corrisponde alla fascia, se esiste."""
+    try:
+        item = next((item for item in ha.states() if item.get("entity_id") == entity_id), {})
+    except Exception:
+        return None
+    sources = {str(source).strip().lower(): str(source) for source in item.get("attributes", {}).get("source_list") or []}
+    for wanted in (selection.get("name"), selection.get("title"), selection.get("content_id")):
+        found = sources.get(str(wanted or "").strip().lower())
+        if found:
+            return found
+    return None
+
+
 def sonos_playing(entity_id):
     try:
         item = next((item for item in ha.states() if item.get("entity_id") == entity_id), None)
@@ -1441,7 +1472,16 @@ def start_music(selection=None, fade_in=False):
                     "media_content_id": content_id,
                 })
         else:
-            play_sonos_media(payload)
+            try:
+                play_sonos_media(payload)
+            except Exception as play_error:
+                # Sonos rifiuta l'ID salvato (es. 402 Invalid Args): se la stessa voce è tra i Preferiti
+                # Sonos, la si avvia per nome come sorgente.
+                fallback = matching_sonos_source(coordinator, selection) if sonos_source_rejected(play_error) else None
+                if not fallback:
+                    raise
+                store.log("warning", f"Sonos ha rifiutato l'ID della fascia, provo il Preferito «{fallback}»")
+                select_sonos_source(coordinator, fallback)
         title = selection.get("name") or selection.get("title") or content_id
         if not ensure_sonos_playing(coordinator):
             raise RuntimeError(f"I Sonos non sono partiti con «{title}»: riprovo tra poco")
@@ -2018,6 +2058,7 @@ class Scheduler(threading.Thread):
         self.music_selection = None
         self.music_failed_slot_key = None
         self.music_retry_at = 0.0
+        self.music_last_error = None
         self.music_expected_players = []
         self.music_coordinator = None
         self.music_group_check_at = 0.0
@@ -2211,13 +2252,18 @@ class Scheduler(threading.Thread):
         changed = active and slot_key != self.music_slot_key
         if changed:
             previous_selection = copy.deepcopy(self.music_selection)
+            previous = list(self.music_players)
+            previous_levels = {}
+            group_kept = True
+            transition = max(0.0, min(float(cfg.get("transition_seconds", 3)), 10.0))
             try:
-                previous = list(self.music_players)
                 target_players = list(dict.fromkeys(slot.get("players") or cfg.get("players") or []))
-                transition = max(0.0, min(float(cfg.get("transition_seconds", 3)), 10.0))
                 if previous:
-                    fade_sonos(previous, SONOS_QUIET_VOLUME, transition)
+                    # Volumi di ogni Sonos prima del cambio: servono se la nuova fascia non parte.
+                    previous_levels = sonos_volume_levels(previous, self.music_volume)
+                    fade_sonos(previous, SONOS_QUIET_VOLUME, transition, previous_levels)
                 if previous and set(previous) != set(target_players):
+                    group_kept = False
                     # Scioglie il vecchio gruppo prima di crearne uno diverso:
                     # un Sonos rimosso dalla fascia non deve continuare a suonare.
                     ha.service("media_player", "media_stop", {"entity_id": previous})
@@ -2238,14 +2284,33 @@ class Scheduler(threading.Thread):
                 self.music_selection = copy.deepcopy(slot)
                 self.music_failed_slot_key = None
                 self.music_retry_at = 0.0
+                self.music_last_error = None
             except Exception as error:
-                store.log("error", f"Avvio musica non riuscito: {error}")
+                rejected = sonos_source_rejected(error)
+                message = f"Avvio musica non riuscito: {music_error_message(error, slot)}"
+                # Lo stesso errore sulla stessa fascia si scrive una volta sola nel Registro.
+                if (slot_key, message) != self.music_last_error:
+                    store.log("error", message)
+                self.music_last_error = (slot_key, message)
                 self.music_failed_slot_key = slot_key
-                # Prima si riprovava dopo 5 minuti: troppo silenzio nel locale.
-                self.music_retry_at = time.monotonic() + MUSIC_RETRY_SECONDS
-                if previous_selection:
+                # Errore passeggero (Sonos occupato): si riprova presto. Sorgente rifiutata: di rado,
+                # perché ogni tentativo abbassa e rialza la musica in corso.
+                self.music_retry_at = time.monotonic() + (MUSIC_RETRY_REJECTED_SECONDS if rejected else MUSIC_RETRY_SECONDS)
+                if previous_selection and group_kept and self.music_coordinator                         and sonos_playing(self.music_coordinator) is not False:
+                    # La musica di prima suona ancora: si rialza solo il volume, senza riavviarla
+                    # (riavviarla la faceva abbassare e rialzare un'altra volta).
+                    try:
+                        fade_sonos(previous, previous_levels, transition,
+                                   {player: SONOS_QUIET_VOLUME for player in previous})
+                    except Exception as volume_error:
+                        store.log("warning", f"Volume della musica precedente non ripristinato: {volume_error}")
+                    active = True
+                    store.log("warning", "Cambio sorgente annullato: continua la musica precedente")
+                elif previous_selection:
                     try:
                         self.music_players = start_music(previous_selection, fade_in=True)
+                        if previous_levels:
+                            set_sonos_volume_levels({p: v for p, v in previous_levels.items() if p in self.music_players})
                         self.music_expected_players = list(dict.fromkeys(
                             previous_selection.get("players") or cfg.get("players") or []
                         ))
@@ -3551,6 +3616,8 @@ class Handler(BaseHTTPRequestHandler):
                     if sonos_transition_busy(error):
                         raise RuntimeError("Il Sonos sta ancora cambiando sorgente e non risponde: "
                                            "riprova tra qualche secondo") from None
+                    if sonos_source_rejected(error):
+                        raise RuntimeError(music_error_message(error, selection)) from None
                     raise
                 selected = selection or store.config["music"]
                 self.send_json({
