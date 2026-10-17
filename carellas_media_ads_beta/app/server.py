@@ -3054,6 +3054,8 @@ class Scheduler(threading.Thread):
         self.music_failed_slot_key = None
         self.music_retry_at = 0.0
         self.music_last_error = None
+        # Musica accesa o spenta a mano dal pannello: {"mode": "on"/"off", "slot_key": ..., "name": ...}.
+        self.music_override = None
         self.music_expected_players = []
         self.music_coordinator = None
         self.music_group_check_at = 0.0
@@ -3195,6 +3197,67 @@ class Scheduler(threading.Thread):
                 status["audio_waiting"] = "no_music"
         return status
 
+    def current_slot_key(self):
+        """Fascia del palinsesto in corso adesso (None fuori programma)."""
+        cfg = store.config["music"]
+        if not cfg.get("enabled"):
+            return None
+        slot = active_mix_slot() if mix_settings()["enabled"] else (
+            active_music_slot(cfg) if cfg.get("slots") else (cfg if is_schedule_active(cfg.get("schedule", [])) else None))
+        if not slot:
+            return None
+        return json.dumps([
+            slot.get("id") or "legacy", slot.get("content_type", "music"), slot.get("content_id", ""),
+            slot.get("players", []), slot.get("volume", cfg.get("volume", 25)),
+        ], ensure_ascii=False, sort_keys=True)
+
+    def _forget_music(self):
+        self.music_players = []
+        self.music_slot_key = None
+        self.music_slot_id = None
+        self.music_selection = None
+        self.music_active = False
+        self.music_coordinator = None
+        self.music_expected_players = []
+        self.music_failed_slot_key = None
+        self.music_retry_at = 0.0
+
+    def music_off(self):
+        """Spegne la musica a mano: resta spenta finché non la riaccendi o inizia un'altra fascia."""
+        players = list(self.music_players) or mix_settings()["players"]
+        transition = store.config["music"].get("transition_seconds", 3)
+        self.music_override = {"mode": "off", "slot_key": self.current_slot_key(), "name": ""}
+        try:
+            stop_music(players, transition)
+        finally:
+            self._forget_music()
+        store.log("info", "Musica spenta a mano: riprende con la prossima fascia o quando la riaccendi")
+
+    def music_on(self, selection=None):
+        """Riaccende la musica: senza scelta riprende il palinsesto, altrimenti suona la sorgente scelta
+        (anche fuori dal programma) finché non la spegni o inizia un'altra fascia."""
+        if not selection:
+            if not self.current_slot_key():
+                raise RuntimeError("Fuori programma: scegli cosa suonare")
+            self.music_override = None
+            self._forget_music()
+            store.log("info", "Musica riaccesa: riprende il palinsesto")
+            return None
+        # Prima si segna la scelta, così il motore non interviene mentre la musica parte.
+        self.music_override = {"mode": "on", "slot_key": self.current_slot_key(),
+                               "name": selection.get("name") or selection.get("content_id", "")}
+        try:
+            players = start_music(selection, fade_in=True)
+        except Exception:
+            self.music_override = None
+            raise
+        self.music_players = players
+        self.music_coordinator = players[0] if players else None
+        self.music_selection = copy.deepcopy(selection)
+        self.music_active = True
+        store.log("info", f"Musica accesa a mano: {self.music_override['name']}")
+        return players
+
     def audio_tick(self):
         cfg = store.config["audio"]
         if not cfg.get("enabled") or not is_schedule_active(cfg.get("schedule", [])) or self.audio_paused():
@@ -3243,6 +3306,15 @@ class Scheduler(threading.Thread):
                 slot.get("players", []),
                 slot.get("volume", cfg.get("volume", 25)),
             ], ensure_ascii=False, sort_keys=True)
+        override = self.music_override
+        if override:
+            if active and slot_key != override.get("slot_key"):
+                # Inizia un'altra fascia: la scelta fatta a mano finisce e riprende il palinsesto.
+                self.music_override = None
+                store.log("info", "Nuova fascia: la musica riprende dal palinsesto")
+            else:
+                # Musica spenta o accesa a mano: niente avvii, arresti o controlli automatici del gruppo.
+                return
         if active and slot_key == self.music_failed_slot_key and time.monotonic() < self.music_retry_at:
             # Un Sonos in transizione può restituire UPnP 701 per alcuni
             # secondi. Evitiamo una raffica di tentativi a ogni ciclo.
@@ -4273,6 +4345,10 @@ class Handler(BaseHTTPRequestHandler):
                         "music_active": scheduler.music_active,
                         "music_slot_id": scheduler.music_slot_id,
                         "mix_week": mix_week(),
+                        "music_override": (
+                            {"mode": scheduler.music_override["mode"], "name": scheduler.music_override.get("name", "")}
+                            if scheduler.music_override else None
+                        ),
                         "tv_active": scheduler.tv_active,
                         "media_base_url": local_base_url(),
                         "player_url": player_public_url(),
@@ -4633,6 +4709,33 @@ class Handler(BaseHTTPRequestHandler):
                 if not entity_id.startswith("media_player."):
                     raise RuntimeError("Altoparlante Sonos non valido")
                 ha.service("homeassistant", "update_entity", {"entity_id": entity_id})
+                self.send_json({"ok": True})
+                return
+            if path == "/api/music/manual":
+                body = self.json_body()
+                if body.get("action") == "off":
+                    scheduler.music_off()
+                    self.send_json({"ok": True})
+                    return
+                selection = None
+                if body.get("content_id"):
+                    music = store.config["music"]
+                    mix = mix_settings()
+                    selection = {
+                        "name": str(body.get("name") or body["content_id"])[:120],
+                        "title": str(body.get("name") or body["content_id"])[:120],
+                        "content_id": str(body["content_id"]),
+                        "content_type": str(body.get("content_type") or "favorite_item_id"),
+                        "players": [p for p in body.get("players") or mix["players"] if isinstance(p, str)],
+                        "volume": max(0, min(int(body.get("volume", mix["volume"] or music.get("volume", 25))), 100)),
+                    }
+                try:
+                    scheduler.music_on(selection)
+                except Exception as error:
+                    if sonos_transition_busy(error):
+                        raise RuntimeError("Il Sonos sta ancora cambiando sorgente e non risponde: "
+                                           "riprova tra qualche secondo") from None
+                    raise
                 self.send_json({"ok": True})
                 return
             if path == "/api/music/start":
