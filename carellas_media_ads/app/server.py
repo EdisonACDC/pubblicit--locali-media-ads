@@ -1378,6 +1378,26 @@ SPOTS_EXCLUDED = {}
 def spots_excluded_players():
     today = datetime.now().date().isoformat()
     return {player for player, day in SPOTS_EXCLUDED.items() if day == today}
+
+
+# Spot tolti dalla rotazione dagli operatori: solo per oggi (nome del file -> giorno).
+ADS_EXCLUDED = {}
+
+
+def ads_excluded_today():
+    today = datetime.now().date().isoformat()
+    return {name for name, day in ADS_EXCLUDED.items() if day == today}
+
+
+def active_ads(cfg):
+    """Spot in rotazione oggi: quelli scelti dall'amministratore meno quelli tolti per oggi."""
+    excluded = ads_excluded_today()
+    return [ad for ad in cfg.get("ads", []) if ad not in excluded]
+
+
+# Righe del registro che riguardano musica e spot (le uniche che vedono gli operatori).
+STAFF_LOG_WORDS = re.compile(r"spot|pubblicit|music|playlist|radio|fascia|sonos|brano|zona|volume|mix", re.I)
+STAFF_LOG_HIDDEN = re.compile(r"\btv\b|iptv|canal[ei]|schermo|schermi|player tv|dlna|instagram|token|password|accesso|login", re.I)
 SONOS_LAST_SET = {}
 SONOS_LAST_SET_AT = {}
 SONOS_MANUAL_CANDIDATES = {}
@@ -1613,7 +1633,7 @@ def play_audio(filename=None, manual=False, players=None):
         players = [player for player in cfg.get("players", []) if player not in excluded]
         if not players and cfg.get("players"):
             raise RuntimeError("Spot tolti per oggi in tutte le zone")
-    ads = cfg.get("ads", [])
+    ads = active_ads(cfg)
     if not players:
         raise RuntimeError("Nessun altoparlante selezionato")
     automatically_selected = not filename
@@ -2726,15 +2746,15 @@ class Scheduler(threading.Thread):
         """«Riproduci ora»: lo spot in arrivo parte subito e conta come quello di questo intervallo,
         così il programma non lo ripete appena dopo e la rotazione passa al successivo."""
         cfg = store.config["audio"]
-        selected = self.pick_audio(cfg.get("ads", []), cfg.get("mode", "rotate"))
+        selected = self.pick_audio(active_ads(cfg), cfg.get("mode", "rotate"))
         self.last_audio = time.monotonic()
         return selected
 
     def skip_audio(self):
         """Salta lo spot in arrivo: riparte l'intervallo e la rotazione passa al successivo."""
         cfg = store.config["audio"]
-        skipped = self.peek_audio(cfg.get("ads", []), cfg.get("mode", "rotate"))
-        if cfg.get("mode", "rotate") == "rotate" and cfg.get("ads"):
+        skipped = self.peek_audio(active_ads(cfg), cfg.get("mode", "rotate"))
+        if cfg.get("mode", "rotate") == "rotate" and active_ads(cfg):
             self.audio_index += 1
         self.last_audio = time.monotonic()
         store.log("info", f"Spot saltato: {skipped or 'nessuno'}")
@@ -2750,13 +2770,13 @@ class Scheduler(threading.Thread):
                 datetime.fromtimestamp(self.audio_paused_until).astimezone().isoformat(timespec="seconds")
                 if self.audio_paused() else None
             ),
-            "next_spot": self.peek_audio(cfg.get("ads", []), cfg.get("mode", "rotate")),
+            "next_spot": self.peek_audio(active_ads(cfg), cfg.get("mode", "rotate")),
             "next_spot_in_seconds": None,
             "audio_waiting": None,
         }
         if not cfg.get("enabled"):
             status["audio_waiting"] = "disabled"
-        elif not cfg.get("ads"):
+        elif not active_ads(cfg):
             status["audio_waiting"] = "no_ads"
         elif self.audio_paused():
             status["audio_waiting"] = "paused"
@@ -3921,12 +3941,21 @@ class Handler(BaseHTTPRequestHandler):
                 },
                 "audio": {"enabled": audio.get("enabled"), "players": audio.get("players") or [],
                           "daily_limit": audio.get("daily_limit"), "schedule": audio.get("schedule") or [],
-                          "volume": audio.get("volume"), "interval_minutes": audio.get("interval_minutes")},
+                          "volume": audio.get("volume"), "interval_minutes": audio.get("interval_minutes"),
+                          "ads": audio.get("ads") or [], "mode": audio.get("mode", "rotate"),
+                          "repeat_count": audio.get("repeat_count")},
             },
+            # Solo i file degli spot in rotazione (niente foto né video).
+            "media": [m for m in data.get("media") or [] if m.get("name") in (audio.get("ads") or [])],
+            # Registro: solo musica e spot, senza TV né accessi.
+            "logs": [entry for entry in data.get("logs") or []
+                     if STAFF_LOG_WORDS.search(str(entry.get("message", "")))
+                     and not STAFF_LOG_HIDDEN.search(str(entry.get("message", "")))],
             "sonos": data.get("sonos") or [],
             "sonos_favorites": data.get("sonos_favorites") or [],
             "runtime": {key: runtime.get(key) for key in (
-                "music_active", "music_slot_id", "music_override", "music_excluded", "spots_excluded", "music_coordinator",
+                "music_active", "music_slot_id", "music_override", "music_excluded", "spots_excluded", "ads_excluded",
+                "music_coordinator",
                 "mix_week", "next_spot", "next_spot_in_seconds",
                 "spot_playing", "audio_paused_until", "audio_waiting", "audio_today")},
             "ha_error": data.get("ha_error"),
@@ -4079,6 +4108,7 @@ class Handler(BaseHTTPRequestHandler):
                         "mix_week": mix_week(),
                         "music_excluded": sorted(music_excluded_players()),
                         "spots_excluded": sorted(spots_excluded_players()),
+                        "ads_excluded": sorted(ads_excluded_today()),
                         "music_coordinator": scheduler.music_coordinator,
                         "music_override": (
                             {"mode": scheduler.music_override["mode"], "name": scheduler.music_override.get("name", "")}
@@ -4346,6 +4376,21 @@ class Handler(BaseHTTPRequestHandler):
                 if not channel:
                     raise RuntimeError("Canale IPTV non trovato")
                 tv_power_off(channel)
+                self.send_json({"ok": True})
+                return
+            if path == "/api/spot/today":
+                # Uno spot tolto o rimesso nella rotazione solo per oggi (dagli operatori o dal pannello).
+                body = self.json_body()
+                name = str(body.get("name", ""))
+                if name not in store.config.get("audio", {}).get("ads", []):
+                    raise RuntimeError("Spot non trovato tra quelli in rotazione")
+                who = f" da {self.remote_user}" if self.remote_user else ""
+                if body.get("on") is True:
+                    ADS_EXCLUDED.pop(name, None)
+                    store.log("info", f"Spot rimesso per oggi: {name}{who}")
+                else:
+                    ADS_EXCLUDED[name] = datetime.now().date().isoformat()
+                    store.log("info", f"Spot tolto per oggi: {name}{who}")
                 self.send_json({"ok": True})
                 return
             if path == "/api/test/audio":
@@ -4801,7 +4846,10 @@ REMOTE_FAILURES = {}
 REMOTE_COOKIE = "carellas_admin"
 # Le sole operazioni permesse agli operatori (pagina per tablet).
 STAFF_POST_PATHS = {"/api/sonos/volume", "/api/music/manual", "/api/audio/pause", "/api/audio/skip",
-                    "/api/audio/stop", "/api/test/audio", "/api/zone/music", "/api/zone/spots", "/api/music/control"}
+                    "/api/audio/stop", "/api/test/audio", "/api/zone/music", "/api/zone/spots", "/api/music/control",
+                    "/api/spot/today"}
+# Letture permesse agli operatori oltre alla pagina: il suo stato e lo storico degli spot.
+STAFF_GET_PATHS = {"/api/staff/state", "/api/spots/history", "/api/spots/history.csv"}
 
 
 def remote_account(username):
@@ -5047,9 +5095,14 @@ class RemoteAdminHandler(Handler):
             return
         if self.authorized():
             if self.staff():
+                route = self.route_path()
                 if path in ("/", "/operatori"):
                     self.send_file(APP_DIR / "operatori.html")
-                elif self.route_path() == "/api/staff/state":
+                elif route in STAFF_GET_PATHS:
+                    super().do_GET()
+                elif route.startswith("/media/") and urllib.parse.unquote(route.removeprefix("/media/")) in \
+                        store.config.get("audio", {}).get("ads", []):
+                    # Ascolto degli spot in rotazione; gli altri file (foto e video) restano chiusi.
                     super().do_GET()
                 else:
                     self.staff_forbidden()

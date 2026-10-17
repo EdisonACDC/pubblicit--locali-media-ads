@@ -390,12 +390,28 @@ table.hist td.num{font-variant-numeric:tabular-nums;font-family:var(--mono);font
 .sheet .list button{min-height:56px;text-align:left;padding:0 16px;border-radius:12px;border:1px solid var(--line);background:var(--card2);color:var(--text);font:600 16px var(--sans);cursor:pointer;width:100%}
 .sheet .seg button{min-height:44px;padding:0 18px}
 .pause-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
-@media(max-width:700px){.top{padding:10px 14px}main{padding:16px 14px 60px}.page-head h1{font-size:30px}}
+@media(max-width:700px){.top{padding:10px 14px}main{padding:16px 14px calc(150px + env(safe-area-inset-bottom))}.page-head h1{font-size:30px}}
+.top .brand-op{display:none}
+.lane .mblock.ro{cursor:default}
+/* Il giorno resta visibile mentre si scorre la settimana di lato. */
+.week-row>div:first-child{position:sticky;left:0;z-index:4;background:var(--card);align-self:stretch;display:flex;flex-direction:column;justify-content:center}
+.spot-list{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+.spot-row{display:flex;flex-direction:column;gap:10px}
+.spot-row.is-off{opacity:.78}
+.spot-row audio{width:100%}
+.spot-name{font:600 18px var(--sans);color:var(--title);overflow-wrap:anywhere}
+@media(max-width:820px){.top .brand-op{display:flex}}
 </style>
 </head>
 <body>
-<header class="top" id="top"></header>
-<main id="main" tabindex="-1"><div class="card">…</div></main>
+<div class="app">
+  <nav class="side" id="side" aria-label="Sezioni"></nav>
+  <div class="main-wrap">
+    <header class="top" id="top"></header>
+    <main id="main" tabindex="-1"><div class="card">…</div></main>
+  </div>
+</div>
+<nav class="tabbar" id="tabbar" aria-label="Sezioni"></nav>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script>
 'use strict';
@@ -440,9 +456,9 @@ const DAYS_LONG_IT=['Lunedì','Martedì','Mercoledì','Giovedì','Venerdì','Sab
 const DAYS_LONG_DE=['Montag','Dienstag','Mittwoch','Donnerstag','Freitag','Samstag','Sonntag'];
 const MONTHS_IT=['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'];
 const MONTHS_DE=['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
-const S={state:null,lang:'it',sheet:false,tab:'radio',busy:false,drag:null};
+const S={state:null,lang:'it',sheet:false,tab:'radio',busy:false,drag:null,route:'ora',hist:{period:'today',limit:50},filter:{log:'all'},view:'week',zoom:0,zoneFilter:''};
 try{const l=localStorage.getItem('carellas.oplang');if(l==='it'||l==='de')S.lang=l}catch(e){}
-const DE={'Operatori':'Personal','Esci':'Abmelden','Ora in onda':'Jetzt läuft','Musica · in riproduzione':'Musik · läuft','Musica · ferma':'Musik · gestoppt','Musica · in pausa':'Musik · pausiert','Musica spenta':'Musik aus','Nessuna musica in onda':'Keine Musik','Spegni la musica':'Musik ausschalten','Accendi la musica':'Musik einschalten','Cambia musica':'Musik wechseln','Accesa a mano':'Von Hand eingeschaltet','Spenta a mano: riprende con la prossima fascia':'Von Hand aus: geht mit dem nächsten Zeitraum weiter','Fuori programma':'Außerhalb des Programms','In pausa':'Pausiert','volume':'Lautstärke','alle':'bis','Prossimo spot':'Nächster Spot','Spot in onda adesso':'Spot läuft gerade','Nessuno spot':'Kein Spot','Riproduci ora':'Jetzt abspielen','Salta questo':'Diesen überspringen','Ferma lo spot':'Spot stoppen','Pausa pubblicità':'Werbepause','1 ora':'1 Std.','Oggi':'Heute','Riprendi pubblicità':'Werbung fortsetzen','In pausa fino alle {0}':'Pausiert bis {0}','Pausa pubblicità 1 ora':'Werbepause 1 Std.','Zone':'Zonen','Suona':'Spielt','Offline':'Offline','Volume':'Lautstärke','Muto':'Stumm','Musica':'Musik','Spot':'Spots','sì':'an','no':'aus','Musica tolta da questa zona':'Musik in dieser Zone aus','Casse della zona':'Lautsprecher der Zone','Cosa vuoi suonare?':'Was soll laufen?','Musica del palinsesto':'Programm-Musik','Radio':'Radio','Playlist':'Playlists','Chiudi':'Schließen','Nessuna':'Keine','Fatto':'Erledigt','Brano precedente':'Vorheriger Titel','Brano successivo':'Nächster Titel','Pausa':'Pause','Riprendi':'Weiter','Home Assistant non risponde':'Home Assistant antwortet nicht','Tutte le casse':'Alle Lautsprecher','aperto {0}':'geöffnet {0}','chiuso oggi':'heute geschlossen','orari di apertura non impostati':'Öffnungszeiten nicht festgelegt','Pubblicità automatica spenta':'Automatische Werbung aus','Nessuno spot scelto':'Kein Spot gewählt','Pubblicità in pausa':'Werbung pausiert','Fuori dall’orario degli spot':'Außerhalb der Spot-Zeiten','Limite giornaliero raggiunto':'Tageslimit erreicht','In attesa che parta la musica':'Warten auf Musik','fino alle {0}':'bis {0}','Lingua':'Sprache','Musica tolta da questa zona per oggi':'Musik in dieser Zone heute aus','Spot spenti dall’amministratore':'Spots vom Administrator ausgeschaltet','Spot tolti per oggi: domani tornano':'Spots heute aus: morgen wieder an','Spot oggi':'Spots heute','In riproduzione':'Läuft','Ferma':'Gestoppt','{0} di {1} Sonos':'{0} von {1} Sonos','Prossimo cambio':'Nächster Wechsel','fine della musica':'Ende der Musik','nessun cambio':'kein Wechsel','La giornata':'Der Tag','Nessuna fascia musicale oggi':'Heute kein Musikzeitraum','Nessuno spot oggi':'Heute keine Spots'};
+const DE={'Operatori':'Personal','Esci':'Abmelden','Ora in onda':'Jetzt läuft','Musica · in riproduzione':'Musik · läuft','Musica · ferma':'Musik · gestoppt','Musica · in pausa':'Musik · pausiert','Musica spenta':'Musik aus','Nessuna musica in onda':'Keine Musik','Spegni la musica':'Musik ausschalten','Accendi la musica':'Musik einschalten','Cambia musica':'Musik wechseln','Accesa a mano':'Von Hand eingeschaltet','Spenta a mano: riprende con la prossima fascia':'Von Hand aus: geht mit dem nächsten Zeitraum weiter','Fuori programma':'Außerhalb des Programms','In pausa':'Pausiert','volume':'Lautstärke','alle':'bis','Prossimo spot':'Nächster Spot','Spot in onda adesso':'Spot läuft gerade','Nessuno spot':'Kein Spot','Riproduci ora':'Jetzt abspielen','Salta questo':'Diesen überspringen','Ferma lo spot':'Spot stoppen','Pausa pubblicità':'Werbepause','1 ora':'1 Std.','Oggi':'Heute','Riprendi pubblicità':'Werbung fortsetzen','In pausa fino alle {0}':'Pausiert bis {0}','Pausa pubblicità 1 ora':'Werbepause 1 Std.','Zone':'Zonen','Suona':'Spielt','Offline':'Offline','Volume':'Lautstärke','Muto':'Stumm','Musica':'Musik','Spot':'Spots','sì':'an','no':'aus','Musica tolta da questa zona':'Musik in dieser Zone aus','Casse della zona':'Lautsprecher der Zone','Cosa vuoi suonare?':'Was soll laufen?','Musica del palinsesto':'Programm-Musik','Radio':'Radio','Playlist':'Playlists','Chiudi':'Schließen','Nessuna':'Keine','Fatto':'Erledigt','Brano precedente':'Vorheriger Titel','Brano successivo':'Nächster Titel','Pausa':'Pause','Riprendi':'Weiter','Home Assistant non risponde':'Home Assistant antwortet nicht','Tutte le casse':'Alle Lautsprecher','aperto {0}':'geöffnet {0}','chiuso oggi':'heute geschlossen','orari di apertura non impostati':'Öffnungszeiten nicht festgelegt','Pubblicità automatica spenta':'Automatische Werbung aus','Nessuno spot scelto':'Kein Spot gewählt','Pubblicità in pausa':'Werbung pausiert','Fuori dall’orario degli spot':'Außerhalb der Spot-Zeiten','Limite giornaliero raggiunto':'Tageslimit erreicht','In attesa che parta la musica':'Warten auf Musik','fino alle {0}':'bis {0}','Lingua':'Sprache','Musica tolta da questa zona per oggi':'Musik in dieser Zone heute aus','Spot spenti dall’amministratore':'Spots vom Administrator ausgeschaltet','Spot tolti per oggi: domani tornano':'Spots heute aus: morgen wieder an','Spot oggi':'Spots heute','In riproduzione':'Läuft','Ferma':'Gestoppt','{0} di {1} Sonos':'{0} von {1} Sonos','Prossimo cambio':'Nächster Wechsel','fine della musica':'Ende der Musik','nessun cambio':'kein Wechsel','La giornata':'Der Tag','Nessuna fascia musicale oggi':'Heute kein Musikzeitraum','Nessuno spot oggi':'Heute keine Spots','1 spot ogni':'1 Spot alle','1 spot ogni {0} minuti':'1 Spot alle {0} Minuten','Al':'Bis','Attività':'Aktivität','Auto':'Auto','Caricamento dello storico…':'Verlauf wird geladen…','Chiuso':'Geschlossen','Dal':'Vom','Data e ora':'Datum und Uhrzeit','Domani torna in rotazione da solo.':'Morgen ist er automatisch wieder in der Rotation.','Durata':'Dauer','Esito':'Ergebnis','Esporta CSV per Excel':'CSV für Excel exportieren','Filtra per zona':'Nach Zone filtern','Filtri':'Filter','Giorno':'Tag','Ieri':'Gestern','Il palinsesto si cambia dal pannello amministratore. Da qui puoi accendere o cambiare la musica in «Ora in onda» e togliere spot o zone solo per oggi.':'Das Programm wird im Administrator-Bereich geändert. Hier kannst du unter „Jetzt läuft“ die Musik einschalten oder wechseln und Spots oder Zonen nur für heute herausnehmen.','Ingrandisci':'Vergrößern','Media al giorno':'Durchschnitt pro Tag','Minuti in onda':'Sendeminuten','Mix automatico attivo':'Automatischer Mix aktiv','Mostra altri ({0} rimanenti)':'Weitere anzeigen ({0} übrig)','Musica (un colore per fascia)':'Musik (eine Farbe pro Zeitraum)','Nessuna attività':'Keine Aktivität','Nessuno spot in questo periodo.':'Keine Spots in diesem Zeitraum.','Ora':'Jetzt','Palinsesto':'Programm','Per ora del giorno':'Nach Tageszeit','Per spot':'Nach Spot','Per zona':'Nach Zone','Periodo':'Zeitraum','Pubblicità audio':'Audiowerbung','Registro':'Protokoll','Regola spot':'Spot-Regel','Riduci':'Verkleinern','Settimana':'Woche','Solo da guardare':'Nur zum Ansehen','Spot in onda':'Gesendete Spots','Spot in onda per giorno':'Gesendete Spots pro Tag','Spot in onda per ora del giorno':'Gesendete Spots nach Tageszeit','Spot rimesso per oggi':'Spot für heute wieder aufgenommen','Spot tolto per oggi':'Spot für heute herausgenommen','Storico':'Verlauf','Storico non disponibile':'Verlauf nicht verfügbar','Storico spot':'Spot-Verlauf','Tipo':'Art','Togli o rimetti uno spot solo per oggi: domani torna come l’ha impostato l’amministratore. Per aggiungere o eliminare spot per sempre serve il pannello amministratore.':'Nimm einen Spot nur für heute heraus oder wieder auf: morgen gilt wieder die Einstellung des Administrators. Spots dauerhaft hinzufügen oder löschen geht nur im Administrator-Bereich.','Trasmessi per intero':'Vollständig gesendet','Tutte le zone':'Alle Zonen','Tutti gli spot':'Alle Spots','Tutti i passaggi':'Alle Ausstrahlungen','Vista':'Ansicht','Zona':'Zone','al giorno':'pro Tag','dove sono stati ascoltati':'wo sie gehört wurden','in {0} giorni':'in {0} Tagen','limite {0} al giorno':'Limit {0} pro Tag','nel giorno scelto':'am gewählten Tag','nessuno spot':'kein Spot','passaggi e quota':'Ausstrahlungen und Anteil','playlist':'Playlist','quando passano gli spot':'wann die Spots laufen','radio':'Radio','rotazione':'Rotation','solo spot ascoltati per intero':'nur vollständig gehörte Spots','spot':'Spot','{0} interrotti · {1} non riusciti':'{0} abgebrochen · {1} fehlgeschlagen','{0} min in onda':'{0} Min. gesendet','{0} non riusciti':'{0} fehlgeschlagen','{0} passaggi':'{0} Ausstrahlungen','{0} prove manuali nel periodo':'{0} manuelle Tests im Zeitraum','{0} spot ascoltati':'{0} Spots gehört','{0} spot in onda':'{0} Spots gesendet','Tolto per oggi':'Heute herausgenommen','In rotazione':'In Rotation','Rimetti per oggi':'Heute wieder aufnehmen','Togli per oggi':'Heute herausnehmen','A rotazione, uno dopo l’altro':'Abwechselnd, einer nach dem anderen','Solo voce femminile':'Nur Frauenstimme','Solo voce maschile':'Nur Männerstimme','offline':'offline','7 giorni':'7 Tage','30 giorni':'30 Tage','Questo mese':'Dieser Monat','Personalizzato':'Benutzerdefiniert','Trasmesso':'Gesendet','Interrotto':'Abgebrochen','Non riuscito':'Fehlgeschlagen','Prova manuale':'Manueller Test','Automatico':'Automatisch','Trasmessi':'Gesendet','Interrotti':'Abgebrochen','Non riusciti':'Fehlgeschlagen','Errore':'Fehler','Tutti':'Alle','Info':'Info','Avviso':'Warnung','Tutto':'Alles','Errori e avvisi':'Fehler und Warnungen'};
 const L=t=>S.lang==='de'&&DE[t]?DE[t]:t;
 const Lf=(t,...v)=>L(t).replace(/\{(\d)\}/g,(_,i)=>v[+i]);
 const toMin=t=>{const [h,m]=String(t||'0:0').split(':').map(Number);return h*60+(m||0)};
@@ -452,7 +468,7 @@ function toast(msg,bad){const t=$('toast');t.textContent=L(msg);t.className='toa
 async function api(path,body){const r=await fetch(path,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined,cache:'no-store'});
   if(r.status===401){location.href='login';throw new Error('login')}const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||('HTTP '+r.status));return j}
 async function act(path,body,ok){try{S.busy=true;await api(path,body);if(ok)toast(ok);setTimeout(load,600)}catch(e){if(e.message!=='login')toast(e.message,true)}finally{S.busy=false}}
-async function load(){try{S.state=await api('api/staff/state');if(!S.langChosen){try{S.langChosen=!!localStorage.getItem('carellas.oplang')}catch(e){}if(!S.langChosen)S.lang=S.state.config.language==='de'?'de':'it'}document.documentElement.lang=S.lang;render()}catch(e){if(e.message!=='login')$('main').innerHTML=`<div class="notice warn">${esc(e.message)}</div>`}}
+async function load(){try{S.state=await api('api/staff/state');if(!S.langChosen){try{S.langChosen=!!localStorage.getItem('carellas.oplang')}catch(e){}if(!S.langChosen)S.lang=S.state.config.language==='de'?'de':'it'}document.documentElement.lang=S.lang;if(S.route==='storico'&&Date.now()-(S.hist.at||0)>30000&&!S.hist.loading)loadHistory();render()}catch(e){if(e.message!=='login')$('main').innerHTML=`<div class="notice warn">${esc(e.message)}</div>`}}
 const rt=()=>S.state.runtime||{},cfg=()=>S.state.config;
 const sonos=()=>S.state.sonos||[];
 const sonosById=id=>sonos().find(s=>s.entity_id===id);
@@ -504,9 +520,7 @@ function renderTop(){
     <span class="mono muted2" id="clock">${hhmm(nowMin())}</span>
     <div class="seg" role="group" aria-label="${esc(L('Lingua'))}"><button type="button" data-lang="it" aria-pressed="${S.lang==='it'}">IT</button><button type="button" data-lang="de" aria-pressed="${S.lang==='de'}">DE</button></div>
     ${S.state&&S.state.remote_user?`<form method="post" action="logout"><button class="btn btn-ghost btn-sm" type="submit">${esc(L('Esci'))}</button></form>`:''}`}
-function render(){
-  if(!S.state||S.drag)return;
-  renderTop();
+function pageOra(){
   const r=rt(),o=r.music_override,slot=slotNow(),next=nextSlot(),spot=nextSpotInfo(),now=nowMin();
   const paused=o&&o.mode==='paused',off=o&&o.mode==='off',playing=musicPlaying()&&!off&&!paused;
   const title=o&&o.mode==='on'?o.name:off?L('Musica spenta'):slot?slot.title:playing?(nowTrack()||L('Fuori programma')):L('Nessuna musica in onda');
@@ -558,18 +572,204 @@ function render(){
       <div class="small muted2">${esc(L('Musica'))}</div><div class="tl-track music">${hlines.join('')}${tlBlocks||`<div class="tiny muted" style="padding-top:8px">${esc(L('Nessuna fascia musicale oggi'))}</div>`}${nowIn?`<div class="tl-now" style="left:${posM(now)};bottom:-30px"></div>`:''}</div>
       <div class="small muted2">${esc(L('Spot'))}</div><div class="tl-track" style="height:18px">${ticks.map(m=>`<div class="tick" style="left:${posM(m)};background:${m<=now?'var(--gold)':'#5A4A3A'}"></div>`).join('')||`<div class="tiny muted">${esc(L(cfg().audio.enabled?'Nessuno spot oggi':'Pubblicità automatica spenta'))}</div>`}</div>
     </div></div></section>`;
-  $('main').innerHTML=`${S.state.ha_error?`<div class="notice warn">${esc(L('Home Assistant non risponde'))}</div>`:''}
-    <div class="page-head"><div><div class="label">${esc(dateLabel())}</div><h1>${esc(L('Ora in onda'))}</h1></div></div>
+  return `<div class="page-head"><div><div class="label">${esc(dateLabel())}</div><h1>${esc(L('Ora in onda'))}</h1></div></div>
     <section class="card now">${musicCard}<div class="vline"></div>${spotCard}</section>
     ${stats}
     ${timeline}
     ${pauseCard}
     <section><div class="row" style="justify-content:space-between;margin-bottom:12px"><h2 style="margin:0;font:500 20px var(--display);color:var(--title)">${esc(L('Zone'))}</h2></div><div class="grid-auto">${zoneCards}</div></section>
     ${S.sheet?sheet():''}`;
+}
+function days(){return S.lang==='de'?DAYS_DE:DAYS_IT}
+function durLabel(s){s=Math.round(+s||0);return s>=60?Math.floor(s/60)+':'+String(s%60).padStart(2,'0'):s+' s'}
+function zoneById(id){return zones().find(z=>String(z.id)===String(id))}
+// Sezioni della pagina: tutto quello che riguarda musica e spot; impostazioni e video restano nel pannello.
+const ROUTES=[['ora','Ora in onda','live'],['palinsesto','Palinsesto','cal'],['spot','Spot','wave'],['storico','Storico spot','chart'],['registro','Registro','list']];
+function routeFromHash(){const r=(location.hash.match(/^#\/([a-z]+)/)||[])[1];return ROUTES.some(x=>x[0]===r)?r:'ora'}
+S.route=routeFromHash();
+function renderSide(){$('side').innerHTML=`<div class="brand"><div class="seal">C</div>Carellas</div><div class="label" style="padding:0 12px 10px">${esc(L('Operatori'))}</div>`+ROUTES.map(([k,l,ic])=>`<a href="#/${k}" ${S.route===k?'aria-current="page"':''}>${icon(ic)}<span class="grow">${esc(L(l))}</span></a>`).join('')}
+function renderTabbar(){$('tabbar').innerHTML=ROUTES.map(([k,l,ic])=>`<a class="tab" href="#/${k}" ${S.route===k?'aria-current="page"':''}>${icon(ic,24)}${esc(L(k==='storico'?'Storico':k==='ora'?'Ora':l))}</a>`).join('')}
+// Uno spot che si sta ascoltando nel browser non va interrotto dall'aggiornamento automatico.
+function audioPlaying(){return [...document.querySelectorAll('main audio')].some(a=>!a.paused)}
+function render(){
+  if(!S.state||S.drag)return;
+  renderTop();renderSide();renderTabbar();
+  const page={ora:pageOra,palinsesto:pagePalinsesto,spot:pageSpot,storico:pageStorico,registro:pageRegistro}[S.route]||pageOra;
+  $('main').innerHTML=(S.state.ha_error?`<div class="notice warn">${esc(L('Home Assistant non risponde'))}</div>`:'')+page();
   afterRender();
 }
+window.addEventListener('hashchange',()=>{S.route=routeFromHash();S.sheet=false;S.tlScroll=null;S.weekScroll=null;render();window.scrollTo(0,0)});
+/* Palinsesto: la settimana come nel pannello, solo da guardare. */
+function slotsOn(d){return (cfg().music.slots||[]).filter(s=>(s.days||[]).includes(d))}
+function slotDur(s){return +s.duration_minutes||((toMin(s.end)-toMin(s.start)+1440)%1440)||60}
+function slotTitle(s){return s.title||s.name||L('Musica')}
+function pagePalinsesto(){
+  const c=cfg(),day=todayIdx(),now=nowMin(),starts=[...(c.music.slots||[]).map(s=>toMin(s.start)),...(c.music.schedule||[]).map(r=>toMin(r.start))];
+  const H0=Math.min(8*60,...starts.map(m=>Math.floor(m/60)*60)),H1=24*60;
+  const pos=m=>((Math.max(H0,Math.min(H1,m))-H0)/(H1-H0)*100).toFixed(2)+'%',span=(a,b)=>((Math.min(H1,b)-Math.max(H0,a))/(H1-H0)*100).toFixed(2)+'%';
+  const view=S.view||'week',dayList=view==='day'?[day]:[0,1,2,3,4,5,6],long=S.lang==='de'?DAYS_LONG_DE:DAYS_LONG_IT;
+  const zf=S.zoneFilter?zoneById(S.zoneFilter):null;
+  const mixOn=!!(c.music.mix?.enabled&&(c.music.mix.sources||[]).length>=2),mixWeek=rt().mix_week||[];
+  const mixDay=d=>((mixWeek.find(x=>x.weekday===d)||{}).blocks)||[];
+  // Zoom automatico: la fascia più corta resta larga almeno ~90 px; con − e + si cambia a mano.
+  const shortest=Math.min(...dayList.flatMap(d=>mixOn?mixDay(d).map(b=>b.end-b.start):slotsOn(d).map(slotDur)),H1-H0);
+  const autoZoom=Math.max(1,Math.min(6,Math.ceil(90*(H1-H0)/(Math.max(5,shortest)*(S.laneBase||560)))));
+  const zoom=Math.max(1,Math.min(6,+S.zoom||autoZoom));
+  const hours=[];for(let h=H0;h<=H1;h+=zoom>1?60:120)hours.push(h);
+  const hourLines=[];for(let h=Math.ceil(H0/60)*60;h<H1;h+=60)hourLines.push(`<div class="hline" style="left:${pos(h)}"></div>`);
+  const block=(title,a,b,n,sub,cls)=>{const [ca,cb]=COLORS[n%COLORS.length],narrow=(b-a)/(H1-H0)*zoom<0.1,t=hhmm(a)+'–'+hhmm(b);return `<div class="mblock ro ${narrow?'narrow':''} ${cls||''}" tabindex="0" style="left:${pos(a)};width:calc(${span(a,b)} - 4px);--c:${ca};--cb:${cb}" title="${esc(title+' · '+t)}"><span class="short">${esc(initials(title))}<i>${esc(hhmm(a))}</i></span><span class="t">${esc(title)}</span><span class="h">${esc(sub||t)}</span></div>`};
+  const audioWins=d=>c.audio.enabled?(c.audio.schedule?.length?windowsOf(c.audio.schedule,d):openWindows(d).length?openWindows(d):[[H0,H1]]):[];
+  const curId=String(rt().music_slot_id||'');
+  const rows=dayList.map(d=>{
+    const open=openWindows(d),general=(c.music.schedule||[]).length,closed=general&&!open.length;
+    const date=new Date();date.setDate(date.getDate()+d-day);
+    const slots=mixOn?[]:slotsOn(d).filter(s=>!zf||(s.players||[]).some(p=>(zf.players||[]).includes(p)));
+    const mixDate=(mixWeek.find(x=>x.weekday===d)||{}).date;
+    const mix=mixOn&&(!zf||(c.music.mix.players||[]).some(p=>(zf.players||[]).includes(p)))?mixDay(d):[];
+    return `<div class="week-row"><div><div class="day ${d===day?'today':''}">${esc(long[d])}</div><div class="mono tiny muted">${date.getDate()}/${date.getMonth()+1}</div></div>
+      <div class="lane">${hourLines.join('')}${general?open.map(([a,b])=>`<div class="open" style="left:${pos(a)};width:${span(a,b)}"></div>`).join(''):`<div class="open" style="left:0;width:100%"></div>`}
+      ${closed?`<div class="closed">${esc(L('Chiuso'))}</div>`:''}
+      ${slots.map(s=>{const a=toMin(s.start);return block(slotTitle(s),a,a+slotDur(s),Math.max(0,(c.music.slots||[]).indexOf(s)),'',(s.enabled===false?'off ':'')+(d===day&&String(s.id)===curId?'sel':''))}).join('')}
+      ${mix.map(b=>block(b.name,b.start,b.end,Math.max(0,(c.music.mix.sources||[]).findIndex(x=>x.content_id===b.content_id)),hhmm(b.start)+'–'+hhmm(b.end)+' · '+L(b.kind==='radio'?'radio':'playlist'),d===day&&`mix-${mixDate}-${b.start}`===curId?'sel':'')).join('')}
+      ${audioWins(d).map(([a,b])=>`<div class="spots" title="${esc(Lf('1 spot ogni {0} minuti',c.audio.interval_minutes))}" style="left:${pos(a)};width:${span(a,b)};background:repeating-linear-gradient(90deg,#C46A12 0 3px,transparent 3px ${Math.max(1,(+c.audio.interval_minutes||30)/Math.max(1,b-a)*100).toFixed(2)}%)"></div>`).join('')}
+      ${d===day&&now>=H0&&now<=H1?`<div class="nowline" style="left:${pos(now)}"></div>`:''}</div></div>`}).join('');
+  const rot=(c.audio.ads||[]).map(pretty).join(' → ')||L('nessuno spot');
+  return `<div class="page-head" style="align-items:center"><div><div class="label">${esc(L('Solo da guardare'))}</div><h1>${esc(L('Palinsesto'))}</h1></div>${mixOn?`<span class="chip" aria-pressed="true">${icon('wave',14)} ${esc(L('Mix automatico attivo'))}</span>`:''}
+      <div class="seg" role="group" aria-label="${esc(L('Vista'))}"><button type="button" data-act="view" data-v="day" aria-pressed="${view==='day'}">${esc(L('Giorno'))}</button><button type="button" data-act="view" data-v="week" aria-pressed="${view==='week'}">${esc(L('Settimana'))}</button></div>
+      <div class="seg zoom" role="group" aria-label="Zoom"><button type="button" data-act="zoom" data-v="-1" ${zoom<=1?'disabled':''} aria-label="${esc(L('Riduci'))}">−</button><button type="button" data-act="zoom-auto" aria-pressed="${!S.zoom}">${S.zoom?zoom+'×':esc(L('Auto'))+' '+zoom+'×'}</button><button type="button" data-act="zoom" data-v="1" ${zoom>=6?'disabled':''} aria-label="${esc(L('Ingrandisci'))}">+</button></div>
+      <select class="inp" style="width:auto;min-height:44px" data-filter-zone aria-label="${esc(L('Filtra per zona'))}"><option value="">${esc(L('Tutte le zone'))}</option>${(cfg().zones||[]).filter(z=>(z.players||[]).length).map(z=>`<option value="${esc(z.id)}" ${String(z.id)===S.zoneFilter?'selected':''}>${esc(z.name)}</option>`).join('')}</select></div>
+    <section class="card" style="padding:16px 16px 8px;gap:0">
+      <div class="tl-wrap" data-week-wrap><div class="week" data-zoom="${zoom}" style="width:${zoom*100}%;min-width:${620*zoom}px"><div class="week-row" style="border-top:0;padding:0 0 6px"><div></div><div class="tl-axis">${hours.map(h=>`<span style="left:${pos(h)}">${hhmm(h)}</span>`).join('')}</div></div>${rows}</div></div>
+      <div class="legend" style="padding:12px 4px 4px"><span><i style="background:linear-gradient(90deg,#5B8DEF 0 33%,#E0A040 33% 66%,#4FB39A 66%)"></i>${esc(L('Musica (un colore per fascia)'))}</span><span><i style="background:repeating-linear-gradient(90deg,#C46A12 0 3px,transparent 3px 7px)"></i>${esc(L('Spot'))}</span><span><i style="background:repeating-linear-gradient(45deg,#2A231D 0 2px,#16120F 2px 5px)"></i>${esc(L('Chiuso'))}</span></div>
+      <div class="row" style="padding:12px 4px 8px;border-top:1px solid var(--line3);margin-top:6px;font-size:14px;gap:10px 16px"><span class="row" style="gap:6px;font-weight:600"><span style="width:10px;height:10px;border-radius:2px;background:#C46A12;display:inline-block"></span>${esc(L('Regola spot'))}</span><span class="muted2">${c.audio.enabled?`${esc(L('1 spot ogni'))} <strong style="color:var(--text)">${esc(c.audio.interval_minutes)} min</strong> · max <strong style="color:var(--text)">${esc(c.audio.daily_limit)}</strong> ${esc(L('al giorno'))} · ${esc(L('volume'))} <strong style="color:var(--text)">${esc(c.audio.volume)}</strong> · ${esc(L('rotazione'))}: ${esc(rot)}`:esc(L('Pubblicità automatica spenta'))}</span></div>
+    </section>
+    <div class="notice info">${esc(L('Il palinsesto si cambia dal pannello amministratore. Da qui puoi accendere o cambiare la musica in «Ora in onda» e togliere spot o zone solo per oggi.'))}</div>`;
+}
+/* Spot: quelli in rotazione, da ascoltare, mandare in onda o togliere solo per oggi. */
+function pageSpot(){
+  const a=cfg().audio,r=rt(),ads=a.ads||[],ex=r.ads_excluded||[],media=S.state.media||[];
+  const mode={rotate:'A rotazione, uno dopo l’altro',female:'Solo voce femminile',male:'Solo voce maschile'}[a.mode]||'';
+  const where=(a.players||[]).filter(p=>!(r.spots_excluded||[]).includes(p));
+  const cards=ads.map((n,i)=>{const off=ex.includes(n),m=media.find(x=>x.name===n),isNext=!off&&n===r.next_spot;
+    return `<li class="card spot-row ${off?'is-off':''}"><div class="row" style="justify-content:space-between;flex-wrap:nowrap;align-items:flex-start;gap:12px"><div style="min-width:0"><div class="label">${i+1}${isNext?' · '+esc(L('Prossimo spot')):''}</div><div class="spot-name">${esc(pretty(n))}</div>${m&&m.duration?`<div class="tiny muted">${esc(durLabel(m.duration))}</div>`:''}</div>
+        <span class="tiny ${off?'warn-text':'ok-text'}" style="white-space:nowrap">${esc(L(off?'Tolto per oggi':'In rotazione'))}</span></div>
+      <audio controls preload="none" src="media/${encodeURIComponent(n)}"></audio>
+      <div class="row"><button class="btn btn-primary big" type="button" data-spot-play="${i}" ${r.spot_playing?'disabled':''}>${icon('play',16)}${esc(L('Riproduci ora'))}</button><button class="btn ${off?'btn-ghost':'btn-quiet'} big" type="button" data-spot-today="${i}">${esc(L(off?'Rimetti per oggi':'Togli per oggi'))}</button></div>
+      ${off?`<div class="tiny muted">${esc(L('Domani torna in rotazione da solo.'))}</div>`:''}</li>`}).join('');
+  return `<div class="page-head"><div><div class="label">${esc(L('Pubblicità audio'))}</div><h1>${esc(L('Spot'))}</h1></div></div>
+    <section class="card"><div class="row" style="gap:10px 18px">${a.enabled?`<span>${esc(L('1 spot ogni'))} <strong>${esc(a.interval_minutes)} min</strong></span><span>max <strong>${esc(a.daily_limit)}</strong> ${esc(L('al giorno'))}</span><span>${esc(L('volume'))} <strong>${esc(a.volume)}</strong></span>${mode?`<span class="muted2">${esc(L(mode))}</span>`:''}`:`<span class="muted2">${esc(L('Pubblicità automatica spenta'))}</span>`}<span class="muted2">${esc(L('Zone'))}: ${esc(namesOf(where)||'—')}</span></div></section>
+    ${ads.length?`<ul class="spot-list">${cards}</ul>`:`<div class="empty">${esc(L('Nessuno spot scelto'))}</div>`}
+    <div class="notice info">${esc(L('Togli o rimetti uno spot solo per oggi: domani torna come l’ha impostato l’amministratore. Per aggiungere o eliminare spot per sempre serve il pannello amministratore.'))}</div>`;
+}
+function isoDay(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
+function daysAgo(n){const d=new Date();d.setDate(d.getDate()-n);return isoDay(d)}
+function histRange(){
+  const h=S.hist,today=isoDay(new Date());
+  if(h.period==='today')return[today,today];
+  if(h.period==='30')return[daysAgo(29),today];
+  if(h.period==='month'){const d=new Date();return[isoDay(new Date(d.getFullYear(),d.getMonth(),1)),today]}
+  if(h.period==='custom')return[h.from||daysAgo(6),h.to||today];
+  return[daysAgo(6),today];
+}
+async function loadHistory(){
+  const [from,to]=histRange(),key=from+'|'+to;
+  S.hist.loading=key;
+  try{const r=await api(`api/spots/history?from=${from}&to=${to}&ts=${Date.now()}`);if(S.hist.loading!==key)return;S.hist.entries=r.entries||[];S.hist.key=key;S.hist.at=Date.now()}
+  catch(e){S.hist.error=e.message}
+  S.hist.loading=null;
+  if(S.route==='storico')render();
+}
+function entryZones(e){
+  const names=zones().filter(z=>(z.players||[]).some(p=>(e.players||[]).includes(p))).map(z=>z.name);
+  return names.length?names:(e.players||[]).map(sonosName);
+}
+function niceMax(v){if(v<=4)return 4;const p=Math.pow(10,Math.floor(Math.log10(v))),n=v/p;return [1,2,3,4,5,6,8,10].find(x=>x>=n)*p}
+function columnChart(items,{label,highlight}={}){
+  // Colonne: una sola serie, base comune, griglia leggera, valore solo sul massimo.
+  const max=niceMax(Math.max(1,...items.map(i=>i.v))*1.15),ticks=[0,max/2,max];
+  const peak=items.reduce((a,b)=>b.v>a.v?b:a,items[0]||{v:0});
+  const every=Math.ceil(items.length/12);
+  return `<div class="cols" role="img" aria-label="${esc(label)}"><div class="yax">${ticks.map(t=>`<span style="bottom:${t/max*100}%">${t}</span>`).join('')}</div>
+    <div class="plot">${ticks.slice(1).map(t=>`<div class="grid" style="bottom:${t/max*100}%"></div>`).join('')}<div class="bars">${items.map(i=>{const h=(i.v/max*100).toFixed(1);return `<div class="slot" tabindex="0" data-tip="${esc(i.tip)}"><div class="bar ${highlight&&!highlight(i)?'dim':''}" style="height:${h}%"></div>${i===peak&&i.v>0?`<span class="cap-label" style="--h:${h}%">${i.v}</span>`:''}</div>`}).join('')}</div></div>
+    <div class="xax">${items.map((i,n)=>`<span>${n%every===0?esc(i.x):''}</span>`).join('')}</div></div>`;
+}
+function rankBars(rows,total,empty){
+  if(!rows.length)return `<div class="empty">${esc(empty)}</div>`;
+  const max=Math.max(...rows.map(r=>r.v));
+  return `<ul class="hbars">${rows.map(r=>`<li data-tip="${esc(r.tip||'')}" tabindex="0"><span class="name" title="${esc(r.name)}">${esc(r.name)}</span><span class="track"><span class="fill" style="display:block;width:${(r.v/max*100).toFixed(1)}%"></span></span><span class="val">${r.v} <small>${total?Math.round(r.v/total*100)+'%':''}</small></span></li>`).join('')}</ul>`;
+}
+function pageStorico(){
+  const h=S.hist,[from,to]=histRange(),key=from+'|'+to;
+  if(h.key!==key&&h.loading!==key)setTimeout(loadHistory);
+  const all=h.key===key?h.entries:null;
+  const head=`<div class="page-head"><div><div class="label">${esc(L('Pubblicità audio'))}</div><h1>${esc(L('Storico spot'))}</h1></div><a class="btn btn-ghost" href="api/spots/history.csv?from=${from}&to=${to}" download>${icon('up',16)}${esc(L('Esporta CSV per Excel'))}</a></div>`;
+  const spotsAll=[...new Set([...(all||[]).map(e=>e.spot).filter(Boolean),...(cfg().audio.ads||[])])];
+  const filters=`<section class="card filters-row" aria-label="${esc(L('Filtri'))}">
+    <div class="field" style="flex:0 0 auto"><span>${esc(L('Periodo'))}</span><div class="chips">${[['today','Oggi'],['7','7 giorni'],['30','30 giorni'],['month','Questo mese'],['custom','Personalizzato']].map(([k,l])=>`<button class="chip" type="button" aria-pressed="${h.period===k}" data-act="hist-period" data-v="${k}">${esc(L(l))}</button>`).join('')}</div></div>
+    ${h.period==='custom'?`<label class="field" style="flex:0 0 auto"><span>${esc(L('Dal'))}</span><input class="inp" type="date" value="${esc(from)}" max="${esc(to)}" data-hist="from"></label><label class="field" style="flex:0 0 auto"><span>${esc(L('Al'))}</span><input class="inp" type="date" value="${esc(to)}" min="${esc(from)}" data-hist="to"></label>`:''}
+    <label class="field" style="flex:0 0 auto"><span>Spot</span><select class="inp" data-hist="spot"><option value="">${esc(L('Tutti gli spot'))}</option>${spotsAll.map(n=>`<option value="${esc(n)}" ${h.spot===n?'selected':''}>${esc(pretty(n))}</option>`).join('')}</select></label>
+    <label class="field" style="flex:0 0 auto"><span>${esc(L('Zona'))}</span><select class="inp" data-hist="zone"><option value="">${esc(L('Tutte le zone'))}</option>${zones().map(z=>`<option value="${esc(z.id)}" ${h.zone===z.id?'selected':''}>${esc(z.name)}</option>`).join('')}</select></label>
+  </section>`;
+  if(!all)return head+filters+`<div class="empty" role="status">${esc(h.error?L('Storico non disponibile')+': '+h.error:L('Caricamento dello storico…'))}</div>`;
+  const zf=h.zone&&zoneById(h.zone);
+  const list=all.filter(e=>(!h.spot||e.spot===h.spot)&&(!zf||(e.players||[]).some(p=>(zf.players||[]).includes(p))));
+  const aired=list.filter(e=>e.status!=='failed'),played=list.filter(e=>e.status==='played'),stopped=list.filter(e=>e.status==='stopped'),failed=list.filter(e=>e.status==='failed');
+  const nDays=Math.round((new Date(to)-new Date(from))/864e5)+1;
+  const minutes=played.reduce((a,e)=>a+(+e.duration||0),0)/60;
+  const rate=list.length?Math.round(played.length/list.length*100):null;
+  const manual=aired.filter(e=>e.trigger==='manual').length;
+  const today=isoDay(new Date()),todayCount=aired.filter(e=>e.time.slice(0,10)===today).length;
+  const long=S.lang==='de'?DAYS_LONG_DE:DAYS_LONG_IT;
+  // Spot per giorno (giorni senza spot inclusi, così le pause si vedono).
+  const perDay=[];for(let i=0;i<nDays;i++){const d=new Date(from+'T12:00:00');d.setDate(d.getDate()+i);const k=isoDay(d),day=list.filter(e=>e.time.slice(0,10)===k);const ok=day.filter(e=>e.status!=='failed').length;perDay.push({x:nDays>8?String(d.getDate()):days()[(d.getDay()+6)%7],v:ok,k,tip:`${long[(d.getDay()+6)%7]} ${d.getDate()}/${d.getMonth()+1}\n${Lf('{0} spot in onda',ok)}${day.length-ok?'\n'+Lf('{0} non riusciti',day.length-ok):''}`})}
+  // Spot per ora del giorno.
+  const hours=Array.from({length:24},(_,i)=>aired.filter(e=>+e.time.slice(11,13)===i).length);
+  let h0=hours.findIndex(v=>v>0),h1=23-[...hours].reverse().findIndex(v=>v>0);if(h0<0){h0=10;h1=22}h0=Math.min(h0,10);h1=Math.max(h1,22);
+  const perHour=[];for(let i=h0;i<=h1;i++)perHour.push({x:String(i).padStart(2,'0'),v:hours[i],tip:`${String(i).padStart(2,'0')}:00–${String(i).padStart(2,'0')}:59\n${Lf('{0} spot in onda',hours[i])}`});
+  const nowHour=new Date().getHours();
+  // Classifiche per spot e per zona.
+  const bySpot={};aired.forEach(e=>{bySpot[e.spot]=(bySpot[e.spot]||0)+1});
+  const spotRows=Object.entries(bySpot).sort((a,b)=>b[1]-a[1]).map(([n,v])=>{const sec=aired.filter(e=>e.spot===n).reduce((a,e)=>a+(+e.duration||0),0);return{name:pretty(n),v,tip:`${pretty(n)}\n${Lf('{0} passaggi',v)} · ${Lf('{0} min in onda',Math.round(sec/60))}`}});
+  const byZone={};aired.forEach(e=>entryZones(e).forEach(z=>{byZone[z]=(byZone[z]||0)+1}));
+  const zoneRows=Object.entries(byZone).sort((a,b)=>b[1]-a[1]).map(([n,v])=>({name:n,v,tip:`${n}\n${Lf('{0} spot ascoltati',v)}`}));
+  const st=h.status||'all',limit=h.limit||50;
+  const rows=list.filter(e=>st==='all'||e.status===st);
+  const statusBadge=e=>`<span class="status ${esc(e.status)}">${e.status==='played'?icon('check',13):e.status==='stopped'?icon('stop',13):icon('warn',13)}${esc(L({played:'Trasmesso',stopped:'Interrotto',failed:'Non riuscito'}[e.status]||e.status))}</span>`;
+  const table=`<div class="table-wrap"><table class="hist"><thead><tr><th scope="col">${esc(L('Data e ora'))}</th><th scope="col">Spot</th><th scope="col">${esc(L('Zone'))}</th><th scope="col">${esc(L('Tipo'))}</th><th scope="col">${esc(L('Durata'))}</th><th scope="col">${esc(L('Esito'))}</th></tr></thead><tbody>${rows.slice(0,limit).map(e=>`<tr><td class="num">${esc(e.time.slice(8,10)+'/'+e.time.slice(5,7)+' '+e.time.slice(11,16))}</td><td>${esc(e.spot?pretty(e.spot):'—')}</td><td>${esc(entryZones(e).join(', ')||'—')}</td><td>${esc(L(e.trigger==='manual'?'Prova manuale':'Automatico'))}</td><td class="num">${e.duration?esc(durLabel(e.duration)):'—'}</td><td>${statusBadge(e)}${e.reason?`<div class="tiny muted" style="margin-top:4px">${esc(e.reason)}</div>`:''}</td></tr>`).join('')}</tbody></table></div>
+    ${rows.length>limit?`<div style="margin-top:12px"><button class="btn btn-ghost btn-sm" type="button" data-act="hist-more">${esc(Lf('Mostra altri ({0} rimanenti)',rows.length-limit))}</button></div>`:''}${!rows.length?`<div class="empty">${esc(L('Nessuno spot in questo periodo.'))}</div>`:''}`;
+  return head+filters+`
+    <div class="kpis">
+      <div class="card kpi hero-kpi"><div class="label">${esc(L('Spot in onda'))}</div><div class="v">${aired.length}</div><div class="stat-sub">${esc(nDays===1?L('nel giorno scelto'):Lf('in {0} giorni',nDays))}</div></div>
+      <div class="card kpi"><div class="label">${esc(L('Media al giorno'))}</div><div class="v">${(aired.length/nDays).toLocaleString(S.lang,{maximumFractionDigits:1})}</div><div class="stat-sub">${esc(Lf('limite {0} al giorno',cfg().audio.daily_limit))}</div></div>
+      <div class="card kpi"><div class="label">${esc(L('Minuti in onda'))}</div><div class="v">${Math.round(minutes)} <small>min</small></div><div class="stat-sub">${esc(L('solo spot ascoltati per intero'))}</div></div>
+      <div class="card kpi"><div class="label">${esc(L('Trasmessi per intero'))}</div><div class="v">${rate==null?'—':rate+'%'}</div><div class="stat-sub">${esc(Lf('{0} interrotti · {1} non riusciti',stopped.length,failed.length))}</div></div>
+      <div class="card kpi"><div class="label">${esc(L('Oggi'))}</div><div class="v">${to>=today?todayCount:'—'} <small>/ ${esc(cfg().audio.daily_limit)}</small></div><div class="stat-sub">${esc(Lf('{0} prove manuali nel periodo',manual))}</div></div>
+    </div>
+    ${nDays>1?`<section class="card"><div class="chart-cap"><h2>${esc(L('Spot in onda per giorno'))}</h2><span class="small muted">${esc(from.split('-').reverse().join('/')+' – '+to.split('-').reverse().join('/'))}</span></div>${columnChart(perDay,{label:L('Spot in onda per giorno')})}</section>`:''}
+    <div class="grid-3">
+      <section class="card"><div class="chart-cap"><h2>${esc(L('Per ora del giorno'))}</h2><span class="small muted">${esc(L('quando passano gli spot'))}</span></div>${columnChart(perHour,{label:L('Spot in onda per ora del giorno'),highlight:i=>!(to>=today)||+i.x<=nowHour})}</section>
+      <section class="card"><div class="chart-cap"><h2>${esc(L('Per spot'))}</h2><span class="small muted">${esc(L('passaggi e quota'))}</span></div>${rankBars(spotRows,aired.length,L('Nessuno spot in questo periodo.'))}</section>
+      <section class="card"><div class="chart-cap"><h2>${esc(L('Per zona'))}</h2><span class="small muted">${esc(L('dove sono stati ascoltati'))}</span></div>${rankBars(zoneRows,aired.length,L('Nessuno spot in questo periodo.'))}</section>
+    </div>
+    <section class="card"><div class="chart-cap"><h2>${esc(L('Tutti i passaggi'))}</h2><div class="chips" role="group" aria-label="${esc(L('Esito'))}">${[['all','Tutti',list.length],['played','Trasmessi',played.length],['stopped','Interrotti',stopped.length],['failed','Non riusciti',failed.length]].map(([k,l,n])=>`<button class="chip" type="button" aria-pressed="${st===k}" data-act="hist-status" data-v="${k}">${esc(L(l))} ${n}</button>`).join('')}</div></div>${table}</section>`;
+}
+function logKind(l){const m=String(l.message).toLowerCase();if(/spot/.test(m))return'spot';if(/music|playlist|radio|fascia|sonos/.test(m))return'music';if(/tv|iptv|canale|schermo|player/.test(m))return'tv';return'other'}
+function pageRegistro(){
+  const f=S.filter.log,logs=(S.state.logs||[]).filter(l=>f==='all'||(f==='error'?['error','warning'].includes(l.level):logKind(l)===f));
+  const today=new Date().toISOString().slice(0,10),yest=new Date(Date.now()-864e5).toISOString().slice(0,10);
+  let lastDay='';
+  const rows=logs.map(l=>{const d=String(l.time).slice(0,10),head=d!==lastDay?`<li class="log-day">${esc(d===today?L('Oggi'):d===yest?L('Ieri'):d)}</li>`:'';lastDay=d;return head+`<li class="log-item"><time class="mono small muted">${esc(String(l.time).slice(11,19))}</time><span class="lvl ${esc(l.level)}">${esc(L({success:'Fatto',info:'Info',warning:'Avviso',error:'Errore'}[l.level]||l.level))}</span><span class="msg">${esc(l.message)}</span></li>`}).join('');
+  const errors=(S.state.logs||[]).filter(l=>['error','warning'].includes(l.level)).length;
+  return `<div class="page-head"><div><div class="label">${esc(L('Attività'))}</div><h1>${esc(L('Registro'))}</h1></div><div class="chips">${[['all','Tutto'],['error','Errori e avvisi'],['spot','Spot'],['music','Musica']].map(([k,l])=>`<button class="chip" type="button" aria-pressed="${f===k}" data-act="log-filter" data-v="${k}">${esc(L(l))}${k==='error'&&errors?' '+errors:''}</button>`).join('')}</div></div>
+    <section class="card"><ol class="list" style="gap:0">${rows||`<li class="empty">${esc(L('Nessuna attività'))}</li>`}</ol></section>`;
+}
 // La giornata: larghezza reale per lo zoom automatico; si apre sull'ora attuale e resta dove l'hai portata.
-function afterRender(){const tw=document.querySelector('[data-tl-wrap]');if(!tw)return;const tl=tw.querySelector('[data-tl-zoom]'),z=+tl.dataset.tlZoom||1,w=(tl.clientWidth-72)/z;
+function afterRender(){
+  // Palinsesto: larghezza reale delle righe per lo zoom automatico; si apre sull'ora attuale.
+  const lane=document.querySelector('.week .lane');
+  if(lane){const w=lane.clientWidth/(+lane.closest('.week').dataset.zoom||1);if(w>100&&Math.abs(w-(S.laneBase||0))>40){S.laneBase=w;if(!S.zoom){render();return}}
+    const ww=document.querySelector('[data-week-wrap]');if(ww){if(S.weekScroll==null){const n=ww.querySelector('.nowline');if(n)ww.scrollLeft=Math.max(0,n.offsetLeft+96-ww.clientWidth/3)}else ww.scrollLeft=S.weekScroll;ww.onscroll=()=>{S.weekScroll=ww.scrollLeft}}}
+  const tw=document.querySelector('[data-tl-wrap]');if(!tw)return;const tl=tw.querySelector('[data-tl-zoom]'),z=+tl.dataset.tlZoom||1,w=(tl.clientWidth-72)/z;
   if(w>100&&Math.abs(w-(S.tlBase||0))>40){S.tlBase=w;render();return}
   if(S.tlScroll==null){const n=tw.querySelector('.tl-now');if(n)tw.scrollLeft=Math.max(0,n.offsetLeft+72-tw.clientWidth/3)}else tw.scrollLeft=S.tlScroll;
   tw.onscroll=()=>{S.tlScroll=tw.scrollLeft}}
@@ -595,6 +795,15 @@ document.addEventListener('click',e=>{
   if(a==='spot-now')return act('api/test/audio',{name:rt().next_spot,next:true},'Fatto');
   if(a==='spot-skip')return act('api/audio/skip',{},'Fatto');
   if(a==='spot-stop')return act('api/audio/stop',{},'Fatto');
+  if(t.dataset.spotPlay!==undefined){const n=(cfg().audio.ads||[])[+t.dataset.spotPlay];return act('api/test/audio',{name:n},'Fatto')}
+  if(t.dataset.spotToday!==undefined){const n=(cfg().audio.ads||[])[+t.dataset.spotToday],off=(rt().ads_excluded||[]).includes(n);return act('api/spot/today',{name:n,on:off},off?'Spot rimesso per oggi':'Spot tolto per oggi')}
+  if(a==='view'){S.view=t.dataset.v;S.weekScroll=null;render();return}
+  if(a==='zoom'){S.zoom=Math.max(1,Math.min(6,(+S.zoom||+(document.querySelector('.week')?.dataset.zoom)||1)+(+t.dataset.v)));render();return}
+  if(a==='zoom-auto'){S.zoom=0;render();return}
+  if(a==='hist-period'){S.hist.period=t.dataset.v;S.hist.limit=50;render();return}
+  if(a==='hist-status'){S.hist.status=t.dataset.v;S.hist.limit=50;render();return}
+  if(a==='hist-more'){S.hist.limit=(S.hist.limit||50)+100;render();return}
+  if(a==='log-filter'){S.filter.log=t.dataset.v;render();return}
   if(t.dataset.pause){const v=t.dataset.pause,min=v==='today'?Math.max(1,1440-nowMin()):+v;return act('api/audio/pause',{minutes:min},'Fatto')}
   if(t.dataset.step){const z=zones().find(x=>String(x.id)===t.dataset.z);setZone(t.dataset.z,(zoneVolume(z)??0)+(+t.dataset.step));render();return}
   if(t.dataset.mute){setZone(t.dataset.mute,0);render();return}
@@ -605,10 +814,12 @@ document.addEventListener('input',e=>{const t=e.target;
   if(t.dataset.pvol!==undefined){S.drag=t.dataset.pvol;const o=document.querySelector(`[data-pout="${CSS.escape(t.dataset.pvol)}"]`);if(o)o.textContent=t.value;return}
   if(t.dataset.zvol!==undefined){S.drag=t.dataset.zvol;const o=document.querySelector(`[data-out="${CSS.escape(t.dataset.zvol)}"]`);if(o)o.textContent=t.value}});
 document.addEventListener('change',e=>{const t=e.target;
+  if(t.dataset.hist){S.hist[t.dataset.hist]=t.value;S.hist.limit=50;render();return}
+  if(t.matches('[data-filter-zone]')){S.zoneFilter=t.value;render();return}
   if(t.dataset.pvol!==undefined){S.drag=null;const s=sonosById(t.dataset.pvol);if(s)s.volume=+t.value;api('api/sonos/volume',{entity_id:t.dataset.pvol,volume:+t.value}).then(()=>setTimeout(load,700)).catch(x=>toast(x.message,true));return}
   if(t.dataset.zvol!==undefined){S.drag=null;setZone(t.dataset.zvol,+t.value)}});
 setInterval(()=>{const c=$('clock');if(c)c.textContent=hhmm(nowMin())},10000);
-load();setInterval(()=>{if(!S.busy&&!S.sheet)load()},4000);
+load();setInterval(()=>{if(!S.busy&&!S.sheet&&!audioPlaying())load()},4000);
 </script>
 </body>
 </html>

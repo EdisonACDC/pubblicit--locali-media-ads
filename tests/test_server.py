@@ -3344,7 +3344,7 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("sonos", state)
         self.assertIn("next_spot", state["runtime"])
         # Tutto il resto è bloccato.
-        for path in ("/api/state", "/classic", "/api/spots/history"):
+        for path in ("/api/state", "/classic", "/api/iptv/status"):
             self.assertEqual(self.remote_call(port, path, headers=staff)[0].status, 403)
         language = app.store.config.get("language")
         self.assertEqual(self.remote_call(port, "/api/config", "POST", body={"language": "de"}, headers=staff)[0].status, 403)
@@ -3508,6 +3508,69 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("on:!spotsOnIn(z),today:true", html)
         panel = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
         self.assertIn("Lf('Spot tolti per oggi: {0}'", panel)
+
+    def test_operators_spot_page_history_and_log(self):
+        app = self.app
+        app.ADS_EXCLUDED.clear()
+        port = self.remote_server()
+        saved_audio = json.loads(json.dumps(app.store.config["audio"]))
+        (app.MEDIA_DIR / "Spot_uno.mp3").write_bytes(b"ID3uno")
+        (app.MEDIA_DIR / "Foto_menu.jpg").write_bytes(b"jpg")
+        try:
+            app.store.update({"audio": {"ads": ["Spot_uno.mp3", "Spot_due.mp3"], "mode": "rotate"},
+                              "remote_admin": {"enabled": True, "users": [
+                                  {"username": "bistro", "password": "Pizza-Sera-2026", "role": "staff"}]}})
+            _, _, token = self.remote_login(port, "bistro", "Pizza-Sera-2026")
+            staff = {"Cookie": f"carellas_admin={token}"}
+            # Spot tolto dalla rotazione solo per oggi: la configurazione non cambia.
+            response, _ = self.remote_call(port, "/api/spot/today", "POST", body={"name": "Spot_uno.mp3", "on": False},
+                                           headers=staff)
+            self.assertEqual(response.status, 200)
+            self.assertEqual(app.store.config["audio"]["ads"], ["Spot_uno.mp3", "Spot_due.mp3"])
+            self.assertEqual(app.active_ads(app.store.config["audio"]), ["Spot_due.mp3"])
+            engine = app.Scheduler()
+            for _ in range(3):
+                self.assertEqual(engine.take_next_audio(), "Spot_due.mp3")
+            state = json.loads(self.remote_call(port, "/api/staff/state", headers=staff)[1])
+            self.assertEqual(state["runtime"]["ads_excluded"], ["Spot_uno.mp3"])
+            self.assertEqual(state["runtime"]["next_spot"], "Spot_due.mp3")
+            self.assertTrue(any("Spot tolto per oggi: Spot_uno.mp3 da bistro" in item["message"] for item in app.store.logs[:3]))
+            # Uno spot che non è in rotazione non si tocca.
+            response, _ = self.remote_call(port, "/api/spot/today", "POST", body={"name": "Altro.mp3", "on": False},
+                                           headers=staff)
+            self.assertGreaterEqual(response.status, 400)
+            self.assertNotIn("Altro.mp3", app.ADS_EXCLUDED)
+            # Rimesso; e comunque domani torna da solo.
+            self.assertEqual(self.remote_call(port, "/api/spot/today", "POST", body={"name": "Spot_uno.mp3", "on": True},
+                                              headers=staff)[0].status, 200)
+            self.assertEqual(app.ads_excluded_today(), set())
+            app.ADS_EXCLUDED["Spot_uno.mp3"] = "2000-01-01"
+            self.assertEqual(app.active_ads(app.store.config["audio"]), ["Spot_uno.mp3", "Spot_due.mp3"])
+            # Ascolto degli spot, storico e registro sì; foto e video no.
+            response, data = self.remote_call(port, "/media/Spot_uno.mp3", headers=staff)
+            self.assertEqual((response.status, data), (200, b"ID3uno"))
+            self.assertEqual(self.remote_call(port, "/media/Foto_menu.jpg", headers=staff)[0].status, 403)
+            self.assertEqual(self.remote_call(port, "/api/spots/history?from=2026-01-01&to=2026-01-02",
+                                              headers=staff)[0].status, 200)
+            app.store.log("info", "Canale TV Sala generato")
+            app.store.log("info", "Spot trasmesso: Spot_due.mp3")
+            state = json.loads(self.remote_call(port, "/api/staff/state", headers=staff)[1])
+            messages = [entry["message"] for entry in state["logs"]]
+            self.assertIn("Spot trasmesso: Spot_due.mp3", messages)
+            self.assertNotIn("Canale TV Sala generato", messages)
+            self.assertEqual([m["name"] for m in state["media"]], ["Spot_uno.mp3"])
+        finally:
+            app.ADS_EXCLUDED.clear()
+            app.store.update({"audio": saved_audio})
+            for name in ("Spot_uno.mp3", "Foto_menu.jpg"):
+                (app.MEDIA_DIR / name).unlink(missing_ok=True)
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/operatori.html").read_text(encoding="utf-8")
+        # Menu come nel pannello: tutto su musica e spot, niente impostazioni né TV.
+        for marker in ("['palinsesto','Palinsesto','cal']", "function pageSpot()", "function pageStorico()",
+                       "function pageRegistro()", "data-spot-today=", "'Togli per oggi':'Heute herausnehmen'"):
+            self.assertIn(marker, html)
+        self.assertNotIn("pageImpostazioni", html)
+        self.assertNotIn("['tv','TV']", html)
 
     def test_overnight_schedule(self):
         schedule = [{"days": [6], "start": "22:00", "end": "02:00", "enabled": True}]
