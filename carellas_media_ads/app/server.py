@@ -3018,13 +3018,34 @@ class Scheduler(threading.Thread):
         except Exception as error:
             store.log("error", f"Musica non ripartita: {music_error_message(error, selection)}")
 
-    def current_slot_key(self):
-        """Fascia del palinsesto in corso adesso (None fuori programma)."""
+    @staticmethod
+    def current_music_slot():
+        """Fascia che il programma suona adesso: il blocco del Mix automatico se è acceso, altrimenti
+        la fascia del Palinsesto (None fuori programma)."""
         cfg = store.config["music"]
         if not cfg.get("enabled"):
             return None
-        slot = active_mix_slot() if mix_settings()["enabled"] else (
+        return active_mix_slot() if mix_settings()["enabled"] else (
             active_music_slot(cfg) if cfg.get("slots") else (cfg if is_schedule_active(cfg.get("schedule", [])) else None))
+
+    def restart_scheduled(self):
+        """«Riavvia la musica»: il motore riparte da capo con la fascia in corso, su tutte le sue casse,
+        e continua a seguirla (gruppo, volumi, prossimo cambio). Restituisce la fascia o None."""
+        slot = self.current_music_slot()
+        if not slot:
+            return None
+        self.music_override = None
+        self._forget_music()
+        self.music_failed_slot_key = None
+        self.music_retry_at = 0.0
+        self.music_last_error = None
+        self.music_late_start = None
+        return slot
+
+    def current_slot_key(self):
+        """Fascia del palinsesto in corso adesso (None fuori programma)."""
+        cfg = store.config["music"]
+        slot = self.current_music_slot()
         if not slot:
             return None
         return json.dumps([
@@ -4699,6 +4720,14 @@ class Handler(BaseHTTPRequestHandler):
                     if not selection:
                         raise RuntimeError("Fascia musicale non trovata: salva prima le modifiche")
                 elif body.get("scheduled"):
+                    # «Riavvia la musica»: prima partiva la prima fascia del Palinsesto anche con il
+                    # Mix automatico acceso, su casse diverse e senza che il motore lo sapesse.
+                    current = scheduler.restart_scheduled()
+                    if current:
+                        name = current.get("name") or current.get("title") or current.get("content_id", "")
+                        store.log("info", f"Riavvio della musica in corso: «{name}»")
+                        self.send_json({"ok": True, "source": name})
+                        return
                     music = store.config["music"]
                     selection = active_music_slot(music)
                     if not selection:
