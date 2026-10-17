@@ -2409,6 +2409,35 @@ class IPTVEngine:
         ]
         return command
 
+    def part_key(self, item, kind):
+        """Impronta di un elemento del canale: impostazioni, file sorgente (dimensione e data) e formato.
+        Finché non cambia, la parte già convertita si riusa senza passare di nuovo da FFmpeg."""
+        if kind == "collage":
+            names = [safe_name(name) for name in item.get("images", [])][:6]
+        else:
+            names = [safe_name(item.get("name", ""))]
+        files = []
+        for name in names:
+            try:
+                info = (MEDIA_DIR / name).stat()
+                files.append([name, info.st_size, info.st_mtime_ns])
+            except OSError:
+                files.append([name, None, None])
+        payload = {"format_version": self.BUILD_FORMAT_VERSION, "kind": kind, "item": item, "files": files}
+        encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:32]
+
+    @staticmethod
+    def _cached_duration(part, info_file):
+        """Durata di una parte già convertita, oppure None se va (ri)creata."""
+        try:
+            if part.stat().st_size < 1024:
+                return None
+            duration = float(json.loads(info_file.read_text(encoding="utf-8"))["duration"])
+            return duration if duration > 0 else None
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+
     def build(self, channel_id):
         channel = self.channel(channel_id)
         if not channel:
@@ -2423,8 +2452,12 @@ class IPTVEngine:
         if not playlist:
             raise RuntimeError("La playlist del canale è vuota")
         build_signature = self.channel_signature(channel)
+        # Parti già convertite nelle volte precedenti: una modifica riconverte solo ciò che è cambiato.
+        cache = work / "cache"
+        cache.mkdir(parents=True, exist_ok=True)
         concat_lines = []
         generated_sequence = []
+        part_keys = []
         try:
             total_items = len(playlist)
             for index, item in enumerate(playlist):
@@ -2433,17 +2466,32 @@ class IPTVEngine:
                 source = MEDIA_DIR / name if name else None
                 if kind != "collage" and (not source or not source.is_file()):
                     raise RuntimeError(f"File non trovato: {name}")
-                self.set_status(
-                    channel_id,
-                    "building",
-                    f"Conversione elemento {index + 1}/{total_items}: {name or 'Collage'}",
-                )
-                part = parts / f"{index:04d}.mp4"
                 if kind not in {"image", "video", "collage"}:
                     kind = next(
                         (key for key, values in ALLOWED.items() if source.suffix.lower() in values),
                         "video",
                     )
+                key = self.part_key(item, kind)
+                part = cache / f"{key}.mp4"
+                info_file = cache / f"{key}.json"
+                part_keys.append(key)
+                cached = self._cached_duration(part, info_file)
+                if cached is not None:
+                    self.set_status(
+                        channel_id,
+                        "building",
+                        f"Elemento {index + 1}/{total_items} già pronto: {name or 'Collage'}",
+                    )
+                    duration = cached
+                    concat_lines.append(f"file '{part.as_posix()}'")
+                    generated_sequence.append(self._sequence_entry(index, kind, name, duration, item))
+                    continue
+                self.set_status(
+                    channel_id,
+                    "building",
+                    f"Conversione elemento {index + 1}/{total_items}: {name or 'Collage'}",
+                )
+                encoding = cache / f"{key}.tmp.mp4"
                 if kind == "video":
                     duration = self._probe_duration(source)
                     command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(source)]
@@ -2459,7 +2507,7 @@ class IPTVEngine:
                     ]
                 elif kind == "collage":
                     duration = max(2, min(float(item.get("duration", 12)), 3600))
-                    command = self._collage_command(item, part, duration)
+                    command = self._collage_command(item, encoding, duration)
                 else:
                     duration = max(2, min(float(item.get("duration", 12)), 3600))
                     effect = self._effect_filter(item.get("effect", "fade"), duration)
@@ -2481,18 +2529,14 @@ class IPTVEngine:
                     "-g", "50", "-keyint_min", "50", "-sc_threshold", "0",
                     "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "96k",
                     "-ar", "48000", "-ac", "2", "-t", f"{duration:.3f}", "-shortest",
-                    "-movflags", "+faststart", str(part),
+                    "-movflags", "+faststart", str(encoding),
                 ]
                 subprocess.run(command, check=True, timeout=max(120, duration * 4 + 60))
+                # La parte entra nella memoria solo quando FFmpeg ha finito davvero.
+                os.replace(encoding, part)
+                info_file.write_text(json.dumps({"duration": duration}), encoding="utf-8")
                 concat_lines.append(f"file '{part.as_posix()}'")
-                generated_sequence.append({
-                    "position": index + 1,
-                    "kind": kind,
-                    "name": name if kind != "collage" else "Collage",
-                    "duration": round(duration, 3),
-                    "effect": item.get("effect", "none") if kind in {"image", "collage"} else "none",
-                    "fit": item.get("fit", "smart") if kind != "collage" else "cover",
-                })
+                generated_sequence.append(self._sequence_entry(index, kind, name, duration, item))
             concat_file = parts / "concat.txt"
             concat_file.write_text("\n".join(concat_lines) + "\n", encoding="utf-8")
             temporary = work / "channel.tmp.mp4"
@@ -2551,14 +2595,31 @@ class IPTVEngine:
                 "built_at": now_iso(),
                 "sequence": generated_sequence,
                 "cycle_duration": round(cycle_duration, 3),
+                "parts": part_keys,
             }, ensure_ascii=False, indent=2), encoding="utf-8")
             os.replace(metadata_temporary, self.build_metadata(channel_id))
+            # Restano in memoria solo le parti del canale attuale.
+            used = set(part_keys)
+            for leftover in cache.iterdir():
+                if leftover.name.split(".", 1)[0] not in used:
+                    leftover.unlink(missing_ok=True)
             self.set_status(channel_id, "ready", "Canale HLS pronto (foto e video)")
             store.log("success", f"Canale IPTV creato: {channel.get('name', channel_id)}")
         except Exception as error:
             self.set_status(channel_id, "error", str(error))
             store.log("error", f"Creazione canale IPTV non riuscita ({channel_id}): {error}")
             raise
+
+    @staticmethod
+    def _sequence_entry(index, kind, name, duration, item):
+        return {
+            "position": index + 1,
+            "kind": kind,
+            "name": name if kind != "collage" else "Collage",
+            "duration": round(duration, 3),
+            "effect": item.get("effect", "none") if kind in {"image", "collage"} else "none",
+            "fit": item.get("fit", "smart") if kind != "collage" else "cover",
+        }
 
     def build_async(self, channel_id):
         channel_id = safe_channel_id(channel_id)
