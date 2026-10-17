@@ -3707,6 +3707,10 @@ class Handler(BaseHTTPRequestHandler):
             media_position = max(positions)
             if media_position >= 0:
                 return path[media_position:]
+            # Dentro Home Assistant le pagine arrivano come /api/hassio_ingress/<codice>/operatori:
+            # senza togliere il prefisso, /operatori mostrava il pannello amministrativo.
+            parts = path.split("/", 4)
+            path = "/" + (parts[4] if len(parts) > 4 else "")
         api_position = path.rfind("/api/")
         if api_position >= 0:
             return path[api_position:]
@@ -3901,6 +3905,8 @@ class Handler(BaseHTTPRequestHandler):
         slot_keys = ("id", "name", "title", "start", "end", "duration_minutes", "days", "players", "volume",
                      "content_id", "content_type", "enabled")
         return {
+            # Utente entrato con la password (None dentro Home Assistant o sulla rete locale).
+            "remote_user": self.remote_user,
             "config": {
                 "language": config.get("language", "it"),
                 "zones": [{"id": z.get("id"), "name": z.get("name"), "players": z.get("players") or []}
