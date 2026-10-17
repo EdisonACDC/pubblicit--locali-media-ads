@@ -2055,6 +2055,7 @@ class CarellasServerTest(unittest.TestCase):
             self.assertNotIn("media_play", [call[1] for call in self.calls])
         finally:
             self.app.SONOS_VOLUME_MEMORY.clear()
+            self.app.SONOS_MANUAL_VOLUMES.clear()
 
     def test_sonos_rejoining_the_music_group_keeps_its_volume(self):
         states = [
@@ -3012,7 +3013,107 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(states.call_count, 3)
         self.assertEqual(calls[-1], "media_play")
         self.assertTrue(any("Ripristino Sonos lento" in item["message"] for item in self.app.store.logs[:3]))
-        self.assertEqual(self.app.HA_SERVICE_TIMEOUT, 30)
+        self.assertEqual(self.app.HA_SERVICE_TIMEOUT, 20)
+
+    def test_volumes_chosen_by_hand_survive_slot_changes(self):
+        app = self.app
+        for store_ in (app.SONOS_MANUAL_VOLUMES, app.SONOS_LAST_SET, app.SONOS_MANUAL_CANDIDATES, app.SONOS_VOLUME_MEMORY):
+            store_.clear()
+        players = ["media_player.sala", "media_player.terrazza", "media_player.bar"]
+        states = [{"entity_id": p, "state": "playing", "attributes": {"group_members": players, "volume_level": 0.25}}
+                  for p in players]
+        slot = {"name": "RTL Radio", "players": players, "content_id": "FV:2/9", "content_type": "favorite_item_id",
+                "volume": 25}
+        try:
+            # Cursore del pannello: la Sala a 35 per oggi.
+            self.request("/api/sonos/volume", "POST", {"entity_id": "media_player.sala", "volume": 35})
+            self.assertEqual(app.manual_sonos_volumes(players), {"media_player.sala": 0.35})
+            self.assertIn("media_player.sala", app.SONOS_MANUAL_FILE.read_text(encoding="utf-8"))
+            # Volume di ieri: non vale più.
+            app.SONOS_MANUAL_VOLUMES["media_player.bar"] = (0.55, "2000-01-01")
+            # Cambiato dall'app Sonos: la Terrazza resta a 40 per due controlli di fila.
+            app.SONOS_LAST_SET["media_player.terrazza"] = 0.25
+            self.assertEqual(app.detect_manual_sonos_volumes({"media_player.terrazza": 0.40}), [])
+            self.assertEqual(app.detect_manual_sonos_volumes({"media_player.terrazza": 0.40}), [("media_player.terrazza", 0.40)])
+            # Uno sbalzo isolato (es. stato non ancora aggiornato) non conta.
+            app.SONOS_LAST_SET["media_player.bar"] = 0.25
+            app.detect_manual_sonos_volumes({"media_player.bar": 0.01})
+            app.detect_manual_sonos_volumes({"media_player.bar": 0.25})
+            self.assertNotIn("media_player.bar", app.manual_sonos_volumes(players))
+            calls = []
+            with mock.patch.object(app.ha, "states", return_value=states),                     mock.patch.object(app.ha, "service", side_effect=lambda d, n, p: calls.append((n, p))),                     mock.patch.object(app.time, "sleep"):
+                app.start_music(slot, fade_in=True)
+            final = {}
+            for name, payload in calls:
+                if name == "volume_set":
+                    for player in payload["entity_id"]:
+                        final[player] = payload["volume_level"]
+            # Nuova fascia: Sala e Terrazza restano come scelte a mano, il Bar prende il volume della fascia.
+            self.assertEqual(final, {"media_player.sala": 0.35, "media_player.terrazza": 0.4, "media_player.bar": 0.25})
+            self.assertTrue(any("Volumi scelti a mano mantenuti" in item["message"] for item in app.store.logs[:3]))
+        finally:
+            for store_ in (app.SONOS_MANUAL_VOLUMES, app.SONOS_LAST_SET, app.SONOS_MANUAL_CANDIDATES, app.SONOS_VOLUME_MEMORY):
+                store_.clear()
+            app.SONOS_MANUAL_FILE.unlink(missing_ok=True)
+        source = (Path(__file__).parents[1] / "carellas_media_ads/app/server.py").read_text(encoding="utf-8")
+        # Durante uno spot i volumi non vengono letti né scambiati per scelte a mano.
+        self.assertIn("if not result[\"missing\"] and not audio_playback_lock.locked():", source)
+
+    def test_switched_off_sonos_does_not_stop_the_others(self):
+        app = self.app
+        app.SONOS_UNRESPONSIVE.clear()
+        ad = "Carellas_Ristorante_Spot_DE_Maschile.mp3"
+        players = ["media_player.sala", "media_player.terrazza", "media_player.bar"]
+        # Il Bar è spento ma Home Assistant lo mostra ancora «playing».
+        states = [{"entity_id": p, "state": "playing", "attributes": {"group_members": [p], "volume_level": 0.3}}
+                  for p in players]
+        calls = []
+
+        def service(domain, name, payload):
+            targets = payload.get("entity_id")
+            targets = targets if isinstance(targets, list) else [targets]
+            if "media_player.bar" in targets + list(payload.get("group_members") or []):
+                raise RuntimeError("Home Assistant 500: Unable to connect to 192.168.178.20 (media_player.bar)")
+            calls.append((name, payload))
+
+        app.store.update({"audio": {"players": players, "ads": [ad], "repeat_count": 1, "volume": 40,
+                                    "transition_seconds": 2}})
+        try:
+            with mock.patch.object(app.ha, "states", return_value=states),                     mock.patch.object(app.ha, "service", side_effect=service),                     mock.patch.object(app, "probe_media_duration", return_value=10),                     mock.patch.object(app.time, "sleep"),                     mock.patch.object(app.audio_stop_event, "wait", return_value=False):
+                app.play_audio(ad, manual=True)
+            # Lo spot va sugli altri due Sonos e la musica riparte: il Bar viene saltato.
+            names = [name for name, _ in calls]
+            self.assertIn("play_media", names)
+            self.assertIn("restore", names)
+            self.assertTrue(app.sonos_unresponsive("media_player.bar"))
+            self.assertTrue(any("Il Sonos bar non risponde" in item["message"] for item in app.store.logs[:30]))
+            with mock.patch.object(app.ha, "states", return_value=states):
+                self.assertEqual(app.available_sonos_players(players), ["media_player.sala", "media_player.terrazza"])
+
+            # Si spegne il Sonos che guidava il gruppo della musica: la musica riparte sugli altri.
+            engine = app.Scheduler()
+            slot = {"id": "radio", "name": "RTL Radio", "players": players, "content_id": "FV:2/9",
+                    "content_type": "favorite_item_id", "volume": 25}
+            original = json.loads(json.dumps(app.store.config["music"]))
+            app.store.config["music"] = {"enabled": True, "players": players, "slots": [slot], "schedule": [],
+                                         "stop_at_end": True, "volume": 25}
+            engine.music_slot_key = None
+            gone = [{"entity_id": "media_player.sala", "state": "unavailable", "attributes": {}}] + [
+                {"entity_id": p, "state": "paused", "attributes": {"group_members": [p], "volume_level": 0.3}}
+                for p in players[1:]]
+            try:
+                with mock.patch.object(app, "active_music_slot", return_value=slot),                         mock.patch.object(app, "start_music", return_value=players) as start,                         mock.patch.object(app.time, "sleep"):
+                    engine.music_tick()
+                    engine.music_coordinator = "media_player.sala"
+                    engine.music_group_check_at = 0
+                    with mock.patch.object(app.ha, "states", return_value=gone),                             mock.patch.object(app.ha, "service"):
+                        engine.music_tick()
+                self.assertEqual(start.call_count, 2)
+                self.assertTrue(any("che guidava il gruppo non risponde" in item["message"] for item in app.store.logs[:10]))
+            finally:
+                app.store.config["music"] = original
+        finally:
+            app.SONOS_UNRESPONSIVE.clear()
 
     def test_overnight_schedule(self):
         schedule = [{"days": [6], "start": "22:00", "end": "02:00", "enabled": True}]
