@@ -1368,6 +1368,16 @@ MUSIC_EXCLUDED = {}
 def music_excluded_players():
     today = datetime.now().date().isoformat()
     return {player for player, day in MUSIC_EXCLUDED.items() if day == today}
+
+
+# Zone in cui gli operatori hanno tolto gli spot: solo per oggi. Il cambio per sempre si fa dal
+# pannello amministrativo (casse degli spot nella configurazione).
+SPOTS_EXCLUDED = {}
+
+
+def spots_excluded_players():
+    today = datetime.now().date().isoformat()
+    return {player for player, day in SPOTS_EXCLUDED.items() if day == today}
 SONOS_LAST_SET = {}
 SONOS_LAST_SET_AT = {}
 SONOS_MANUAL_CANDIDATES = {}
@@ -1595,7 +1605,14 @@ def restore_sonos_playback(snapshot_targets, resume_targets, selected_players=No
 def play_audio(filename=None, manual=False, players=None):
     cfg = store.config["audio"]
     # Una prova da una singola zona può indicare i suoi Sonos senza cambiare la configurazione.
-    players = list(players) if players else cfg.get("players", [])
+    if players:
+        players = list(players)
+    else:
+        # Zone in cui oggi gli operatori hanno tolto gli spot.
+        excluded = spots_excluded_players()
+        players = [player for player in cfg.get("players", []) if player not in excluded]
+        if not players and cfg.get("players"):
+            raise RuntimeError("Spot tolti per oggi in tutte le zone")
     ads = cfg.get("ads", [])
     if not players:
         raise RuntimeError("Nessun altoparlante selezionato")
@@ -3677,6 +3694,8 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "CarellasMediaAds/0.4.47"
     # Utente entrato dalla porta per l'accesso da Internet (None sulla porta locale).
     remote_user = None
+    # Richiesta di un operatore (pagina per tablet): i cambi valgono solo per oggi.
+    staff_request = False
 
     def log_message(self, fmt, *args):
         return
@@ -3901,7 +3920,7 @@ class Handler(BaseHTTPRequestHandler):
             "sonos": data.get("sonos") or [],
             "sonos_favorites": data.get("sonos_favorites") or [],
             "runtime": {key: runtime.get(key) for key in (
-                "music_active", "music_slot_id", "music_override", "music_excluded", "music_coordinator",
+                "music_active", "music_slot_id", "music_override", "music_excluded", "spots_excluded", "music_coordinator",
                 "mix_week", "next_spot", "next_spot_in_seconds",
                 "spot_playing", "audio_paused_until", "audio_waiting", "audio_today")},
             "ha_error": data.get("ha_error"),
@@ -4053,6 +4072,7 @@ class Handler(BaseHTTPRequestHandler):
                         "music_slot_id": scheduler.music_slot_id,
                         "mix_week": mix_week(),
                         "music_excluded": sorted(music_excluded_players()),
+                        "spots_excluded": sorted(spots_excluded_players()),
                         "music_coordinator": scheduler.music_coordinator,
                         "music_override": (
                             {"mode": scheduler.music_override["mode"], "name": scheduler.music_override.get("name", "")}
@@ -4395,11 +4415,23 @@ class Handler(BaseHTTPRequestHandler):
                 if path == "/api/zone/music":
                     scheduler.zone_music(players, on)
                 else:
-                    # Spot sì/no nella zona: cambia le casse che trasmettono la pubblicità.
-                    current = list(store.config.get("audio", {}).get("players", []))
-                    updated = list(dict.fromkeys(current + players)) if on else [p for p in current if p not in players]
-                    store.update({"audio": {"players": updated}})
-                    store.log("info", f"Spot {'attivati' if on else 'tolti'} nella zona {zone.get('name', '')}")
+                    if body.get("today") is True or self.staff_request:
+                        # Operatori (o «solo per oggi»): la zona resta com'è nella configurazione e
+                        # domani torna come l'ha impostata l'amministratore.
+                        today = datetime.now().date().isoformat()
+                        for player in players:
+                            if on:
+                                SPOTS_EXCLUDED.pop(player, None)
+                            else:
+                                SPOTS_EXCLUDED[player] = today
+                        who = f" da {self.remote_user}" if self.remote_user else ""
+                        store.log("info", f"Spot {'rimessi' if on else 'tolti'} per oggi nella zona {zone.get('name', '')}{who}")
+                    else:
+                        # Pannello amministrativo: cambia per sempre le casse che trasmettono la pubblicità.
+                        current = list(store.config.get("audio", {}).get("players", []))
+                        updated = list(dict.fromkeys(current + players)) if on else [p for p in current if p not in players]
+                        store.update({"audio": {"players": updated}})
+                        store.log("info", f"Spot {'attivati' if on else 'tolti'} nella zona {zone.get('name', '')}")
                 self.send_json({"ok": True})
                 return
             if path == "/api/music/control":
@@ -5035,9 +5067,11 @@ class RemoteAdminHandler(Handler):
             self.login()
             return
         if self.authorized():
-            if self.staff() and self.route_path() not in STAFF_POST_PATHS:
-                self.staff_forbidden()
-                return
+            if self.staff():
+                if self.route_path() not in STAFF_POST_PATHS:
+                    self.staff_forbidden()
+                    return
+                self.staff_request = True
             super().do_POST()
 
     def do_DELETE(self):
