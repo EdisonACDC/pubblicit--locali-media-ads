@@ -3345,6 +3345,28 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn(".lane .mblock.narrow:hover,.lane .mblock.narrow:focus-visible,.lane .mblock.narrow.sel{z-index:6;min-width:170px", html)
         self.assertIn("['Zoom automatico','Automatischer Zoom']", html)
 
+    def test_slow_restore_after_spot_is_not_repeated(self):
+        group = ["media_player.sala", "media_player.bar"]
+        regrouped = [{"entity_id": p, "state": "playing", "attributes": {"group_members": group}} for p in group]
+        split = [{"entity_id": p, "state": "paused", "attributes": {"group_members": [p]}} for p in group]
+        calls = []
+
+        def service(domain, name, payload):
+            calls.append(name)
+            if name == "restore":
+                # Con 10 Sonos e la radio Home Assistant risponde dopo il tempo limite (ma completa il ripristino).
+                raise TimeoutError("timed out")
+
+        with mock.patch.object(self.app.ha, "service", side_effect=service),                 mock.patch.object(self.app.ha, "states", side_effect=[split, split, regrouped]) as states,                 mock.patch.object(self.app.time, "sleep"):
+            self.app.restore_sonos_playback(["media_player.sala"], ["media_player.sala"], group, None, 0,
+                                            groups={"media_player.sala": group})
+        # Un solo ripristino (prima veniva ripetuto, raddoppiando il silenzio), poi la musica riparte.
+        self.assertEqual(calls.count("restore"), 1)
+        self.assertEqual(states.call_count, 3)
+        self.assertEqual(calls[-1], "media_play")
+        self.assertTrue(any("Ripristino Sonos lento" in item["message"] for item in self.app.store.logs[:3]))
+        self.assertEqual(self.app.HA_SERVICE_TIMEOUT, 30)
+
     def test_overnight_schedule(self):
         schedule = [{"days": [6], "start": "22:00", "end": "02:00", "enabled": True}]
         self.assertTrue(self.app.is_schedule_active(schedule, datetime(2026, 9, 13, 23, 0)))
