@@ -58,6 +58,17 @@ input[type=range]{width:100%;height:44px;accent-color:var(--gold)}
 .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--card2);border:1px solid var(--line2);padding:12px 18px;border-radius:12px;z-index:30;display:none;max-width:90vw}
 .toast.show{display:block}.toast.bad{border-color:var(--red);color:#FFD3CF}
 .note{font-size:14px;color:var(--muted2)}
+.toggles{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.toggle{min-height:52px;border-radius:12px;border:1px solid var(--line2);background:var(--card2);font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px}
+.toggle[aria-pressed=true]{background:#1F2A26;border-color:#2F4A3E;color:#A9DCC2}
+.toggle[aria-pressed=false]{color:var(--muted)}
+.track{margin-top:6px;font-size:15px;color:var(--gold2);overflow-wrap:anywhere}
+.transport{display:flex;gap:8px}
+.transport button{width:64px;height:56px;border-radius:12px;border:1px solid var(--line2);background:var(--card2);font-size:22px;cursor:pointer}
+.speakers{display:grid;gap:8px;border-top:1px solid var(--line);padding-top:10px}
+.speaker{display:grid;grid-template-columns:96px 1fr 40px;gap:8px;align-items:center;font-size:14px}
+.speaker input{height:36px}
+.speaker b{font:600 16px var(--mono);text-align:right}
 .warn{color:var(--warn)}
 @media(max-width:640px){.music,.spots{grid-template-columns:1fr}.clock{display:none}h2{font-size:22px}}
 </style>
@@ -69,7 +80,7 @@ input[type=range]{width:100%;height:44px;accent-color:var(--gold)}
 <script>
 // Pagina Operatori: musica, casse e pubblicità per i tablet del locale. Nessuna impostazione.
 const S={state:null,lang:'it',sheet:null,tab:'radio',busy:false,drag:null};
-const DE={'Operatori':'Personal','Esci':'Abmelden','Musica':'Musik','In riproduzione':'Läuft','Ferma':'Gestoppt','Musica spenta':'Musik aus','Spegni la musica':'Musik ausschalten','Accendi la musica':'Musik einschalten','Cambia musica':'Musik wechseln','Casse':'Lautsprecher','Suona':'Spielt','Offline':'Offline','Pubblicità':'Werbung','Prossimo spot':'Nächster Spot','tra {0} min':'in {0} Min.','Spot in onda adesso':'Spot läuft gerade','Riproduci ora':'Jetzt abspielen','Salta':'Überspringen','Ferma lo spot':'Spot stoppen','Pausa 30 min':'Pause 30 Min.','Pausa 1 ora':'Pause 1 Std.','Riprendi la pubblicità':'Werbung fortsetzen','Pubblicità in pausa fino alle {0}':'Werbung pausiert bis {0}','Pubblicità automatica spenta':'Automatische Werbung aus','Cosa vuoi suonare?':'Was soll laufen?','Radio':'Radio','Playlist':'Playlists','Musica del palinsesto':'Programm-Musik','Chiudi':'Schließen','Accesa a mano':'Von Hand eingeschaltet','Spenta a mano: riprende con la prossima fascia':'Von Hand aus: geht mit dem nächsten Zeitraum weiter','Fatto':'Erledigt','Home Assistant non risponde':'Home Assistant antwortet nicht','Nessuna':'Keine','Muto':'Stumm','Tutte le casse':'Alle Lautsprecher','Fuori programma':'Außerhalb des Programms'};
+const DE={'Operatori':'Personal','Esci':'Abmelden','Musica':'Musik','In riproduzione':'Läuft','Ferma':'Gestoppt','Musica spenta':'Musik aus','Spegni la musica':'Musik ausschalten','Accendi la musica':'Musik einschalten','Cambia musica':'Musik wechseln','Casse':'Lautsprecher','Suona':'Spielt','Offline':'Offline','Pubblicità':'Werbung','Prossimo spot':'Nächster Spot','tra {0} min':'in {0} Min.','Spot in onda adesso':'Spot läuft gerade','Riproduci ora':'Jetzt abspielen','Salta':'Überspringen','Ferma lo spot':'Spot stoppen','Pausa 30 min':'Pause 30 Min.','Pausa 1 ora':'Pause 1 Std.','Riprendi la pubblicità':'Werbung fortsetzen','Pubblicità in pausa fino alle {0}':'Werbung pausiert bis {0}','Pubblicità automatica spenta':'Automatische Werbung aus','Cosa vuoi suonare?':'Was soll laufen?','Radio':'Radio','Playlist':'Playlists','Musica del palinsesto':'Programm-Musik','Chiudi':'Schließen','Accesa a mano':'Von Hand eingeschaltet','Spenta a mano: riprende con la prossima fascia':'Von Hand aus: geht mit dem nächsten Zeitraum weiter','Fatto':'Erledigt','Home Assistant non risponde':'Home Assistant antwortet nicht','Nessuna':'Keine','Muto':'Stumm','Tutte le casse':'Alle Lautsprecher','Musica':'Musik','Spot':'Spots','sì':'an','no':'aus','In pausa':'Pausiert','Pausa':'Pause','Riprendi':'Weiter','Brano precedente':'Vorheriger Titel','Brano successivo':'Nächster Titel','Casse della zona':'Lautsprecher der Zone','Musica tolta da questa zona':'Musik in dieser Zone aus','Fuori programma':'Außerhalb des Programms'};
 const L=t=>S.lang==='de'&&DE[t]?DE[t]:t;
 const Lf=(t,...v)=>L(t).replace(/\{(\d)\}/g,(_,i)=>v[+i]);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -89,9 +100,13 @@ const sonosName=id=>{const s=sonosById(id);return s?String(s.name).replace(/^son
 function zones(){const z=(cfg().zones||[]).filter(z=>(z.players||[]).length);return z.length?z:[{id:'all',name:L('Tutte le casse'),players:sonos().map(s=>s.entity_id)}]}
 function todayIdx(){const d=new Date().getDay();return d===0?6:d-1}
 function nowMin(){const d=new Date();return d.getHours()*60+d.getMinutes()}
+function currentMusicBase(){const r=rt(),id=String(r.music_slot_id||'');const s=(cfg().music.slots||[]).find(x=>String(x.id)===id);return {title:s?(s.title||s.name):L('Musica')}}
+// Brano in corso sul Sonos che guida il gruppo (le playlist mostrano il titolo del brano).
+function nowTrack(){const r=rt(),c=sonosById(r.music_coordinator)||sonos().find(s=>s.state==='playing');const t=c&&c.media_title;return t&&!/\.(mp3|wav|m4a)$/i.test(t)?t:''}
 function currentMusic(){
   const r=rt(),o=r.music_override,id=String(r.music_slot_id||'');
   if(o&&o.mode==='on')return {title:o.name,note:L('Accesa a mano')};
+  if(o&&o.mode==='paused'){const c=currentMusicBase();return {...c,note:L('In pausa'),paused:true}}
   if(o&&o.mode==='off')return {title:L('Musica spenta'),note:L('Spenta a mano: riprende con la prossima fascia'),off:true};
   if(id.startsWith('mix-')){const d=(r.mix_week||[]).find(x=>x.weekday===todayIdx());const b=d&&d.blocks.find(b=>`mix-${d.date}-${b.start}`===id);if(b)return {title:b.name,note:`${hhmm(b.start)}–${hhmm(b.end)}`}}
   const s=(cfg().music.slots||[]).find(x=>String(x.id)===id);
@@ -103,6 +118,8 @@ function currentMusic(){
 }
 function playing(){return sonos().some(s=>s.state==='playing'&&!/\.(mp3|wav|m4a)$/i.test(s.media_title||''))}
 function zoneVolume(z){const v=(z.players||[]).map(sonosById).filter(s=>s&&s.available!==false&&s.volume!=null).map(s=>s.volume);return v.length?Math.round(v.reduce((a,b)=>a+b,0)/v.length):null}
+function musicOnIn(z){const ex=rt().music_excluded||[];return !(z.players||[]).every(p=>ex.includes(p))}
+function spotsOnIn(z){const a=cfg().audio.players||[];return (z.players||[]).length>0&&(z.players||[]).every(p=>a.includes(p))}
 function zoneState(z){const st=(z.players||[]).map(sonosById).filter(Boolean);if(!st.length||st.every(s=>s.available===false))return 'off';return st.some(s=>s.state==='playing')?'on':'idle'}
 function sourceKind(f){return f.kind?f.kind:(/playlist|SQ:|^S:/i.test(String(f.type||'')+String(f.id||''))||!(f.type==='sonos_radio_source'||/radio|\bfm\b|\d{2,3}[.,]\d/i.test(String(f.name||''))))?'playlist':'radio'}
 function sources(){
@@ -120,12 +137,14 @@ function render(){
   const paused=r.audio_paused_until?new Date(r.audio_paused_until):null;
   const spotText=r.spot_playing?L('Spot in onda adesso'):!cfg().audio.enabled?L('Pubblicità automatica spenta'):paused&&paused>new Date()?Lf('Pubblicità in pausa fino alle {0}',paused.toTimeString().slice(0,5)):r.next_spot?`${pretty(r.next_spot)} · ${r.next_spot_in_seconds!=null?Lf('tra {0} min',Math.max(0,Math.round(r.next_spot_in_seconds/60))):''}`:L('Nessuna');
   $('app').innerHTML=`${S.state.ha_error?`<div class="card warn">${esc(L('Home Assistant non risponde'))}</div>`:''}
-    <section class="card music"><div><div class="label row"><span class="dot ${on?'on':''}"></span>${esc(L('Musica'))} · ${esc(L(on?'In riproduzione':'Ferma'))}</div><h2>${esc(m.title)}</h2><div class="sub">${esc(m.note||'')}</div></div>
-      <div class="row">${on||(r.music_override&&r.music_override.mode==='on')?`<button class="btn danger" data-act="off">■ ${esc(L('Spegni la musica'))}</button>`:''}<button class="btn primary" data-act="choose">▶ ${esc(L(on?'Cambia musica':'Accendi la musica'))}</button></div></section>
+    <section class="card music"><div><div class="label row"><span class="dot ${on?'on':''}"></span>${esc(L('Musica'))} · ${esc(L(on?'In riproduzione':'Ferma'))}</div><h2>${esc(m.title)}</h2><div class="sub">${esc(m.note||'')}</div>${nowTrack()&&nowTrack()!==m.title?`<div class="track">♪ ${esc(nowTrack())}</div>`:''}</div>
+      <div class="row">${on||m.paused?`<div class="transport"><button data-ctl="previous" aria-label="${esc(L('Brano precedente'))}">⏮</button><button data-ctl="${m.paused?'play':'pause'}" aria-label="${esc(L(m.paused?'Riprendi':'Pausa'))}">${m.paused?'▶':'⏸'}</button><button data-ctl="next" aria-label="${esc(L('Brano successivo'))}">⏭</button></div>`:''}${on||(r.music_override&&r.music_override.mode==='on')?`<button class="btn danger" data-act="off">■ ${esc(L('Spegni la musica'))}</button>`:''}<button class="btn primary" data-act="choose">▶ ${esc(L(on?'Cambia musica':'Accendi la musica'))}</button></div></section>
     <section><div class="label" style="margin:4px 4px 10px">${esc(L('Casse'))}</div><div class="zones">${zones().map(z=>{const v=zoneVolume(z),st=zoneState(z);return `<div class="zone"><h3><span class="dot ${st==='on'?'on':st==='off'?'off':''}"></span>${esc(z.name)}<span class="state">${esc(L(st==='on'?'Suona':st==='off'?'Offline':'Ferma'))}</span></h3>
       ${v==null?`<div class="note">${esc(L('Offline'))}</div>`:`<div class="vol"><button data-step="-5" data-z="${esc(z.id)}" aria-label="−">−</button><div class="val" data-out="${esc(z.id)}">${v}</div><button data-step="5" data-z="${esc(z.id)}" aria-label="+">+</button></div>
       <input type="range" min="0" max="100" value="${v}" data-zvol="${esc(z.id)}" aria-label="${esc(z.name)}">
-      <div class="row"><button class="btn" style="min-height:44px" data-mute="${esc(z.id)}">${esc(L('Muto'))}</button><span class="note">${esc((z.players||[]).map(sonosName).join(', '))}</span></div>`}</div>`}).join('')}</div></section>
+      <div class="row"><button class="btn" style="min-height:44px" data-mute="${esc(z.id)}">${esc(L('Muto'))}</button><span class="note">${esc((z.players||[]).map(sonosName).join(', '))}</span></div>`}
+      ${z.id==='all'?'':`<div class="toggles"><button class="toggle" data-zmusic="${esc(z.id)}" aria-pressed="${musicOnIn(z)}">♫ ${esc(L('Musica'))}: ${esc(L(musicOnIn(z)?'sì':'no'))}</button><button class="toggle" data-zspots="${esc(z.id)}" aria-pressed="${spotsOnIn(z)}">📢 ${esc(L('Spot'))}: ${esc(L(spotsOnIn(z)?'sì':'no'))}</button></div>${musicOnIn(z)?'':`<div class="note">${esc(L('Musica tolta da questa zona'))}</div>`}`}
+      ${(z.players||[]).length>1?`<div class="speakers"><div class="label">${esc(L('Casse della zona'))}</div>${z.players.map(p=>{const s=sonosById(p);return s&&s.volume!=null&&s.available!==false?`<div class="speaker"><span>${esc(sonosName(p))}</span><input type="range" min="0" max="100" value="${s.volume}" data-pvol="${esc(p)}" aria-label="${esc(sonosName(p))}"><b data-pout="${esc(p)}">${s.volume}</b></div>`:''}).join('')}</div>`:''}</div>`}).join('')}</div></section>
     <section class="card spots"><div><div class="label">${esc(L('Pubblicità'))} · ${esc(L('Prossimo spot'))}</div><h2 style="font-size:21px">${esc(spotText)}</h2></div>
       <div class="row">${r.spot_playing?`<button class="btn danger" data-act="spot-stop">■ ${esc(L('Ferma lo spot'))}</button>`:`<button class="btn primary" data-act="spot-now" ${r.next_spot?'':'disabled'}>▶ ${esc(L('Riproduci ora'))}</button><button class="btn" data-act="spot-skip" ${r.next_spot?'':'disabled'}>${esc(L('Salta'))}</button>`}
       ${paused&&paused>new Date()?`<button class="btn" data-act="resume">${esc(L('Riprendi la pubblicità'))}</button>`:`<button class="btn" data-pause="30">${esc(L('Pausa 30 min'))}</button><button class="btn" data-pause="60">${esc(L('Pausa 1 ora'))}</button>`}</div></section>
@@ -159,9 +178,12 @@ document.addEventListener('click',e=>{
   if(t.dataset.pause)return act('api/audio/pause',{minutes:+t.dataset.pause},'Fatto');
   if(t.dataset.step){const z=zones().find(x=>String(x.id)===t.dataset.z);const v=zoneVolume(z)??0;setZone(t.dataset.z,v+(+t.dataset.step));render();return}
   if(t.dataset.mute){setZone(t.dataset.mute,0);render();return}
+  if(t.dataset.ctl)return act('api/music/control',{action:t.dataset.ctl},'Fatto');
+  if(t.dataset.zmusic){const z=zones().find(x=>String(x.id)===t.dataset.zmusic);return act('api/zone/music',{zone_id:z.id,on:!musicOnIn(z)},'Fatto')}
+  if(t.dataset.zspots){const z=zones().find(x=>String(x.id)===t.dataset.zspots);return act('api/zone/spots',{zone_id:z.id,on:!spotsOnIn(z)},'Fatto')}
 });
-document.addEventListener('input',e=>{const t=e.target;if(t.dataset.zvol!==undefined){S.drag=t.dataset.zvol;const o=document.querySelector(`[data-out="${CSS.escape(t.dataset.zvol)}"]`);if(o)o.textContent=t.value}});
-document.addEventListener('change',e=>{const t=e.target;if(t.dataset.zvol!==undefined){S.drag=null;setZone(t.dataset.zvol,+t.value)}});
+document.addEventListener('input',e=>{const t=e.target;if(t.dataset.pvol!==undefined){S.drag=t.dataset.pvol;const o=document.querySelector(`[data-pout="${CSS.escape(t.dataset.pvol)}"]`);if(o)o.textContent=t.value;return}if(t.dataset.zvol!==undefined){S.drag=t.dataset.zvol;const o=document.querySelector(`[data-out="${CSS.escape(t.dataset.zvol)}"]`);if(o)o.textContent=t.value}});
+document.addEventListener('change',e=>{const t=e.target;if(t.dataset.pvol!==undefined){S.drag=null;const s=sonosById(t.dataset.pvol);if(s)s.volume=+t.value;api('api/sonos/volume',{entity_id:t.dataset.pvol,volume:+t.value}).then(()=>setTimeout(load,700)).catch(e=>toast(e.message,true));return}if(t.dataset.zvol!==undefined){S.drag=null;setZone(t.dataset.zvol,+t.value)}});
 function tick(){const d=new Date();$('clock').textContent=d.toTimeString().slice(0,5)}
 tick();setInterval(tick,10000);load();setInterval(()=>{if(!S.busy&&!S.sheet)load()},4000);
 </script>

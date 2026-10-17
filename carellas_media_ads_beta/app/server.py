@@ -1388,7 +1388,15 @@ def remember_sonos_volumes(levels):
 # cambia la fascia musicale. Il giorno dopo si riparte dal volume delle fasce. Restano salvati su file
 # così sopravvivono a un riavvio dell'add-on.
 SONOS_MANUAL_FILE = DATA_DIR / "carellas_sonos_volumes.json"
+# Zone in cui gli operatori hanno tolto la musica (valgono per oggi): le casse non vengono raggruppate.
+MUSIC_EXCLUDED = {}
+
+
+def music_excluded_players():
+    today = datetime.now().date().isoformat()
+    return {player for player, day in MUSIC_EXCLUDED.items() if day == today}
 SONOS_LAST_SET = {}
+SONOS_LAST_SET_AT = {}
 SONOS_MANUAL_CANDIDATES = {}
 
 
@@ -1438,7 +1446,10 @@ def detect_manual_sonos_volumes(live_levels):
     with SONOS_VOLUME_MEMORY_LOCK:
         for player, level in (live_levels or {}).items():
             last = SONOS_LAST_SET.get(player)
-            if last is None or abs(level - last) < 0.02:
+            # Subito dopo un cambio fatto dall'add-on (dissolvenze, nuova fascia) i volumi letti possono
+            # essere a metà strada: non vanno scambiati per una scelta fatta a mano.
+            recent = time.monotonic() - SONOS_LAST_SET_AT.get(player, -1e9) < 30
+            if last is None or recent or abs(level - last) < 0.02:
                 SONOS_MANUAL_CANDIDATES.pop(player, None)
                 continue
             candidate = SONOS_MANUAL_CANDIDATES.get(player)
@@ -1506,6 +1517,7 @@ def set_sonos_volume_levels(levels):
         with SONOS_VOLUME_MEMORY_LOCK:
             for player in players:
                 SONOS_LAST_SET[player] = level
+                SONOS_LAST_SET_AT[player] = time.monotonic()
 
 
 def fade_sonos(players, target, seconds, start_levels=None):
@@ -1980,6 +1992,12 @@ def start_music(selection=None, fade_in=False):
     cfg = store.config["music"]
     selection = selection or cfg
     players = available_sonos_players(selection.get("players") or cfg.get("players") or [])
+    # Le zone in cui gli operatori hanno tolto la musica restano fuori dal gruppo.
+    excluded = music_excluded_players()
+    if excluded and players:
+        players = [player for player in players if player not in excluded]
+        if not players:
+            raise RuntimeError("Musica tolta dagli operatori in tutte le zone di questa fascia")
     content_id = selection.get("content_id")
     if not players or not content_id:
         raise RuntimeError("Configurazione musica incompleta")
@@ -3199,6 +3217,75 @@ class Scheduler(threading.Thread):
                 status["audio_waiting"] = "no_music"
         return status
 
+    def zone_music(self, players, on):
+        """Musica sì/no in una zona (dagli operatori): le altre zone continuano. Vale per oggi."""
+        players = [p for p in dict.fromkeys(players) if isinstance(p, str) and p]
+        if not players:
+            raise RuntimeError("La zona non ha casse Sonos")
+        today = datetime.now().date().isoformat()
+        if not on:
+            for player in players:
+                MUSIC_EXCLUDED[player] = today
+            lost_coordinator = self.music_coordinator in players
+            try:
+                sonos_service_each("media_player", "unjoin", {"entity_id": players})
+                sonos_service_each("media_player", "media_stop", {"entity_id": players})
+            except Exception as error:
+                store.log("warning", f"Musica non fermata in tutte le casse della zona: {error}")
+            self.music_expected_players = [p for p in self.music_expected_players if p not in players]
+            self.music_players = [p for p in self.music_players if p not in players]
+            if lost_coordinator and self.music_selection and self.music_active and not self.music_override:
+                # Si è tolta la zona che guidava il gruppo: la musica riparte sulle altre.
+                self.music_players = start_music(self.music_selection, fade_in=True)
+                self.music_coordinator = self.music_players[0] if self.music_players else None
+                self.music_expected_players = list(self.music_players)
+            store.log("info", "Musica tolta dalla zona: " + ", ".join(p.removeprefix("media_player.") for p in players))
+            return
+        for player in players:
+            MUSIC_EXCLUDED.pop(player, None)
+        coordinator = self.music_coordinator
+        if self.music_active and coordinator and not self.music_override:
+            others = [p for p in available_sonos_players(players) if p != coordinator]
+            if others:
+                sonos_service("media_player", "join", {"entity_id": coordinator, "group_members": others})
+                levels = remembered_sonos_volumes(others, self.music_volume)
+                levels.update(manual_sonos_volumes(others))
+                set_sonos_volume_levels(levels)
+                ha.service("media_player", "media_play", {"entity_id": coordinator})
+                self.music_players = list(dict.fromkeys(self.music_players + others))
+                self.music_expected_players = list(dict.fromkeys(self.music_expected_players + others))
+        store.log("info", "Musica rimessa nella zona: " + ", ".join(p.removeprefix("media_player.") for p in players))
+
+    def music_control(self, action):
+        """Pausa, riprendi, brano successivo o precedente sulla musica in corso."""
+        services = {"pause": "media_pause", "play": "media_play", "next": "media_next_track",
+                    "previous": "media_previous_track"}
+        if action not in services:
+            raise RuntimeError("Comando non valido")
+        coordinator = self.music_coordinator
+        if not coordinator:
+            playing = [s for s in ha.states() if s.get("entity_id") in set(self.music_players or mix_settings()["players"])
+                       and s.get("state") in ("playing", "paused")]
+            coordinator = playing[0]["entity_id"] if playing else None
+        if not coordinator:
+            raise RuntimeError("Nessuna musica in corso")
+        try:
+            sonos_service("media_player", services[action], {"entity_id": coordinator})
+        except Exception as error:
+            if action in ("next", "previous"):
+                raise RuntimeError("Questa sorgente non ha brani da saltare (per esempio una radio)") from None
+            raise
+        if action == "pause":
+            # In pausa: il motore non la fa ripartire finché non premi Play o inizia un'altra fascia.
+            # Si ricorda la scelta di prima (es. musica accesa a mano fuori programma) per Play.
+            previous = self.music_override if (self.music_override or {}).get("mode") != "paused" else                 self.music_override.get("resume")
+            self.music_override = {"mode": "paused", "slot_key": self.current_slot_key(),
+                                   "name": (self.music_selection or {}).get("name", ""), "resume": previous}
+        elif action == "play" and self.music_override and self.music_override.get("mode") == "paused":
+            self.music_override = self.music_override.get("resume")
+        store.log("info", {"pause": "Musica in pausa", "play": "Musica ripresa", "next": "Brano successivo",
+                           "previous": "Brano precedente"}[action])
+
     def current_slot_key(self):
         """Fascia del palinsesto in corso adesso (None fuori programma)."""
         cfg = store.config["music"]
@@ -3422,6 +3509,7 @@ class Scheduler(threading.Thread):
             expected = self.music_expected_players or list(dict.fromkeys(
                 slot.get("players") or cfg.get("players") or []
             ))
+            expected = [player for player in expected if player not in music_excluded_players()]
             try:
                 lost = self.music_coordinator
                 # Un Sonos rientrato nel gruppo riprende il suo ultimo volume, non quello della fascia.
@@ -4275,7 +4363,8 @@ class Handler(BaseHTTPRequestHandler):
             "sonos": data.get("sonos") or [],
             "sonos_favorites": data.get("sonos_favorites") or [],
             "runtime": {key: runtime.get(key) for key in (
-                "music_active", "music_slot_id", "music_override", "mix_week", "next_spot", "next_spot_in_seconds",
+                "music_active", "music_slot_id", "music_override", "music_excluded", "music_coordinator",
+                "mix_week", "next_spot", "next_spot_in_seconds",
                 "spot_playing", "audio_paused_until", "audio_waiting", "audio_today")},
             "ha_error": data.get("ha_error"),
         }
@@ -4425,6 +4514,8 @@ class Handler(BaseHTTPRequestHandler):
                         "music_active": scheduler.music_active,
                         "music_slot_id": scheduler.music_slot_id,
                         "mix_week": mix_week(),
+                        "music_excluded": sorted(music_excluded_players()),
+                        "music_coordinator": scheduler.music_coordinator,
                         "music_override": (
                             {"mode": scheduler.music_override["mode"], "name": scheduler.music_override.get("name", "")}
                             if scheduler.music_override else None
@@ -4791,6 +4882,27 @@ class Handler(BaseHTTPRequestHandler):
                 ha.service("homeassistant", "update_entity", {"entity_id": entity_id})
                 self.send_json({"ok": True})
                 return
+            if path in ("/api/zone/music", "/api/zone/spots"):
+                body = self.json_body()
+                zone = next((z for z in store.config.get("zones", []) if str(z.get("id")) == str(body.get("zone_id"))), None)
+                players = [p for p in (zone or {}).get("players") or [] if isinstance(p, str)]
+                if not zone or not players:
+                    raise RuntimeError("Zona non trovata o senza casse Sonos")
+                on = body.get("on") is True
+                if path == "/api/zone/music":
+                    scheduler.zone_music(players, on)
+                else:
+                    # Spot sì/no nella zona: cambia le casse che trasmettono la pubblicità.
+                    current = list(store.config.get("audio", {}).get("players", []))
+                    updated = list(dict.fromkeys(current + players)) if on else [p for p in current if p not in players]
+                    store.update({"audio": {"players": updated}})
+                    store.log("info", f"Spot {'attivati' if on else 'tolti'} nella zona {zone.get('name', '')}")
+                self.send_json({"ok": True})
+                return
+            if path == "/api/music/control":
+                scheduler.music_control(str(self.json_body().get("action", "")))
+                self.send_json({"ok": True})
+                return
             if path == "/api/music/manual":
                 body = self.json_body()
                 if body.get("action") == "off":
@@ -5148,7 +5260,7 @@ REMOTE_FAILURES = {}
 REMOTE_COOKIE = "carellas_admin"
 # Le sole operazioni permesse agli operatori (pagina per tablet).
 STAFF_POST_PATHS = {"/api/sonos/volume", "/api/music/manual", "/api/audio/pause", "/api/audio/skip",
-                    "/api/audio/stop", "/api/test/audio"}
+                    "/api/audio/stop", "/api/test/audio", "/api/zone/music", "/api/zone/spots", "/api/music/control"}
 
 
 def remote_account(username):
