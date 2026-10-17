@@ -2604,6 +2604,61 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("(cur?`<div class=\"zone-list\">${cur}</div>`:'')", html)
         self.assertIn("['{0} offline','{0} offline']", html)
 
+    def test_play_now_counts_as_next_spot_and_never_overlaps(self):
+        audio = self.app.store.config["audio"]
+        saved = {key: audio.get(key) for key in ("enabled", "ads", "mode", "players", "schedule", "only_when_playing")}
+        audio.update(enabled=True, ads=["primo.mp3", "secondo.mp3"], mode="rotate", players=["media_player.sala"],
+                     schedule=[], only_when_playing=False)
+        scheduler = self.app.scheduler
+        started = []
+        try:
+            scheduler.audio_paused_until = 0.0
+            scheduler.audio_index = 0
+            scheduler.last_audio = self.app.time.monotonic() - 3600
+            logs = len(self.app.store.logs)
+            # Uno spot è già in onda: il programma aspetta, senza errore nel Registro né nello storico.
+            self.app.audio_playback_lock.acquire()
+            try:
+                with mock.patch.object(self.app, "play_audio") as play,                         mock.patch.object(scheduler, "audio_today", return_value=0):
+                    scheduler.audio_tick()
+                play.assert_not_called()
+                self.assertFalse(any(item["level"] == "error" for item in self.app.store.logs[:len(self.app.store.logs) - logs]))
+                # Anche un secondo «Riproduci ora» viene rifiutato subito, con un messaggio chiaro.
+                with self.assertRaises(urllib.error.HTTPError) as refused:
+                    self.request("/api/test/audio", "POST", {"name": "primo.mp3", "next": True})
+                self.assertEqual(refused.exception.code, 409)
+                self.assertIn("già uno spot in onda", json.loads(refused.exception.read())["error"])
+            finally:
+                self.app.audio_playback_lock.release()
+            # «Riproduci ora» trasmette lo spot in arrivo, la rotazione passa al successivo e l'intervallo riparte.
+            done = threading.Event()
+
+            def fake_play(name, manual, players):
+                started.append((name, manual))
+                done.set()
+
+            with mock.patch.object(self.app, "play_audio", side_effect=fake_play):
+                self.assertEqual(self.request("/api/test/audio", "POST", {"name": "primo.mp3", "next": True})[0], 200)
+                self.assertTrue(done.wait(5))
+            self.assertEqual(started, [("primo.mp3", True)])
+            self.assertEqual(scheduler.peek_audio(audio["ads"], "rotate"), "secondo.mp3")
+            self.assertLess(self.app.time.monotonic() - scheduler.last_audio, 5)
+            with mock.patch.object(self.app, "play_audio") as play,                     mock.patch.object(scheduler, "audio_today", return_value=0):
+                scheduler.audio_tick()
+            play.assert_not_called()
+            # Una prova di zona non cambia la rotazione.
+            done.clear()
+            with mock.patch.object(self.app, "play_audio", side_effect=fake_play):
+                self.request("/api/test/audio", "POST", {"name": "primo.mp3", "players": ["media_player.sala"]})
+                self.assertTrue(done.wait(5))
+            self.assertEqual(scheduler.peek_audio(audio["ads"], "rotate"), "secondo.mp3")
+        finally:
+            audio.update(saved)
+            scheduler.audio_index = 0
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        self.assertIn("'spot-now':()=>command('api/test/audio',{name:rt().next_spot||cfg().audio.ads?.[0],next:true}", html)
+        self.assertIn('data-act="spot-test"', html)
+
     def test_overnight_schedule(self):
         schedule = [{"days": [6], "start": "22:00", "end": "02:00", "enabled": True}]
         self.assertTrue(self.app.is_schedule_active(schedule, datetime(2026, 9, 13, 23, 0)))
