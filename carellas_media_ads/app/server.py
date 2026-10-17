@@ -3895,6 +3895,7 @@ class Handler(BaseHTTPRequestHandler):
                                         for s in mix.get("sources") or []]},
                 },
                 "audio": {"enabled": audio.get("enabled"), "players": audio.get("players") or [],
+                          "daily_limit": audio.get("daily_limit"), "schedule": audio.get("schedule") or [],
                           "volume": audio.get("volume"), "interval_minutes": audio.get("interval_minutes")},
             },
             "sonos": data.get("sonos") or [],
