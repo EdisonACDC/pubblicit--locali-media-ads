@@ -3411,11 +3411,12 @@ class Scheduler(threading.Thread):
                 raise RuntimeError("Questa sorgente non ha brani da saltare (per esempio una radio)") from None
             raise
         if action == "pause":
-            # In pausa: il motore non la fa ripartire finché non premi Play o inizia un'altra fascia.
+            # In pausa: il motore non la fa ripartire finché non premi Play (anche se cambia la fascia).
             # Si ricorda la scelta di prima (es. musica accesa a mano fuori programma) per Play.
             previous = self.music_override if (self.music_override or {}).get("mode") != "paused" else                 self.music_override.get("resume")
             self.music_override = {"mode": "paused", "slot_key": self.current_slot_key(),
-                                   "name": (self.music_selection or {}).get("name", ""), "resume": previous}
+                                   "name": (self.music_selection or {}).get("name", ""), "resume": previous,
+                                   "day": datetime.now().date().isoformat()}
         elif action == "play" and self.music_override and self.music_override.get("mode") == "paused":
             self.music_override = self.music_override.get("resume")
         store.log("info", {"pause": "Musica in pausa", "play": "Musica ripresa", "next": "Brano successivo",
@@ -3527,16 +3528,19 @@ class Scheduler(threading.Thread):
         self.music_failed_slot_key = None
         self.music_retry_at = 0.0
 
-    def music_off(self):
-        """Spegne la musica a mano: resta spenta finché non la riaccendi o inizia un'altra fascia."""
-        players = list(self.music_players) or mix_settings()["players"]
+    def music_off(self, extra_players=None):
+        """Spegne la musica a mano: resta spenta finché non la riaccendi, anche quando cambia la fascia
+        o il blocco del Mix automatico. Il giorno dopo il programma riparte da solo."""
+        players = list(dict.fromkeys(list(self.music_players) + list(extra_players or []))) \
+            or mix_settings()["players"]
         transition = store.config["music"].get("transition_seconds", 3)
-        self.music_override = {"mode": "off", "slot_key": self.current_slot_key(), "name": ""}
+        self.music_override = {"mode": "off", "slot_key": self.current_slot_key(), "name": "",
+                               "day": datetime.now().date().isoformat()}
         try:
             stop_music(players, transition)
         finally:
             self._forget_music()
-        store.log("info", "Musica spenta a mano: riprende con la prossima fascia o quando la riaccendi")
+        store.log("info", "Musica spenta a mano: resta spenta finché non la riaccendi (domani riparte da sola)")
 
     def music_on(self, selection=None):
         """Riaccende la musica: senza scelta riprende il palinsesto, altrimenti suona la sorgente scelta
@@ -3613,11 +3617,18 @@ class Scheduler(threading.Thread):
             ], ensure_ascii=False, sort_keys=True)
         override = self.music_override
         if override:
-            if active and slot_key != override.get("slot_key"):
-                # Inizia un'altra fascia: la scelta fatta a mano finisce e riprende il palinsesto.
-                self.music_override = None
+            held = override.get("mode") in ("off", "paused")
+            if held and override.get("day") not in (None, datetime.now().date().isoformat()):
+                # Spenta o in pausa ieri: oggi il programma riparte normalmente.
+                self.music_override = override = None
+                store.log("info", "Nuovo giorno: la musica riprende dal palinsesto")
+            elif active and slot_key != override.get("slot_key") and not held:
+                # Inizia un'altra fascia: la musica accesa a mano finisce e riprende il palinsesto.
+                # Spenta o in pausa a mano invece resta così finché non la riaccendi (anche con il Mix,
+                # che cambia blocco ogni mezz'ora: prima la musica ripartiva da sola).
+                self.music_override = override = None
                 store.log("info", "Nuova fascia: la musica riprende dal palinsesto")
-            else:
+            if override:
                 # Musica spenta o accesa a mano: niente avvii, arresti o controlli automatici del gruppo.
                 return
         late = self.music_late_start
@@ -5282,6 +5293,10 @@ class Handler(BaseHTTPRequestHandler):
                     players = list(music.get("players", [])) + list(scheduler.music_players or [])
                     for slot in music.get("slots", []):
                         players += slot.get("players") or []
+                    # «Ferma tutto» è una musica spenta a mano: il motore non la deve far ripartire.
+                    scheduler.music_off(players)
+                    self.send_json({"ok": True})
+                    return
                 stop_music(players or None)
                 self.send_json({"ok": True})
                 return

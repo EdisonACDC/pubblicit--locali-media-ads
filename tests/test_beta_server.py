@@ -3799,10 +3799,22 @@ class CarellasServerTest(unittest.TestCase):
                     engine.music_tick()
                 self.assertEqual(start.call_count, 1)
                 self.assertEqual(engine.music_override["mode"], "off")
-                # Inizia la fascia dopo: la musica riprende dal palinsesto.
+                # Inizia la fascia dopo (o il blocco successivo del Mix): resta spenta finché non la riaccendi.
                 current["slot"] = second
                 engine.music_tick()
+                engine.music_tick()
+                self.assertEqual(start.call_count, 1)
+                self.assertEqual(engine.music_override["mode"], "off")
+                # Riaccesa a mano: riparte la fascia in corso.
+                engine.music_on()
+                engine.music_tick()
                 self.assertEqual(start.call_count, 2)
+                self.assertIsNone(engine.music_override)
+                # Spenta ieri: oggi il programma riparte da solo.
+                engine.music_off()
+                engine.music_override["day"] = "2000-01-01"
+                engine.music_tick()
+                self.assertEqual(start.call_count, 3)
                 self.assertIsNone(engine.music_override)
                 # Fuori programma: senza scelta non parte niente, con una radio scelta sì e resta accesa.
                 current["slot"] = None
@@ -3828,7 +3840,11 @@ class CarellasServerTest(unittest.TestCase):
         html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
         self.assertIn("'music-off':()=>command('api/music/manual',{action:'off'},'Musica spenta')", html)
         self.assertIn('data-pick="music-on"', html)
-        self.assertIn("if(rt().music_override?.mode==='off')return false;", html)
+        self.assertIn("if(['off','paused'].includes(rt().music_override?.mode))return false;", html)
+        # «Ferma tutto» spegne la musica a mano: il motore non la fa ripartire da solo.
+        with mock.patch.object(app.scheduler, "music_off") as off:
+            self.assertEqual(self.request("/api/music/stop", "POST", {"all": True})[0], 200)
+        off.assert_called_once()
 
     def test_staff_tablet_page_can_only_manage_music_speakers_and_ads(self):
         app = self.app
