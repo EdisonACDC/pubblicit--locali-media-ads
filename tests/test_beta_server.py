@@ -3335,6 +3335,16 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("""<div class="lane">${hourLines.join('')}""", html)
         self.assertIn("['Musica (un colore per fascia)','Musik (eine Farbe pro Zeitraum)']", html)
 
+    def test_short_schedule_blocks_stay_readable(self):
+        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        # Zoom automatico: la fascia più corta resta larga abbastanza; con − e + si cambia a mano.
+        self.assertIn("const autoZoom=Math.max(1,Math.min(6,Math.ceil(46*(H1-H0)/(Math.max(5,shortest)*(S.laneBase||560)))));", html)
+        self.assertIn("'zoom-auto':()=>{S.sel.zoom=null;render()}", html)
+        # Le fasce brevi mostrano iniziali e ora e si allargano al passaggio o quando sono scelte.
+        self.assertIn("narrow=(b-a)/(H1-H0)*zoom<0.1", html)
+        self.assertIn(".lane .mblock.narrow:hover,.lane .mblock.narrow:focus-visible,.lane .mblock.narrow.sel{z-index:6;min-width:170px", html)
+        self.assertIn("['Zoom automatico','Automatischer Zoom']", html)
+
     def test_overnight_schedule(self):
         schedule = [{"days": [6], "start": "22:00", "end": "02:00", "enabled": True}]
         self.assertTrue(self.app.is_schedule_active(schedule, datetime(2026, 9, 13, 23, 0)))
