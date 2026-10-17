@@ -860,7 +860,8 @@ class CarellasServerTest(unittest.TestCase):
         ) as sleep, mock.patch.object(self.app.audio_stop_event, "wait", return_value=False) as wait:
             self.app.play_audio(ad, manual=True)
         probe.assert_called_once_with(self.app.MEDIA_DIR / ad)
-        self.assertEqual([call.args[0] for call in sleep.call_args_list], [0.6, 0.6])
+        # La cassa è già da sola: niente distacco prima dello spot, resta solo l'attesa del ripristino.
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [0.6])
         self.assertAlmostEqual(
             wait.call_args_list[0].args[0],
             42.25 + self.app.SONOS_SPOT_TAIL_GUARD_SECONDS,
@@ -1435,6 +1436,84 @@ class CarellasServerTest(unittest.TestCase):
         block = html[html.index("const DE=new Map(["):html.index("]);", html.index("const DE=new Map(["))].splitlines()[1:]
         rows = [line.rstrip() for line in block if line.strip()]
         self.assertTrue(all(line.endswith(",") for line in rows[:-1]))
+
+    def test_slot_change_waits_out_long_701_and_checks_music_really_plays(self):
+        busy = RuntimeError("UPnP Error 701 received: Transition not available from 192.168.178.12")
+        calls, attempts = [], {"play_media": 0, "media_stop": 0}
+
+        def service(domain, name, payload):
+            calls.append((domain, name, payload))
+            if name in attempts:
+                attempts[name] += 1
+                # Il cambio dalla radio alla playlist resta occupato per quattro tentativi;
+                # anche l'arresto risponde 701 e non deve interrompere i tentativi.
+                if attempts[name] <= 4:
+                    raise busy
+
+        with mock.patch.object(self.app.ha, "service", side_effect=service), mock.patch.object(self.app.time, "sleep"):
+            self.app.play_sonos_media({"entity_id": "media_player.sala", "media_content_type": "playlist",
+                                       "media_content_id": "S:/Pranzo"})
+        self.assertEqual(attempts["play_media"], 5)
+
+        # Il comando è stato accettato ma il Sonos resta fermo: dopo qualche secondo si prova con play.
+        paused = [{"entity_id": "media_player.sala", "state": "paused", "attributes": {}}]
+        playing = [{"entity_id": "media_player.sala", "state": "playing", "attributes": {}}]
+        calls.clear()
+        with mock.patch.object(self.app.ha, "states", side_effect=[paused] * 6 + [playing] * 3),                 mock.patch.object(self.app.ha, "service", side_effect=lambda d, n, p: calls.append((d, n, p))),                 mock.patch.object(self.app.time, "sleep"):
+            self.assertTrue(self.app.ensure_sonos_playing("media_player.sala"))
+        self.assertEqual(calls, [("media_player", "media_play", {"entity_id": "media_player.sala"})])
+        with mock.patch.object(self.app.ha, "states", return_value=paused),                 mock.patch.object(self.app.ha, "service"), mock.patch.object(self.app.time, "sleep"):
+            self.assertFalse(self.app.ensure_sonos_playing("media_player.sala"))
+
+        # Se i Sonos non partono, la fascia lo segnala e si riprova presto, non dopo 5 minuti.
+        original = json.loads(json.dumps(self.app.store.config["music"]))
+        slot = {"id": "pl", "name": "Playlist", "players": ["media_player.sala"], "content_id": "S:/Pranzo",
+                "content_type": "playlist", "volume": 20}
+        engine = self.app.Scheduler()
+        self.app.store.config["music"] = {"enabled": True, "players": ["media_player.sala"], "slots": [slot],
+                                          "schedule": [], "stop_at_end": True, "volume": 25}
+        try:
+            with mock.patch.object(self.app, "active_music_slot", return_value=slot),                     mock.patch.object(self.app.ha, "states", return_value=paused),                     mock.patch.object(self.app.ha, "service"), mock.patch.object(self.app.time, "sleep"):
+                engine.music_tick()
+            self.assertIsNotNone(engine.music_failed_slot_key)
+            wait = engine.music_retry_at - self.app.time.monotonic()
+            self.assertLessEqual(wait, self.app.MUSIC_RETRY_SECONDS)
+            self.assertGreater(wait, 30)
+            self.assertTrue(any("non sono partiti" in item["message"] for item in self.app.store.logs[:5]))
+        finally:
+            self.app.store.config["music"] = original
+
+    def test_music_start_survives_701_on_join_and_volume(self):
+        busy = RuntimeError("UPnP Error 701 received: Transition not available from 192.168.178.12")
+        players = ["media_player.sala", "media_player.terrazza"]
+        states = [{"entity_id": player, "state": "playing",
+                   "attributes": {"group_members": [player], "volume_level": 0.3}} for player in players]
+        failures = {"join": 2, "volume_set": 2}
+        calls = []
+
+        def service(domain, name, payload):
+            calls.append(name)
+            if failures.get(name):
+                failures[name] -= 1
+                raise busy
+
+        selection = {"name": "RTL 102.5 FM", "players": players, "content_id": "FV:2/31",
+                     "content_type": "favorite_item_id", "volume": 25}
+        # Prima il 701 sul raggruppamento o sul volume interrompeva subito «Riavvia la musica».
+        with mock.patch.object(self.app.ha, "states", return_value=states),                 mock.patch.object(self.app.ha, "service", side_effect=service),                 mock.patch.object(self.app.time, "sleep"):
+            self.assertEqual(self.app.start_music(selection), players)
+        self.assertEqual(calls.count("join"), 3)
+        self.assertIn("play_media", calls)
+        # Se Sonos resta occupato, il pannello mostra un messaggio comprensibile.
+        original = json.loads(json.dumps(self.app.store.config["music"]))
+        self.app.store.config["music"]["slots"] = [{"id": "radio", **selection}]
+        try:
+            with mock.patch.object(self.app, "start_music", side_effect=busy):
+                with self.assertRaises(urllib.error.HTTPError) as refused:
+                    self.request("/api/music/start", "POST", {"slot_id": "radio"})
+            self.assertIn("riprova tra qualche secondo", json.loads(refused.exception.read())["error"])
+        finally:
+            self.app.store.config["music"] = original
 
     def test_sonos_source_retries_701_then_succeeds(self):
         calls = []
@@ -2092,6 +2171,100 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(self.calls[-1], ("media_player", "media_play", {
             "entity_id": ["media_player.sala"],
         }))
+
+    def test_spot_starts_at_once_on_existing_music_group(self):
+        ad = "Carellas_Ristorante_Spot_DE_Maschile.mp3"
+        players = ["media_player.sala", "media_player.terrazza", "media_player.bar"]
+        # La musica del locale suona già su questi Sonos, raggruppati con la Terrazza come coordinatore.
+        group = ["media_player.terrazza", "media_player.sala", "media_player.bar"]
+        states = [{"entity_id": player, "state": "playing",
+                   "attributes": {"friendly_name": player, "group_members": group, "volume_level": 0.3}}
+                  for player in players]
+        self.app.store.update({"audio": {"players": players, "ads": [ad], "repeat_count": 1, "volume": 40,
+                                         "transition_seconds": 0}})
+        self.calls.clear()
+        with mock.patch.object(self.app.ha, "states", return_value=states), mock.patch.object(
+            self.app, "probe_media_duration", return_value=20
+        ), mock.patch.object(self.app.time, "sleep"), mock.patch.object(
+            self.app.audio_stop_event, "wait", return_value=False
+        ):
+            self.app.play_audio(ad, manual=True)
+        names = [call[1] for call in self.calls]
+        # Niente distacco e nuovo raggruppamento (secondi di silenzio): lo spot va subito sul coordinatore.
+        self.assertNotIn("unjoin", names[:names.index("play_media")])
+        self.assertNotIn("join", names)
+        play = next(call for call in self.calls if call[1] == "play_media")
+        self.assertEqual(play[2]["entity_id"], "media_player.terrazza")
+        # Tra la dissolvenza e lo spot c'è un solo comando: il volume dello spot.
+        before = self.calls[names.index("play_media") - 1]
+        self.assertEqual(before, ("media_player", "volume_set", {"entity_id": players, "volume_level": 0.4}))
+        self.assertIn(("sonos", "restore", {"entity_id": ["media_player.terrazza"], "with_group": True}), self.calls)
+        # Se il gruppo contiene anche un Sonos non scelto, i diffusori vanno ancora separati.
+        self.assertIsNone(self.app.sonos_group_ready(players, {"media_player.terrazza": group + ["media_player.bagni"]}))
+        self.assertIsNone(self.app.sonos_group_ready(players, {"media_player.sala": ["media_player.sala"],
+                                                               "media_player.bar": ["media_player.bar", "media_player.terrazza"]}))
+        self.assertEqual(self.app.sonos_group_ready(players, {"media_player.terrazza": group}), "media_player.terrazza")
+
+    def test_each_sonos_returns_to_its_own_volume_after_spot(self):
+        ad = "Carellas_Ristorante_Spot_DE_Maschile.mp3"
+        players = ["media_player.sala", "media_player.terrazza", "media_player.bar"]
+        own = {"media_player.sala": 0.35, "media_player.terrazza": 0.25, "media_player.bar": 0.55}
+        self.app.SONOS_VOLUME_MEMORY.clear()
+        # Il volume del Bar è stato scelto dal pannello, ma Home Assistant non lo riporta nello stato.
+        self.request("/api/sonos/volume", "POST", {"entity_id": "media_player.bar", "volume": 55})
+        states = [{"entity_id": player, "state": "playing",
+                   "attributes": {"friendly_name": player, "group_members": players,
+                                  **({} if player == "media_player.bar" else {"volume_level": own[player]})}}
+                  for player in players]
+        self.app.store.update({"audio": {"players": players, "ads": [ad], "repeat_count": 1, "volume": 40,
+                                         "transition_seconds": 3}})
+        self.calls.clear()
+        try:
+            with mock.patch.object(self.app.ha, "states", return_value=states), mock.patch.object(
+                self.app, "probe_media_duration", return_value=20
+            ), mock.patch.object(self.app.time, "sleep"), mock.patch.object(
+                self.app.audio_stop_event, "wait", return_value=False
+            ):
+                self.app.play_audio(ad, manual=True)
+            volumes = [call[2] for call in self.calls if call[1] == "volume_set"]
+            final = {}
+            for payload in volumes[-3:]:
+                for player in payload["entity_id"]:
+                    final[player] = payload["volume_level"]
+            # Dopo lo spot ogni cassa è al suo volume (35, 25, 55), non a un valore uguale per tutte.
+            self.assertEqual(final, own)
+            # Senza musica da riprendere i Sonos tornano comunque al volume di prima.
+            self.calls.clear()
+            self.app.restore_sonos_playback(["media_player.sala"], [], players, own, 3)
+            self.assertIn(("media_player", "volume_set", {"entity_id": ["media_player.bar"], "volume_level": 0.55}), self.calls)
+            self.assertNotIn("media_play", [call[1] for call in self.calls])
+        finally:
+            self.app.SONOS_VOLUME_MEMORY.clear()
+
+    def test_sonos_rejoining_the_music_group_keeps_its_volume(self):
+        states = [
+            {"entity_id": "media_player.sala", "state": "playing",
+             "attributes": {"group_members": ["media_player.sala"], "volume_level": 0.35}},
+            {"entity_id": "media_player.bar", "state": "idle",
+             "attributes": {"group_members": ["media_player.bar"], "volume_level": 0.01}},
+        ]
+        self.app.SONOS_VOLUME_MEMORY.clear()
+        self.app.remember_sonos_volumes({"media_player.bar": 0.55})
+        self.calls.clear()
+        try:
+            levels = self.app.remembered_sonos_volumes(["media_player.sala", "media_player.bar"], 0.25)
+            self.assertEqual(levels, {"media_player.sala": 0.25, "media_player.bar": 0.55})
+            with mock.patch.object(self.app.ha, "states", return_value=states), mock.patch.object(
+                self.app, "SONOS_GROUP_SETTLE_SECONDS", 0
+            ):
+                result = self.app.repair_sonos_group(["media_player.sala", "media_player.bar"], "media_player.sala", levels)
+            self.assertEqual(result["missing"], ["media_player.bar"])
+            # Il Bar rientra con il suo 55, non con il volume della fascia musicale.
+            self.assertIn(("media_player", "volume_set", {"entity_id": ["media_player.bar"], "volume_level": 0.55}), self.calls)
+        finally:
+            self.app.SONOS_VOLUME_MEMORY.clear()
+        source = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/server.py").read_text(encoding="utf-8")
+        self.assertIn("remembered_sonos_volumes(expected, self.music_volume)", source)
 
     def test_only_selected_sonos_are_grouped_and_spot_uses_coordinator(self):
         ad = "Carellas_Ristorante_Spot_DE_Maschile.mp3"

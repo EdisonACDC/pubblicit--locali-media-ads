@@ -70,6 +70,16 @@ SONOS_SPOT_TAIL_GUARD_SECONDS = max(
     0.0, min(float(os.environ.get("CARELLAS_SONOS_SPOT_TAIL_GUARD_SECONDS", "0.4")), 2.0)
 )
 SONOS_QUIET_VOLUME = 0.01
+# Cambio di sorgente (es. dalla radio a una playlist): Sonos risponde 701 finché chiude la sorgente
+# precedente. Si riprova più a lungo e poi si controlla che la musica suoni davvero.
+SONOS_SOURCE_RETRIES = max(1, int(os.environ.get("CARELLAS_SONOS_SOURCE_RETRIES", "5")))
+SONOS_START_CHECK_SECONDS = max(0, int(os.environ.get("CARELLAS_SONOS_START_CHECK_SECONDS", "12")))
+MUSIC_RETRY_SECONDS = max(15, int(os.environ.get("CARELLAS_MUSIC_RETRY_SECONDS", "45")))
+# Ultimo volume scelto per ogni Sonos (cursore del pannello o volume letto prima di uno spot).
+# Serve quando Home Assistant non riporta il volume e quando un Sonos rientra nel gruppo:
+# ogni cassa torna al suo volume invece di un valore fisso uguale per tutte.
+SONOS_VOLUME_MEMORY = {}
+SONOS_VOLUME_MEMORY_LOCK = threading.Lock()
 MAX_UPLOAD = 1024 * 1024 * 1024 * 4
 UPLOAD_CHUNK_SIZE = 4 * 1024 * 1024
 MIN_FREE_AFTER_UPLOAD = 1024 * 1024 * 512
@@ -950,7 +960,7 @@ def prepare_sonos_group(players, force=False):
         store.log("warning", f"Stato gruppo Sonos non leggibile: {error}")
 
     if force or not already_grouped:
-        ha.service("media_player", "join", {
+        sonos_service("media_player", "join", {
             "entity_id": coordinator,
             "group_members": players[1:],
         })
@@ -983,6 +993,19 @@ def sonos_playback_context(players):
         if (item.get("state") in ("playing", "buffering") or group_playing) and coordinator not in resume_targets:
             resume_targets.append(coordinator)
     return snapshot_targets, resume_targets
+
+
+def sonos_group_ready(players, groups):
+    """Coordinatore del gruppo se i Sonos scelti formano già da soli un unico gruppo (di solito quello
+    della musica del locale). Allora lo spot parte subito lì: staccare e riunire i diffusori lasciava
+    qualche secondo di silenzio tra la musica e lo spot."""
+    players = list(dict.fromkeys(players))
+    if len(groups) != 1:
+        return None
+    coordinator, members = next(iter(groups.items()))
+    if coordinator in players and set(members) == set(players):
+        return coordinator
+    return None
 
 
 def sonos_group_topology(players):
@@ -1032,7 +1055,10 @@ def repair_sonos_group(players, preferred_coordinator=None, volume_level=None):
         })
         if SONOS_GROUP_SETTLE_SECONDS > 0:
             time.sleep(SONOS_GROUP_SETTLE_SECONDS)
-        if volume_level is not None:
+        if isinstance(volume_level, dict):
+            # Ogni Sonos riagganciato riprende il proprio volume.
+            set_sonos_volume_levels({player: volume_level[player] for player in missing if player in volume_level})
+        elif volume_level is not None:
             level = max(0.0, min(float(volume_level), 1.0))
             set_sonos_volume_levels({player: level for player in missing})
         # Il coordinatore continua il flusso corrente; i membri appena entrati
@@ -1057,8 +1083,22 @@ def repair_sonos_topology(groups, volume_levels=None):
     return list(dict.fromkeys(repaired)), list(dict.fromkeys(unavailable))
 
 
+def remember_sonos_volumes(levels):
+    with SONOS_VOLUME_MEMORY_LOCK:
+        for player, level in (levels or {}).items():
+            try:
+                SONOS_VOLUME_MEMORY[player] = max(0.0, min(float(level), 1.0))
+            except (TypeError, ValueError):
+                continue
+
+
+def remembered_sonos_volumes(players, fallback):
+    with SONOS_VOLUME_MEMORY_LOCK:
+        return {player: SONOS_VOLUME_MEMORY.get(player, fallback) for player in dict.fromkeys(players)}
+
+
 def sonos_volume_levels(players, fallback=0.25):
-    """Legge i volumi correnti; il fallback evita salti se HA non espone ancora lo stato."""
+    """Legge i volumi correnti; se HA non li riporta usa l'ultimo volume noto di quel Sonos."""
     fallback = max(0.0, min(float(fallback), 1.0))
     try:
         states = {item.get("entity_id"): item for item in ha.states()}
@@ -1067,12 +1107,27 @@ def sonos_volume_levels(players, fallback=0.25):
         states = {}
     levels = {}
     for player in dict.fromkeys(players):
-        raw = states.get(player, {}).get("attributes", {}).get("volume_level", fallback)
+        with SONOS_VOLUME_MEMORY_LOCK:
+            known = SONOS_VOLUME_MEMORY.get(player, fallback)
+        raw = states.get(player, {}).get("attributes", {}).get("volume_level", known)
         try:
             levels[player] = max(0.0, min(float(raw), 1.0))
         except (TypeError, ValueError):
             levels[player] = fallback
     return levels
+
+
+def sonos_service(domain, name, payload, retries=None):
+    """Comando Sonos che, se il diffusore sta ancora cambiando sorgente (UPnP 701), aspetta e riprova."""
+    retries = max(1, int(retries or SONOS_SOURCE_RETRIES))
+    for attempt in range(retries):
+        try:
+            return ha.service(domain, name, payload)
+        except Exception as error:
+            if not sonos_transition_busy(error) or attempt + 1 >= retries:
+                raise
+            store.log("warning", f"Sonos ancora occupato ({name}): attendo e riprovo")
+            time.sleep(1.5 * (attempt + 1))
 
 
 def set_sonos_volume_levels(levels):
@@ -1081,7 +1136,7 @@ def set_sonos_volume_levels(levels):
     for player, level in levels.items():
         grouped.setdefault(round(max(0.0, min(float(level), 1.0)), 3), []).append(player)
     for level, players in grouped.items():
-        ha.service("media_player", "volume_set", {
+        sonos_service("media_player", "volume_set", {
             "entity_id": players,
             "volume_level": level,
         })
@@ -1133,10 +1188,15 @@ def restore_sonos_playback(snapshot_targets, resume_targets, selected_players=No
         raise last_error
     if SONOS_RESTORE_SETTLE_SECONDS > 0:
         time.sleep(SONOS_RESTORE_SETTLE_SECONDS)
+    if not resume_targets and volume_levels:
+        # Nessuna musica da riprendere: i Sonos tornano comunque al volume di prima, non a quello dello spot.
+        set_sonos_volume_levels(volume_levels)
     if resume_targets:
         selected_players = list(dict.fromkeys(selected_players or snapshot_targets))
         if volume_levels and transition_seconds > 0:
             set_sonos_volume_levels({player: SONOS_QUIET_VOLUME for player in selected_players})
+        elif volume_levels:
+            set_sonos_volume_levels(volume_levels)
         ha.service("media_player", "media_play", {"entity_id": resume_targets})
         if volume_levels and transition_seconds > 0:
             fade_sonos(
@@ -1191,6 +1251,7 @@ def play_audio(filename=None, manual=False, players=None):
     resume_targets = []
     stopped = False
     previous_volumes = sonos_volume_levels(players, 0.25)
+    remember_sonos_volumes(previous_volumes)
     try:
         # La funzione Sonos announce avvia un AudioClip indipendente su ogni
         # diffusore e non garantisce la sincronizzazione. Salviamo quindi lo
@@ -1204,13 +1265,15 @@ def play_audio(filename=None, manual=False, players=None):
         })
         snapshot_created = True
         fade_sonos(players, SONOS_QUIET_VOLUME, transition, previous_volumes)
-        ha.service("media_player", "unjoin", {"entity_id": players})
-        if SONOS_GROUP_SETTLE_SECONDS > 0:
-            time.sleep(SONOS_GROUP_SETTLE_SECONDS)
-        coordinator = prepare_sonos_group(players, force=True)
+        coordinator = sonos_group_ready(players, original_groups)
+        if not coordinator:
+            ha.service("media_player", "unjoin", {"entity_id": players})
+            if SONOS_GROUP_SETTLE_SECONDS > 0:
+                time.sleep(SONOS_GROUP_SETTLE_SECONDS)
+            coordinator = prepare_sonos_group(players, force=True)
+        # I Sonos sono già a volume minimo dopo la dissolvenza: lo spot parte subito al suo volume.
         quiet_levels = {player: SONOS_QUIET_VOLUME for player in players}
         spot_levels = {player: volume / 100 for player in players}
-        set_sonos_volume_levels(quiet_levels)
 
         for index in range(repetitions):
             if audio_stop_event.is_set():
@@ -1283,10 +1346,11 @@ def sonos_transition_busy(error):
     return "701" in message and "transition not available" in message
 
 
-def play_sonos_media(payload, retries=3):
+def play_sonos_media(payload, retries=None):
     """Avvia una sorgente Sonos e gestisce la transizione UPnP 701 ancora occupata."""
+    retries = max(1, int(retries or SONOS_SOURCE_RETRIES))
     last_error = None
-    for attempt in range(max(1, int(retries))):
+    for attempt in range(retries):
         try:
             ha.service("media_player", "play_media", payload)
             return
@@ -1295,15 +1359,48 @@ def play_sonos_media(payload, retries=3):
             if not sonos_transition_busy(error) or attempt + 1 >= retries:
                 raise
             store.log("warning", "Sonos ancora occupato nel cambio sorgente: nuovo tentativo controllato")
-            ha.service("media_player", "media_stop", {"entity_id": payload["entity_id"]})
-            time.sleep(1.2 * (attempt + 1))
+            try:
+                ha.service("media_player", "media_stop", {"entity_id": payload["entity_id"]})
+            except Exception as stop_error:
+                # Anche l'arresto può rispondere 701 mentre Sonos cambia sorgente: si aspetta e si riprova.
+                store.log("warning", f"Arresto transizione Sonos non riuscito: {stop_error}")
+            time.sleep(1.5 * (attempt + 1))
     raise last_error
 
 
-def select_sonos_source(entity_id, source, retries=3):
+def sonos_playing(entity_id):
+    try:
+        item = next((item for item in ha.states() if item.get("entity_id") == entity_id), None)
+    except Exception:
+        return None
+    # Stato non leggibile: non si può verificare, si considera partito.
+    if not item or item.get("state") in (None, "unavailable", "unknown"):
+        return None
+    return item.get("state") in ("playing", "buffering")
+
+
+def ensure_sonos_playing(entity_id, checks=None):
+    """Dopo il comando controlla che il Sonos suoni davvero: se è fermo prova a ripartire con play."""
+    checks = SONOS_START_CHECK_SECONDS if checks is None else checks
+    for second in range(checks):
+        playing = sonos_playing(entity_id)
+        if playing is None or playing:
+            return True
+        if second in (4, 8):
+            try:
+                ha.service("media_player", "media_play", {"entity_id": entity_id})
+            except Exception as error:
+                if not sonos_transition_busy(error):
+                    store.log("warning", f"Ripartenza Sonos non riuscita: {error}")
+        time.sleep(1)
+    return checks == 0 or sonos_playing(entity_id) is not False
+
+
+def select_sonos_source(entity_id, source, retries=None):
     """Seleziona una sorgente nativa Sonos con recupero dall'errore UPnP 701."""
+    retries = max(1, int(retries or SONOS_SOURCE_RETRIES))
     last_error = None
-    for attempt in range(max(1, int(retries))):
+    for attempt in range(retries):
         try:
             ha.service("media_player", "select_source", {
                 "entity_id": entity_id,
@@ -1320,7 +1417,7 @@ def select_sonos_source(entity_id, source, retries=3):
                 ha.service("media_player", "media_stop", {"entity_id": entity_id})
             except Exception as stop_error:
                 store.log("warning", f"Arresto transizione Sonos non riuscito: {stop_error}")
-            time.sleep(1.2 * (attempt + 1))
+            time.sleep(1.5 * (attempt + 1))
     raise last_error
 
 
@@ -1372,6 +1469,9 @@ def start_music(selection=None, fade_in=False):
                 })
         else:
             play_sonos_media(payload)
+        title = selection.get("name") or selection.get("title") or content_id
+        if not ensure_sonos_playing(coordinator):
+            raise RuntimeError(f"I Sonos non sono partiti con «{title}»: riprovo tra poco")
     except Exception:
         # Se il cambio non riesce, non lasciare i diffusori muti: prova a
         # riprendere il flusso che Sonos stava già eseguendo e il suo volume.
@@ -2604,7 +2704,8 @@ class Scheduler(threading.Thread):
             except Exception as error:
                 store.log("error", f"Avvio musica non riuscito: {error}")
                 self.music_failed_slot_key = slot_key
-                self.music_retry_at = time.monotonic() + 300
+                # Prima si riprovava dopo 5 minuti: troppo silenzio nel locale.
+                self.music_retry_at = time.monotonic() + MUSIC_RETRY_SECONDS
                 if previous_selection:
                     try:
                         self.music_players = start_music(previous_selection, fade_in=True)
@@ -2648,9 +2749,15 @@ class Scheduler(threading.Thread):
                 slot.get("players") or cfg.get("players") or []
             ))
             try:
-                result = repair_sonos_group(expected, self.music_coordinator, self.music_volume)
+                # Un Sonos rientrato nel gruppo riprende il suo ultimo volume, non quello della fascia.
+                result = repair_sonos_group(expected, self.music_coordinator,
+                                            remembered_sonos_volumes(expected, self.music_volume))
                 if result["coordinator"]:
                     self.music_coordinator = result["coordinator"]
+                if not result["missing"]:
+                    # Gruppo a posto: aggiorna i volumi noti, anche se cambiati dall'app Sonos.
+                    remember_sonos_volumes(sonos_volume_levels(
+                        [player for player in expected if player not in result["unavailable"]], self.music_volume))
                 issue = tuple(sorted(result["unavailable"]))
                 if result["missing"]:
                     store.log("warning", "Sonos riagganciati automaticamente: " + ", ".join(result["missing"]))
@@ -3902,6 +4009,7 @@ class Handler(BaseHTTPRequestHandler):
                     raise RuntimeError("Altoparlante Sonos non valido")
                 volume = max(0, min(int(body.get("volume", 0)), 100))
                 ha.service("media_player", "volume_set", {"entity_id": entity_id, "volume_level": volume / 100})
+                remember_sonos_volumes({entity_id: volume / 100})
                 self.send_json({"ok": True, "volume": volume})
                 return
             if path == "/api/sonos/refresh":
@@ -3935,7 +4043,13 @@ class Handler(BaseHTTPRequestHandler):
                             and (slot.get("players") or music.get("players"))
                         ), None)
                     selection = selection or music
-                start_music(selection)
+                try:
+                    start_music(selection)
+                except Exception as error:
+                    if sonos_transition_busy(error):
+                        raise RuntimeError("Il Sonos sta ancora cambiando sorgente e non risponde: "
+                                           "riprova tra qualche secondo") from None
+                    raise
                 selected = selection or store.config["music"]
                 self.send_json({
                     "ok": True,
