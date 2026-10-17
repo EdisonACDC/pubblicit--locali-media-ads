@@ -1011,6 +1011,44 @@ class CarellasServerTest(unittest.TestCase):
             "source": "Radio Italia Anni 60",
         }), self.calls)
 
+    def test_restart_music_follows_automatic_mix(self):
+        # «Riavvia la musica» con il Mix automatico acceso: riparte il blocco del mix su tutte le sue casse,
+        # non la prima fascia del Palinsesto (che suonava su 4 casse e il motore non lo sapeva).
+        app = self.app
+        all_players = [f"media_player.cassa_{n}" for n in range(10)]
+        block = {"id": "mix-2026-10-17-1170", "name": "Ristorante", "title": "Ristorante", "content_id": "FV:2/3",
+                 "content_type": "favorite_item_id", "players": all_players, "volume": 25, "mix": True}
+        palinsesto = {"id": "cocciante", "name": "Mix Cocciante und Raf", "players": all_players[:4],
+                      "content_id": "FV:2/8", "content_type": "favorite_item_id", "volume": 30, "enabled": True,
+                      "days": [0, 1, 2, 3, 4, 5, 6], "start": "00:00", "duration_minutes": 1439}
+        original = json.loads(json.dumps(app.store.config["music"]))
+        engine = app.scheduler
+        try:
+            app.store.config["music"] = {"enabled": True, "players": all_players, "slots": [palinsesto],
+                                         "schedule": [], "volume": 25}
+            engine.music_slot_key, engine.music_selection = "vecchia", dict(block)
+            engine.music_override = {"mode": "paused", "slot_key": "vecchia", "name": "Ristorante"}
+            with mock.patch.object(app, "mix_settings", return_value={"enabled": True, "players": all_players}), \
+                    mock.patch.object(app, "active_mix_slot", return_value=dict(block)), \
+                    mock.patch.object(app, "start_music", return_value=all_players) as start:
+                status, payload = self.request("/api/music/start", "POST", {"scheduled": True})
+                self.assertEqual(status, 200)
+                self.assertEqual(payload["source"], "Ristorante")
+                start.assert_not_called()
+                self.assertIsNone(engine.music_override)
+                self.assertIsNone(engine.music_slot_key)
+                # Al giro successivo il motore fa ripartire il blocco del mix e lo segue.
+                with mock.patch.object(app.ha, "states", return_value=[]), mock.patch.object(app.time, "sleep"):
+                    engine.music_tick()
+            start.assert_called_once()
+            self.assertEqual(start.call_args.args[0]["name"], "Ristorante")
+            self.assertEqual(start.call_args.args[0]["players"], all_players)
+            self.assertEqual(engine.music_slot_id, block["id"])
+        finally:
+            app.store.config["music"] = original
+            engine.music_override = None
+            engine._forget_music()
+
     def test_music_start_uses_play_media_for_native_sonos_playlist(self):
         self.app.store.update({"music": {
             "players": ["media_player.sala"],
