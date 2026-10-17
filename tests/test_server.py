@@ -3177,6 +3177,56 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("${mixOn?mixBlocks(d):''}", html)
         self.assertIn("['Mix automatico','Automatischer Mix']", html)
 
+    def test_main_speaker_leads_the_group_and_dead_member_is_skipped(self):
+        app = self.app
+        app.SONOS_UNRESPONSIVE.clear()
+        music = app.store.config["music"]
+        saved_leader = music.get("leader")
+        players = ["media_player.terrazza", "media_player.sala", "media_player.bar"]
+        states = [{"entity_id": p, "state": "playing", "attributes": {"group_members": [p], "volume_level": 0.3}}
+                  for p in players]
+        calls = []
+        try:
+            # La Sala è la cassa principale: guida il gruppo anche se nella fascia è la seconda.
+            music["leader"] = "media_player.sala"
+            with mock.patch.object(app.ha, "states", return_value=states),                     mock.patch.object(app.ha, "service", side_effect=lambda d, n, p: calls.append((n, p))),                     mock.patch.object(app.time, "sleep"):
+                result = app.start_music({"name": "RTL", "players": players, "content_id": "FV:2/9",
+                                          "content_type": "favorite_item_id", "volume": 25})
+            self.assertEqual(result[0], "media_player.sala")
+            join = next(p for n, p in calls if n == "join")
+            self.assertEqual(join["entity_id"], "media_player.sala")
+            play = next(p for n, p in calls if n == "play_media")
+            self.assertEqual(play["entity_id"], "media_player.sala")
+            # Il Bar è appena stato spento (HA lo mostra ancora acceso): il join fallisce, viene saltato
+            # per qualche minuto e il controllo successivo non riprova (prima si bloccava ogni volta).
+            group = [{"entity_id": "media_player.sala", "state": "playing",
+                      "attributes": {"group_members": ["media_player.sala", "media_player.terrazza"]}},
+                     {"entity_id": "media_player.terrazza", "state": "playing",
+                      "attributes": {"group_members": ["media_player.sala", "media_player.terrazza"]}},
+                     {"entity_id": "media_player.bar", "state": "playing", "attributes": {"group_members": ["media_player.bar"]}}]
+            attempts = []
+
+            def service(domain, name, payload):
+                attempts.append(name)
+                if name == "join":
+                    raise RuntimeError("Home Assistant 500: Unable to connect to 192.168.178.20")
+
+            with mock.patch.object(app.ha, "states", return_value=group),                     mock.patch.object(app.ha, "service", side_effect=service), mock.patch.object(app.time, "sleep"):
+                first = app.repair_sonos_group(players, "media_player.sala")
+                second = app.repair_sonos_group(players, "media_player.sala")
+            self.assertEqual(first["missing"], [])
+            self.assertIn("media_player.bar", first["unavailable"])
+            self.assertEqual(attempts.count("join"), 1)
+            self.assertNotIn("media_play", attempts)
+            self.assertIn("media_player.bar", second["unavailable"])
+            self.assertEqual(app.SONOS_GROUP_CHECK_SECONDS, 8)
+        finally:
+            music["leader"] = saved_leader
+            app.SONOS_UNRESPONSIVE.clear()
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        self.assertIn('data-bind="music.leader"', html)
+        self.assertIn("['Cassa principale (guida il gruppo)','Hauptlautsprecher (führt die Gruppe)']", html)
+
     def test_overnight_schedule(self):
         schedule = [{"days": [6], "start": "22:00", "end": "02:00", "enabled": True}]
         self.assertTrue(self.app.is_schedule_active(schedule, datetime(2026, 9, 13, 23, 0)))
