@@ -2499,6 +2499,20 @@ class CarellasServerTest(unittest.TestCase):
         for label in ("Ken Burns diagonale", "Diagonaler Ken-Burns-Effekt", "Panoramica verso l’alto", "Schwenk nach oben"):
             self.assertIn(label, html)
 
+    def test_today_page_shows_real_sonos_state(self):
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        # Fascia attiva ma Sonos fermi: la pagina lo dice e propone di riavviare la musica.
+        self.assertIn("function musicStoppedNow()", html)
+        self.assertIn("if(musicStoppedNow())list.push(", html)
+        self.assertIn("const musicOn=(r.music_active&&musicPlayersNow().some(sonosPlaying))", html)
+        # La TV in onda non fa risultare "Suona" una zona con i Sonos fermi.
+        self.assertIn("const st=zoneSonosStatus(z),tv=zoneTvOnAir(z)", html)
+        # Il conteggio usa i Sonos della musica, non quelli degli spot.
+        self.assertIn("Lf('{0} di {1} Sonos',playingSonos.length,musicSonos.length)", html)
+        for label in ("['TV in onda','TV läuft']", "['Riavvia la musica','Musik neu starten']",
+                      "['Musica ferma: {0}','Musik gestoppt: {0}']"):
+            self.assertIn(label, html)
+
     def test_spot_history_records_played_stopped_and_failed_spots(self):
         ad = "history-test.mp3"
         (self.app.MEDIA_DIR / ad).write_bytes(b"audio")
@@ -3235,6 +3249,58 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("""<div class="tl-block music ${narrow?'narrow':''} """, html)
         self.assertIn("tw.onscroll=()=>{S.tlScroll=tw.scrollLeft}", html)
         self.assertIn("['Musica (mix)','Musik (Mix)']", html)
+
+    def test_music_switched_on_and_off_by_hand(self):
+        app = self.app
+        original = json.loads(json.dumps(app.store.config["music"]))
+        first = {"id": "pranzo", "name": "Pranzo", "players": ["media_player.sala"], "content_id": "FV:2/1",
+                 "content_type": "favorite_item_id", "volume": 25, "start": "10:00", "duration_minutes": 240, "days": [0]}
+        second = {**first, "id": "sera", "name": "Sera", "content_id": "FV:2/2", "start": "14:00"}
+        engine = app.Scheduler()
+        app.store.config["music"] = {"enabled": True, "players": ["media_player.sala"], "slots": [first, second],
+                                     "schedule": [], "stop_at_end": True, "volume": 25, "transition_seconds": 0}
+        try:
+            current = {"slot": first}
+            with mock.patch.object(app, "active_music_slot", side_effect=lambda *a, **k: current["slot"]),                     mock.patch.object(app, "start_music", return_value=["media_player.sala"]) as start,                     mock.patch.object(app, "stop_music") as stop, mock.patch.object(app.time, "sleep"):
+                engine.music_tick()
+                self.assertEqual(start.call_count, 1)
+                # Spenta a mano durante la fascia: si ferma e il motore non la fa ripartire.
+                engine.music_off()
+                stop.assert_called_once()
+                for _ in range(3):
+                    engine.music_tick()
+                self.assertEqual(start.call_count, 1)
+                self.assertEqual(engine.music_override["mode"], "off")
+                # Inizia la fascia dopo: la musica riprende dal palinsesto.
+                current["slot"] = second
+                engine.music_tick()
+                self.assertEqual(start.call_count, 2)
+                self.assertIsNone(engine.music_override)
+                # Fuori programma: senza scelta non parte niente, con una radio scelta sì e resta accesa.
+                current["slot"] = None
+                engine.music_tick()
+                with self.assertRaisesRegex(RuntimeError, "scegli cosa suonare"):
+                    engine.music_on()
+                stop.reset_mock()
+                engine.music_on({"name": "Radio Kiss Kiss Italia", "content_id": "http://kiss", "content_type": "radio_url",
+                                 "players": ["media_player.sala"], "volume": 30})
+                self.assertEqual(start.call_args.args[0]["content_id"], "http://kiss")
+                engine.music_tick()
+                engine.music_tick()
+                stop.assert_not_called()
+                self.assertEqual(engine.music_override["mode"], "on")
+                # Spenta di nuovo a mano.
+                engine.music_off()
+                stop.assert_called_once()
+        finally:
+            app.store.config["music"] = original
+        with mock.patch.object(app.scheduler, "music_off") as off:
+            self.assertEqual(self.request("/api/music/manual", "POST", {"action": "off"})[0], 200)
+        off.assert_called_once()
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        self.assertIn("'music-off':()=>command('api/music/manual',{action:'off'},'Musica spenta')", html)
+        self.assertIn('data-pick="music-on"', html)
+        self.assertIn("if(rt().music_override?.mode==='off')return false;", html)
 
     def test_overnight_schedule(self):
         schedule = [{"days": [6], "start": "22:00", "end": "02:00", "enabled": True}]
