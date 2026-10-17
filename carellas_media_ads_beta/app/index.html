@@ -1256,7 +1256,7 @@ function wizTest(){
   const iss=issues(),c=cfg();
   return `${wizHead(6,L('Proviamo tutto insieme'),L('Fai una prova reale prima di lasciare il pannello acceso.'))}
     <div class="col" style="max-width:820px">
-      <section class="card row" style="justify-content:space-between"><div><strong>${esc(L('Spot'))}</strong><div class="small muted">${esc(namesOf(c.audio.players)||L('nessun Sonos'))}</div></div><button class="btn btn-primary" type="button" data-act="spot-now" ${(c.audio.ads||[]).length&&(c.audio.players||[]).length?'':'disabled'}>${icon('play',14)}${esc(L('Prova uno spot'))}</button></section>
+      <section class="card row" style="justify-content:space-between"><div><strong>${esc(L('Spot'))}</strong><div class="small muted">${esc(namesOf(c.audio.players)||L('nessun Sonos'))}</div></div><button class="btn btn-primary" type="button" data-act="spot-test" ${(c.audio.ads||[]).length&&(c.audio.players||[]).length?'':'disabled'}>${icon('play',14)}${esc(L('Prova uno spot'))}</button></section>
       <section class="card row" style="justify-content:space-between"><div><strong>${esc(L('Musica'))}</strong><div class="small muted">${esc(Lf('{0} fasce',(c.music.slots||[]).length))}</div></div><button class="btn btn-ghost" type="button" data-act="music-start">${icon('play',14)}${esc(L('Avvia la musica del palinsesto'))}</button></section>
       <section class="card row" style="justify-content:space-between"><div><strong>${esc(L('Player TV'))}</strong><div class="small muted">${esc(rt().player_url||'')}</div></div><button class="btn btn-ghost" type="button" data-act="open-player">${esc(L('Apri Player TV'))}</button></section>
       ${iss.length?`<div class="notice warn">${esc(Lf('Ci sono ancora {0} cose da sistemare: le trovi nella pagina Oggi.',iss.length))}</div>`:`<div class="notice ok">${esc(L('Tutto pronto.'))}</div>`}
@@ -1578,7 +1578,8 @@ async function uploadFiles(files){
 const ACTIONS={
   save:()=>save(),discard:()=>discard(),
   lang:async el=>{S.lang=el.dataset.v;render();try{await post('api/config',{language:S.lang});S.state.config.language=S.lang;if(!isDirty()){S.draft.language=S.lang;S.saved=JSON.stringify(S.draft)}else S.draft.language=S.lang}catch(e){toast(e.message,true)}},
-  'spot-now':()=>command('api/test/audio',{name:rt().next_spot||cfg().audio.ads?.[0]},'Spot avviato'),
+  'spot-now':()=>command('api/test/audio',{name:rt().next_spot||cfg().audio.ads?.[0],next:true},'Spot avviato'),
+  'spot-test':()=>command('api/test/audio',{name:rt().next_spot||cfg().audio.ads?.[0]},'Spot di prova avviato'),
   'spot-skip':()=>command('api/audio/skip',{},'Spot saltato: si riparte dal prossimo intervallo'),
   'spot-stop':()=>command('api/audio/stop',{},'Arresto dello spot e ripristino della musica'),
   pause:el=>{let v=el.dataset.v;if(v==='today'){const w=openWindows(todayIdx()),end=w.length?w.at(-1)[1]:1440;v=Math.max(1,Math.round(end-nowMin()))}command('api/audio/pause',{minutes:+v},+v?'Pubblicità in pausa':'Pubblicità ripresa')},
@@ -1754,7 +1755,7 @@ function afterRender(){
    Traduzioni tedesche (IT → DE)
    ========================================================================== */
 const DE=new Map([
-['{0} offline','{0} offline'],['Oggi','Heute'],['Palinsesto','Programm'],['Zone','Zonen'],['Tutte le zone','Alle Zonen'],['Nuova zona','Neue Zone'],['Contenuti','Inhalte'],['Registro','Protokoll'],['Impostazioni','Einstellungen'],['Configurazione guidata','Geführte Einrichtung'],['Altro','Mehr'],
+['{0} offline','{0} offline'],['C’è già uno spot in onda: aspetta che finisca','Es läuft schon ein Spot: warte, bis er zu Ende ist'],['Oggi','Heute'],['Palinsesto','Programm'],['Zone','Zonen'],['Tutte le zone','Alle Zonen'],['Nuova zona','Neue Zone'],['Contenuti','Inhalte'],['Registro','Protokoll'],['Impostazioni','Einstellungen'],['Configurazione guidata','Geführte Einrichtung'],['Altro','Mehr'],
 ['Modifiche non salvate','Ungespeicherte Änderungen'],['Modifiche salvate','Änderungen gespeichert'],['Motore attivo','Steuerung aktiv'],['Home Assistant non raggiungibile','Home Assistant nicht erreichbar'],['Home Assistant non risponde','Home Assistant antwortet nicht'],['Annulla','Abbrechen'],['Salva','Speichern'],['Modifiche annullate','Änderungen verworfen'],['Impossibile caricare il pannello','Panel kann nicht geladen werden'],['risposta non valida','ungültige Antwort'],
 ['Ora in onda','Jetzt auf Sendung'],['aperto {0}','geöffnet {0}'],['chiuso oggi','heute geschlossen'],['Pausa pubblicità 1 ora','Werbung 1 Stunde pausieren'],['Riprendi pubblicità','Werbung fortsetzen'],['Ferma tutto','Alles stoppen'],['Riproduzione attuale','Aktuelle Wiedergabe'],
 ['Vai alla sezione…','Zum Abschnitt…'],['Su quali TV va questo canale','Auf welchen TVs läuft dieser Kanal'],['Lo mostrano: {0}','Angezeigt auf: {0}'],['Nessuna TV mostra ancora questo canale.','Noch kein TV zeigt diesen Kanal.'],['Aggiungi una TV','TV hinzufügen'],['Ogni TV accede al Player con il suo utente e mostra il canale scelto qui.','Jeder TV meldet sich mit seinem Benutzer im Player an und zeigt den hier gewählten Kanal.'],['Password e accessi','Passwörter und Zugänge'],['accesso disattivato','Zugang deaktiviert'],['Canale mostrato da {0}','Kanal auf {0}'],['Nuova TV aggiunta: scegli la password e salva','Neuer TV hinzugefügt: Passwort wählen und speichern'],
