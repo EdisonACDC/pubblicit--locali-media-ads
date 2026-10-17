@@ -3641,6 +3641,80 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn('data-pick="music-on"', html)
         self.assertIn("if(rt().music_override?.mode==='off')return false;", html)
 
+    def test_staff_tablet_page_can_only_manage_music_speakers_and_ads(self):
+        app = self.app
+        port = self.remote_server()
+        app.store.update({"remote_admin": {"enabled": True, "users": [
+            {"username": "carellas", "password": "Pizza-Forno-2026"},
+            {"username": "sala", "password": "Tablet-Bistro-2026", "role": "staff"},
+        ]}})
+        self.assertEqual([u["role"] for u in app.store.config["remote_admin"]["users"]], ["admin", "staff"])
+        _, _, token = self.remote_login(port, "sala", "Tablet-Bistro-2026")
+        staff = {"Cookie": f"carellas_admin={token}"}
+        # Dopo il login l'operatore vede la pagina per il tablet, non il pannello.
+        response, data = self.remote_call(port, "/", headers=staff)
+        self.assertEqual(response.status, 200)
+        self.assertIn("api/staff/state", data.decode())
+        self.assertNotIn("pageImpostazioni", data.decode())
+        response, data = self.remote_call(port, "/api/staff/state", headers=staff)
+        self.assertEqual(response.status, 200)
+        text = data.decode()
+        for secret in ("password_hash", "session_secret", "remote_admin", "browser_player", "iptv"):
+            self.assertNotIn(secret, text)
+        state = json.loads(text)
+        self.assertIn("sonos", state)
+        self.assertIn("next_spot", state["runtime"])
+        # Tutto il resto è bloccato.
+        for path in ("/api/state", "/classic", "/api/spots/history"):
+            self.assertEqual(self.remote_call(port, path, headers=staff)[0].status, 403)
+        language = app.store.config.get("language")
+        self.assertEqual(self.remote_call(port, "/api/config", "POST", body={"language": "de"}, headers=staff)[0].status, 403)
+        self.assertEqual(app.store.config.get("language"), language)
+        self.assertEqual(self.remote_call(port, "/api/media/x.mp3", "DELETE", headers=staff)[0].status, 403)
+        # Musica, casse e pubblicità sì.
+        self.assertEqual(self.remote_call(port, "/api/sonos/volume", "POST", body={"entity_id": "media_player.sala", "volume": 30},
+                                          headers=staff)[0].status, 200)
+        with mock.patch.object(app.scheduler, "music_off") as off:
+            self.assertEqual(self.remote_call(port, "/api/music/manual", "POST", body={"action": "off"}, headers=staff)[0].status, 200)
+        off.assert_called_once()
+        with mock.patch.object(app.scheduler, "pause_audio", return_value=0) as pause:
+            self.assertEqual(self.remote_call(port, "/api/audio/pause", "POST", body={"minutes": 30}, headers=staff)[0].status, 200)
+        pause.assert_called_once_with(30)
+        # L'amministratore vede ancora tutto; sulla rete locale la pagina c'è anche come anteprima.
+        _, _, admin_token = self.remote_login(port, "carellas", "Pizza-Forno-2026")
+        self.assertEqual(self.remote_call(port, "/api/state", headers={"Cookie": f"carellas_admin={admin_token}"})[0].status, 200)
+        with urllib.request.urlopen(self.base + "/operatori") as response:
+            self.assertIn("api/staff/state", response.read().decode())
+        app.SONOS_MANUAL_VOLUMES.clear()
+        app.SONOS_MANUAL_FILE.unlink(missing_ok=True)
+        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        self.assertIn("data-bind=\"${p}.role\"", html)
+
+    def test_website_event_image_fills_the_screen(self):
+        commands = []
+
+        def fake_run(command, **kwargs):
+            commands.append(command)
+            Path(command[-1]).write_bytes(b"jpg")
+
+        target = self.app.MEDIA_DIR / "Evento_test_immagine.jpg"
+        try:
+            for aspect in (2560 / 1439, 1.0):
+                commands.clear()
+                with mock.patch.object(self.app, "image_aspect", return_value=aspect),                         mock.patch.object(self.app.subprocess, "run", side_effect=fake_run):
+                    self.app.compose_event_slide([Path("immagine.jpg")], target)
+                filters = " ".join(commands[0])
+                if aspect > 1.4:
+                    # Immagine orizzontale del sito: riempie tutto lo schermo, senza bande sfocate.
+                    self.assertIn("force_original_aspect_ratio=increase,crop=1920:1080", filters)
+                    self.assertNotIn("boxblur", filters)
+                else:
+                    # Immagine quadrata: resta intera sopra lo sfondo sfocato.
+                    self.assertIn("boxblur", filters)
+                    self.assertIn("force_original_aspect_ratio=decrease", filters)
+        finally:
+            target.unlink(missing_ok=True)
+
     def test_overnight_schedule(self):
         schedule = [{"days": [6], "start": "22:00", "end": "02:00", "enabled": True}]
         self.assertTrue(self.app.is_schedule_active(schedule, datetime(2026, 9, 13, 23, 0)))
