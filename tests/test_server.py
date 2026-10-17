@@ -3457,6 +3457,46 @@ class CarellasServerTest(unittest.TestCase):
         for marker in ("L('Spot oggi')", "L('Prossimo cambio')", "L('La giornata')", 'class="tl-block music', "data-tl-wrap"):
             self.assertIn(marker, html)
 
+    def test_operators_remove_spots_only_for_today(self):
+        app = self.app
+        app.SPOTS_EXCLUDED.clear()
+        port = self.remote_server()
+        saved_zones = json.loads(json.dumps(app.store.config.get("zones", [])))
+        saved_audio = json.loads(json.dumps(app.store.config["audio"]))
+        players = ["media_player.sala", "media_player.terrazza"]
+        try:
+            app.store.update({"zones": [{"id": "terrazza", "name": "Terrazza", "players": ["media_player.terrazza"]}],
+                              "audio": {"players": players},
+                              "remote_admin": {"enabled": True, "users": [
+                                  {"username": "bistro", "password": "Pizza-Sera-2026", "role": "staff"}]}})
+            _, _, token = self.remote_login(port, "bistro", "Pizza-Sera-2026")
+            staff = {"Cookie": f"carellas_admin={token}"}
+            # Anche se l'operatore non lo chiede, dal tablet vale solo per oggi.
+            response, _ = self.remote_call(port, "/api/zone/spots", "POST", body={"zone_id": "terrazza", "on": False}, headers=staff)
+            self.assertEqual(response.status, 200)
+            self.assertEqual(app.store.config["audio"]["players"], players)  # configurazione invariata
+            self.assertEqual(app.spots_excluded_players(), {"media_player.terrazza"})
+            self.assertTrue(any("Spot tolti per oggi nella zona Terrazza da bistro" in item["message"] for item in app.store.logs[:3]))
+            # Lo spot automatico va solo in Sala.
+            with mock.patch.object(app, "available_sonos_players", side_effect=lambda p: list(p)) as available,                     mock.patch.object(app, "audio_playback_lock") as lock:
+                lock.acquire.return_value = False
+                with self.assertRaises(RuntimeError):
+                    app.play_audio("spot.mp3", manual=True)
+            self.assertEqual(available.call_args_list[0].args[0], ["media_player.sala"])
+            # Domani la zona torna come l'ha impostata l'amministratore.
+            app.SPOTS_EXCLUDED["media_player.terrazza"] = "2000-01-01"
+            self.assertEqual(app.spots_excluded_players(), set())
+            # Dal pannello amministrativo il cambio resta per sempre.
+            self.assertEqual(self.request("/api/zone/spots", "POST", {"zone_id": "terrazza", "on": False})[0], 200)
+            self.assertEqual(app.store.config["audio"]["players"], ["media_player.sala"])
+        finally:
+            app.SPOTS_EXCLUDED.clear()
+            app.store.update({"zones": saved_zones, "audio": saved_audio})
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/operatori.html").read_text(encoding="utf-8")
+        self.assertIn("on:!spotsOnIn(z),today:true", html)
+        panel = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        self.assertIn("Lf('Spot tolti per oggi: {0}'", panel)
+
     def test_overnight_schedule(self):
         schedule = [{"days": [6], "start": "22:00", "end": "02:00", "enabled": True}]
         self.assertTrue(self.app.is_schedule_active(schedule, datetime(2026, 9, 13, 23, 0)))
