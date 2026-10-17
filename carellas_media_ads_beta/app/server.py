@@ -70,6 +70,11 @@ SONOS_SPOT_TAIL_GUARD_SECONDS = max(
     0.0, min(float(os.environ.get("CARELLAS_SONOS_SPOT_TAIL_GUARD_SECONDS", "0.4")), 2.0)
 )
 SONOS_QUIET_VOLUME = 0.01
+# Ultimo volume scelto per ogni Sonos (cursore del pannello o volume letto prima di uno spot).
+# Serve quando Home Assistant non riporta il volume e quando un Sonos rientra nel gruppo:
+# ogni cassa torna al suo volume invece di un valore fisso uguale per tutte.
+SONOS_VOLUME_MEMORY = {}
+SONOS_VOLUME_MEMORY_LOCK = threading.Lock()
 MAX_UPLOAD = 1024 * 1024 * 1024 * 4
 UPLOAD_CHUNK_SIZE = 4 * 1024 * 1024
 MIN_FREE_AFTER_UPLOAD = 1024 * 1024 * 512
@@ -1045,7 +1050,10 @@ def repair_sonos_group(players, preferred_coordinator=None, volume_level=None):
         })
         if SONOS_GROUP_SETTLE_SECONDS > 0:
             time.sleep(SONOS_GROUP_SETTLE_SECONDS)
-        if volume_level is not None:
+        if isinstance(volume_level, dict):
+            # Ogni Sonos riagganciato riprende il proprio volume.
+            set_sonos_volume_levels({player: volume_level[player] for player in missing if player in volume_level})
+        elif volume_level is not None:
             level = max(0.0, min(float(volume_level), 1.0))
             set_sonos_volume_levels({player: level for player in missing})
         # Il coordinatore continua il flusso corrente; i membri appena entrati
@@ -1070,8 +1078,22 @@ def repair_sonos_topology(groups, volume_levels=None):
     return list(dict.fromkeys(repaired)), list(dict.fromkeys(unavailable))
 
 
+def remember_sonos_volumes(levels):
+    with SONOS_VOLUME_MEMORY_LOCK:
+        for player, level in (levels or {}).items():
+            try:
+                SONOS_VOLUME_MEMORY[player] = max(0.0, min(float(level), 1.0))
+            except (TypeError, ValueError):
+                continue
+
+
+def remembered_sonos_volumes(players, fallback):
+    with SONOS_VOLUME_MEMORY_LOCK:
+        return {player: SONOS_VOLUME_MEMORY.get(player, fallback) for player in dict.fromkeys(players)}
+
+
 def sonos_volume_levels(players, fallback=0.25):
-    """Legge i volumi correnti; il fallback evita salti se HA non espone ancora lo stato."""
+    """Legge i volumi correnti; se HA non li riporta usa l'ultimo volume noto di quel Sonos."""
     fallback = max(0.0, min(float(fallback), 1.0))
     try:
         states = {item.get("entity_id"): item for item in ha.states()}
@@ -1080,7 +1102,9 @@ def sonos_volume_levels(players, fallback=0.25):
         states = {}
     levels = {}
     for player in dict.fromkeys(players):
-        raw = states.get(player, {}).get("attributes", {}).get("volume_level", fallback)
+        with SONOS_VOLUME_MEMORY_LOCK:
+            known = SONOS_VOLUME_MEMORY.get(player, fallback)
+        raw = states.get(player, {}).get("attributes", {}).get("volume_level", known)
         try:
             levels[player] = max(0.0, min(float(raw), 1.0))
         except (TypeError, ValueError):
@@ -1146,10 +1170,15 @@ def restore_sonos_playback(snapshot_targets, resume_targets, selected_players=No
         raise last_error
     if SONOS_RESTORE_SETTLE_SECONDS > 0:
         time.sleep(SONOS_RESTORE_SETTLE_SECONDS)
+    if not resume_targets and volume_levels:
+        # Nessuna musica da riprendere: i Sonos tornano comunque al volume di prima, non a quello dello spot.
+        set_sonos_volume_levels(volume_levels)
     if resume_targets:
         selected_players = list(dict.fromkeys(selected_players or snapshot_targets))
         if volume_levels and transition_seconds > 0:
             set_sonos_volume_levels({player: SONOS_QUIET_VOLUME for player in selected_players})
+        elif volume_levels:
+            set_sonos_volume_levels(volume_levels)
         ha.service("media_player", "media_play", {"entity_id": resume_targets})
         if volume_levels and transition_seconds > 0:
             fade_sonos(
@@ -1204,6 +1233,7 @@ def play_audio(filename=None, manual=False, players=None):
     resume_targets = []
     stopped = False
     previous_volumes = sonos_volume_levels(players, 0.25)
+    remember_sonos_volumes(previous_volumes)
     try:
         # La funzione Sonos announce avvia un AudioClip indipendente su ogni
         # diffusore e non garantisce la sincronizzazione. Salviamo quindi lo
@@ -2663,9 +2693,15 @@ class Scheduler(threading.Thread):
                 slot.get("players") or cfg.get("players") or []
             ))
             try:
-                result = repair_sonos_group(expected, self.music_coordinator, self.music_volume)
+                # Un Sonos rientrato nel gruppo riprende il suo ultimo volume, non quello della fascia.
+                result = repair_sonos_group(expected, self.music_coordinator,
+                                            remembered_sonos_volumes(expected, self.music_volume))
                 if result["coordinator"]:
                     self.music_coordinator = result["coordinator"]
+                if not result["missing"]:
+                    # Gruppo a posto: aggiorna i volumi noti, anche se cambiati dall'app Sonos.
+                    remember_sonos_volumes(sonos_volume_levels(
+                        [player for player in expected if player not in result["unavailable"]], self.music_volume))
                 issue = tuple(sorted(result["unavailable"]))
                 if result["missing"]:
                     store.log("warning", "Sonos riagganciati automaticamente: " + ", ".join(result["missing"]))
@@ -3917,6 +3953,7 @@ class Handler(BaseHTTPRequestHandler):
                     raise RuntimeError("Altoparlante Sonos non valido")
                 volume = max(0, min(int(body.get("volume", 0)), 100))
                 ha.service("media_player", "volume_set", {"entity_id": entity_id, "volume_level": volume / 100})
+                remember_sonos_volumes({entity_id: volume / 100})
                 self.send_json({"ok": True, "volume": volume})
                 return
             if path == "/api/sonos/refresh":
