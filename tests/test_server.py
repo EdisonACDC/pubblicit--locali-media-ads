@@ -1427,6 +1427,101 @@ class CarellasServerTest(unittest.TestCase):
         finally:
             self.app.store.config["music"] = original
 
+    def test_internet_radio_when_sonos_rejects_the_favorite(self):
+        rejected = RuntimeError("UPnP Error 402 received: Invalid Args from 192.168.178.12")
+        stations = [
+            {"name": "RTL 102.5 Best", "url_resolved": "https://streamingv2.shoutcast.com/rtl-1025-best",
+             "codec": "MP3", "bitrate": 256, "countrycode": "IT"},
+            {"name": "Radio Kiss Kiss Italia", "url_resolved": "http://wma06.fluidstream.net:3614/;listen.pls",
+             "codec": "MP3", "bitrate": 128, "countrycode": "IT"},
+            {"name": "RTL 102.5 [Mobile 48kbps]", "url_resolved": "https://streamingv2.shoutcast.com/rtl-1025_48.aac",
+             "codec": "AAC+", "bitrate": 96, "countrycode": "IT"},
+            {"name": "senza indirizzo", "url_resolved": "", "codec": "MP3", "bitrate": 0, "countrycode": "IT"},
+        ]
+
+        class Response:
+            def __init__(self, url):
+                self.url = url
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return json.dumps(stations).encode()
+
+        searched = []
+
+        def fake_urlopen(request, timeout=0):
+            searched.append(request.full_url)
+            return Response(request.full_url)
+
+        self.app.RADIO_STATION_CACHE.clear()
+        try:
+            with mock.patch.object(self.app.urllib.request, "urlopen", side_effect=fake_urlopen):
+                # Ricerca dal Palinsesto: solo stazioni con un indirizzo valido.
+                found = self.app.radio_browser_search("Kiss Kiss")
+                self.assertEqual([st["name"] for st in found],
+                                 ["RTL 102.5 Best", "Radio Kiss Kiss Italia", "RTL 102.5 [Mobile 48kbps]"])
+                self.assertIn("radio-browser.info/json/stations/search?name=Kiss+Kiss", searched[0])
+                # «RTL 102.5 FM» trova la stessa radio, non un altro canale con un nome simile.
+                rtl = self.app.internet_radio_station({"name": "RTL 102.5 FM", "content_type": "favorite_item_id",
+                                                        "content_id": "FV:2/9"})
+                self.assertEqual(rtl["name"], "RTL 102.5 [Mobile 48kbps]")
+                # Una playlist non viene mai scambiata per una radio.
+                self.assertIsNone(self.app.internet_radio_station({"name": "Dinner Jazz", "content_type": "favorite_item_id",
+                                                                   "content_id": "FV:2/3"}))
+                states = [{"entity_id": "media_player.sala", "state": "playing",
+                           "attributes": {"group_members": ["media_player.sala"], "volume_level": 0.3,
+                                          "source_list": ["Radio Kiss Kiss Italia"]}}]
+                calls = []
+
+                def service(domain, name, payload):
+                    calls.append((name, payload))
+                    # Sonos rifiuta il Preferito sia per ID sia per nome (radio TuneIn).
+                    if name in ("play_media", "select_source") and not str(payload.get("media_content_id", "")).startswith("x-rincon"):
+                        raise rejected
+
+                slot = {"name": "Radio Kiss Kiss Italia", "title": "Radio Kiss Kiss Italia", "players": ["media_player.sala"],
+                        "content_id": "FV:2/31", "content_type": "favorite_item_id", "volume": 25}
+                with mock.patch.object(self.app.ha, "states", return_value=states), \
+                        mock.patch.object(self.app.ha, "service", side_effect=service), \
+                        mock.patch.object(self.app.time, "sleep"):
+                    self.assertEqual(self.app.start_music(slot), ["media_player.sala"])
+                played = [payload for name, payload in calls if name == "play_media"]
+                self.assertEqual(played[-1], {"entity_id": "media_player.sala", "media_content_type": "music",
+                                              "media_content_id": "x-rincon-mp3radio://wma06.fluidstream.net:3614/;listen.pls"})
+                self.assertTrue(any("la avvio come radio da Internet" in item["message"] for item in self.app.store.logs[:5]))
+                # Radio scelta nel Palinsesto: parte direttamente dall'indirizzo.
+                calls.clear()
+                with mock.patch.object(self.app.ha, "states", return_value=states), \
+                        mock.patch.object(self.app.ha, "service", side_effect=lambda d, n, p: calls.append((n, p))), \
+                        mock.patch.object(self.app.time, "sleep"):
+                    self.app.start_music({**slot, "content_type": "radio_url",
+                                          "content_id": "https://str01.fluidstream.net/anni60.mp3"})
+                self.assertIn(("play_media", {"entity_id": "media_player.sala", "media_content_type": "music",
+                                              "media_content_id": "https://str01.fluidstream.net/anni60.mp3"}), calls)
+        finally:
+            self.app.RADIO_STATION_CACHE.clear()
+        with mock.patch.object(self.app, "radio_browser_search", return_value=[{"name": "Radio Kiss Kiss Italia"}]) as search:
+            status, body = self.request("/api/radio/search", "POST", {"q": "Kiss Kiss"})
+        self.assertEqual((status, body["stations"][0]["name"]), (200, "Radio Kiss Kiss Italia"))
+        search.assert_called_once_with("Kiss Kiss")
+        html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
+        self.assertIn('data-act="src-tab" data-v="radio"', html)
+        self.assertIn('data-act="src-tab" data-v="playlist"', html)
+        self.assertIn("command('api/radio/search',{q})", html)
+        self.assertIn("s.content_type='radio_url';s.content_id=st.url;", html)
+        self.assertIn("['Playlist Sonos','Sonos-Playlists']", html)
+        # Le due cartelle: Sonos dice se un Preferito è una radio o una playlist.
+        kind = self.app.sonos_item_kind
+        self.assertEqual(kind({"media_content_id": "FV:2/5", "media_class": "playlist"}), "playlist")
+        self.assertEqual(kind({"media_content_id": "FV:2/6"}, {"media_content_id": "object.item.audioItem.audioBroadcast"}), "radio")
+        self.assertEqual(kind({"media_content_id": "FV:2/7"}, {"title": "Playlists"}), "playlist")
+        self.assertEqual(kind({"media_content_id": "FV:2/8"}, {"title": "Preferiti"}), "")
+
     def test_sonos_source_retries_701_then_succeeds(self):
         calls = []
         attempts = 0
