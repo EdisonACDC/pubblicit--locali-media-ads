@@ -235,6 +235,11 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("data-bind=\"social.instagram.channel_id\"", html)
         self.assertIn("data-bind=\"social.instagram.photo_seconds\"", html)
         self.assertIn("data-bind=\"social.instagram.include_photos\"", html)
+        # Istruzioni per il collegamento sempre visibili, non nascoste dietro un pulsante.
+        self.assertIn("function instagramHowto(){", html)
+        self.assertIn(":instagramHowto()}", html)
+        self.assertNotIn("L('Come ottenere la chiave di accesso')", html)
+        self.assertIn("['Come collegare Instagram','So verbindet ihr Instagram']", html)
 
     def test_browser_player_requires_login_and_only_serves_assigned_channel(self):
         self.app.store.update({
