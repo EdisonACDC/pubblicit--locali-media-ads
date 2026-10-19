@@ -1073,6 +1073,65 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(play_calls[0][2]["media_content_id"], "Carellas Ristorante")
         self.assertFalse(any(call[1] == "select_source" for call in self.calls))
 
+    def test_playlist_resumes_where_it_was_left(self):
+        # Mix: Vasco → Ramazzotti → di nuovo Vasco. Vasco deve riprendere dal brano in cui era rimasta.
+        app = self.app
+        app.PLAYLIST_POSITIONS.clear()
+        vasco = {"id": "mix-1", "name": "Vasco", "players": ["media_player.sala"], "content_id": "FV:2/10",
+                 "content_type": "favorite_item_id", "volume": 25}
+        ramazzotti = {**vasco, "id": "mix-2", "name": "Ramazzotti", "content_id": "FV:2/11"}
+        radio = {**vasco, "id": "mix-3", "name": "Radio Kiss Kiss", "content_id": "FV:2/12",
+                 "content_type": "sonos_radio_source"}
+        state = {"entity_id": "media_player.sala", "state": "playing", "attributes": {
+            "queue_position": 4, "queue_size": 30, "media_duration": 240, "media_position": 95,
+            "media_position_updated_at": datetime.now().astimezone().isoformat(), "media_title": "Albachiara"}}
+        calls = []
+        try:
+            with mock.patch.object(app.ha, "states", return_value=[state]):
+                saved = app.remember_playlist_position(vasco, "media_player.sala")
+                self.assertEqual((saved["index"], saved["title"]), (4, "Albachiara"))
+                self.assertGreaterEqual(saved["position"], 95)
+                # Le radio non hanno una coda: non si ricorda niente.
+                self.assertIsNone(app.remember_playlist_position(radio, "media_player.sala"))
+                # Brano quasi finito: la prossima volta si parte dal successivo.
+                ending = {**state, "state": "paused", "attributes": {**state["attributes"], "media_position": 232}}
+                with mock.patch.object(app.ha, "states", return_value=[ending]):
+                    self.assertEqual(app.remember_playlist_position(ramazzotti, "media_player.sala")["index"], 5)
+            self.assertTrue(app.PLAYLIST_POSITIONS_FILE.is_file())
+            # Torna Vasco: dopo aver caricato la playlist salta al brano 5 e al punto in cui era.
+            with mock.patch.object(app.ha, "service", side_effect=lambda d, n, p: calls.append((d, n, p))):
+                self.assertTrue(app.resume_playlist_position("media_player.sala", vasco))
+            self.assertEqual(calls[0], ("sonos", "play_queue", {"entity_id": "media_player.sala", "queue_position": 4}))
+            self.assertEqual(calls[1][1], "media_seek")
+            self.assertGreaterEqual(calls[1][2]["seek_position"], 95)
+            self.assertTrue(any("ripresa dal brano 5" in item["message"] for item in app.store.logs[:3]))
+            # Usato una volta: se Vasco riparte di nuovo da sola non si torna indietro a quel punto.
+            self.assertNotIn("FV:2/10", app.PLAYLIST_POSITIONS)
+            calls.clear()
+            with mock.patch.object(app.ha, "service", side_effect=lambda d, n, p: calls.append((d, n, p))):
+                self.assertFalse(app.resume_playlist_position("media_player.sala", vasco))
+            self.assertEqual(calls, [])
+
+            # Nel motore: al cambio di blocco si ricorda il punto della playlist che finisce.
+            engine = app.Scheduler()
+            engine.music_selection, engine.music_coordinator = dict(vasco), "media_player.sala"
+            engine.music_slot_key, engine.music_players = "vecchia", ["media_player.sala"]
+            original = json.loads(json.dumps(app.store.config["music"]))
+            app.store.config["music"] = {"enabled": True, "players": ["media_player.sala"], "slots": [ramazzotti],
+                                         "schedule": [], "volume": 25, "transition_seconds": 0}
+            try:
+                with mock.patch.object(app, "active_music_slot", return_value=dict(ramazzotti)), \
+                        mock.patch.object(app.ha, "states", return_value=[state]), \
+                        mock.patch.object(app, "start_music", return_value=["media_player.sala"]), \
+                        mock.patch.object(app.time, "sleep"):
+                    engine.music_tick()
+            finally:
+                app.store.config["music"] = original
+            self.assertEqual(app.PLAYLIST_POSITIONS["FV:2/10"]["index"], 4)
+        finally:
+            app.PLAYLIST_POSITIONS.clear()
+            app.PLAYLIST_POSITIONS_FILE.unlink(missing_ok=True)
+
     def test_music_start_falls_back_to_select_source_when_playlist_fails(self):
         selection = {
             "players": ["media_player.sala"],
