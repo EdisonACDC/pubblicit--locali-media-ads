@@ -120,9 +120,13 @@ class VirtualHomeAssistant:
         if kind == "spot" and self.media_dir and (self.media_dir / title).exists():
             # Come un vero Sonos: a fine brano la cassa si ferma da sola.
             ends_at = time.time() + estimate_duration(self.media_dir / title)
+        # Le playlist hanno una coda di brani (le radio e gli spot no), come i veri Sonos.
+        queue = [] if kind == "spot" or source or "radio" in title.lower() else [
+            {"title": f"{title} · brano {n}", "artist": f"Artista {n}", "album": title} for n in range(1, 13)]
         for member in self._members(coordinator):
             spk = self.speakers[member]
-            spk.update(state="playing", media_id=media_id, title=title, source=source, kind=kind, ends_at=ends_at)
+            spk.update(state="playing", media_id=media_id, title=title, source=source, kind=kind, ends_at=ends_at,
+                       queue=queue, queue_index=0)
 
     def _expire(self):
         now = time.time()
@@ -176,6 +180,11 @@ class VirtualHomeAssistant:
                 }
                 if spk["state"] in ("playing", "paused"):
                     attrs.update(media_title=spk["title"], media_content_id=spk["media_id"])
+                    if spk.get("queue"):
+                        track = spk["queue"][spk.get("queue_index", 0)]
+                        attrs.update(media_title=track["title"], media_artist=track["artist"], media_duration=200,
+                                     media_position=0, queue_position=spk.get("queue_index", 0),
+                                     queue_size=len(spk["queue"]))
                     if spk["source"]:
                         attrs["source"] = spk["source"]
                 result.append({"entity_id": entity_id, "state": spk["state"], "attributes": attrs})
@@ -235,6 +244,14 @@ class VirtualHomeAssistant:
                     if entity in self.devices:
                         self.devices[entity]["state"] = "on" if service == "turn_on" else "off"
                 self.log("tv", f"{label}: {', '.join(self._name(e) for e in entities)}")
+            elif domain == "sonos" and service == "play_queue":
+                coordinator = self.speakers[entities[0]]["coordinator"]
+                index = int(payload.get("queue_position", 0))
+                for member in self._members(coordinator):
+                    spk = self.speakers[member]
+                    if spk.get("queue") and 0 <= index < len(spk["queue"]):
+                        spk.update(queue_index=index, state="playing")
+                self.log("sonos", f"{label}: brano {index + 1} della coda")
             elif domain == "sonos" and service == "snapshot":
                 targets = set()
                 for entity in entities:
@@ -270,6 +287,10 @@ class VirtualHomeAssistant:
             return []
 
     def service_response(self, domain, service, payload):
+        if domain == "sonos" and service == "get_queue":
+            with self.lock:
+                entity = self._ids(payload.get("entity_id"))[0]
+                return {entity: list(self.speakers.get(entity, {}).get("queue") or [])}
         self.service(domain, service, payload)
         return {}
 
