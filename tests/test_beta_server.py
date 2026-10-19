@@ -4076,6 +4076,42 @@ class CarellasServerTest(unittest.TestCase):
         staff = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/operatori.html").read_text(encoding="utf-8")
         self.assertIn("(c.media_artist?' — '+c.media_artist:'')", staff)
 
+    def test_playlist_tracks_are_listed_and_can_be_played(self):
+        # Elenco dei brani della playlist in onda (coda dei Sonos), con il brano in corso; toccandone uno parte.
+        app = self.app
+        states = [{"entity_id": "media_player.sala", "state": "playing", "attributes": {
+            "group_members": ["media_player.sala"], "queue_position": 1, "queue_size": 3, "media_title": "Vita spericolata"}}]
+        queue = {"media_player.sala": [{"title": "Albachiara", "artist": "Vasco Rossi", "album": "Best"},
+                                       {"title": "Vita spericolata", "artist": "Vasco Rossi"}, {"title": "Sally"}]}
+        calls = []
+        with mock.patch.object(app.ha, "states", return_value=states), \
+                mock.patch.object(app.ha, "service_response", return_value=queue) as get_queue, \
+                mock.patch.object(app.ha, "service", side_effect=lambda d, n, p: calls.append((d, n, p))), \
+                mock.patch.object(app.scheduler, "music_coordinator", "media_player.sala"):
+            status, payload = self.request("/api/music/queue")
+            self.assertEqual(status, 200)
+            get_queue.assert_called_once_with("sonos", "get_queue", {"entity_id": "media_player.sala"})
+            self.assertEqual([t["title"] for t in payload["tracks"]], ["Albachiara", "Vita spericolata", "Sally"])
+            self.assertEqual(payload["position"], 1)
+            status, _ = self.request("/api/music/queue/play", "POST", {"index": 2})
+            self.assertEqual(status, 200)
+        self.assertIn(("sonos", "play_queue", {"entity_id": "media_player.sala", "queue_position": 2}), calls)
+        # Home Assistant troppo vecchio: lo dice invece di dare errore.
+        with mock.patch.object(app.ha, "states", return_value=states), \
+                mock.patch.object(app.ha, "service_response", side_effect=RuntimeError("Home Assistant 400")), \
+                mock.patch.object(app.scheduler, "music_coordinator", "media_player.sala"):
+            status, payload = self.request("/api/music/queue")
+        self.assertEqual(status, 200)
+        self.assertIn("2024.12", payload["error"])
+        # Anche gli operatori vedono l'elenco e possono scegliere un brano.
+        self.assertIn("/api/music/queue", app.STAFF_GET_PATHS)
+        self.assertIn("/api/music/queue/play", app.STAFF_POST_PATHS)
+        for page in ("index.html", "operatori.html"):
+            html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app" / page).read_text(encoding="utf-8")
+            self.assertIn("function queueCard(){", html, page)
+            self.assertIn('data-act="queue-toggle"', html, page)
+            self.assertIn("api/music/queue/play", html, page)
+
     def test_now_playing_shows_real_sonos_volume(self):
         # «Ora in onda» mostra il volume letto dai Sonos, non quello della fascia, e dice se è scelto a mano.
         app = self.app
