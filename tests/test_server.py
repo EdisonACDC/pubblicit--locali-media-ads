@@ -50,6 +50,8 @@ class CarellasServerTest(unittest.TestCase):
 
     def setUp(self):
         self.app.SONOS_CATALOG_FILE.unlink(missing_ok=True)
+        # Ogni test parte senza una fascia «già in onda» lasciata da un test precedente.
+        self.app.MUSIC_STATE_FILE.unlink(missing_ok=True)
 
     def request(self, path, method="GET", body=None, content_type="application/json"):
         data = None if body is None else (body if isinstance(body, bytes) else json.dumps(body).encode())
@@ -1597,6 +1599,43 @@ class CarellasServerTest(unittest.TestCase):
             recent = [item["message"] for item in app.store.logs[:5]]
             self.assertTrue(any("partita con un po' di ritardo" in message for message in recent))
             self.assertFalse(any("Avvio musica non riuscito" in message for message in recent))
+        finally:
+            app.store.config["music"] = original
+
+    def test_music_keeps_playing_after_addon_restart(self):
+        # Aggiornamento dell'add-on: i Sonos continuano a suonare la fascia; al riavvio non va rimandata
+        # (la playlist ripartiva dal primo brano a ogni aggiornamento).
+        app = self.app
+        slot = {"id": "mix-1", "name": "Mix Cocciante und Raf", "players": ["media_player.sala"],
+                "content_id": "FV:2/8", "content_type": "favorite_item_id", "volume": 25}
+        original = json.loads(json.dumps(app.store.config["music"]))
+        app.store.config["music"] = {"enabled": True, "players": ["media_player.sala"], "slots": [slot],
+                                     "schedule": [], "volume": 25, "transition_seconds": 0}
+        playing = [{"entity_id": "media_player.sala", "state": "playing", "attributes": {}}]
+        paused = [{"entity_id": "media_player.sala", "state": "paused", "attributes": {}}]
+        try:
+            with mock.patch.object(app, "active_music_slot", return_value=dict(slot)),                     mock.patch.object(app, "start_music", return_value=["media_player.sala"]) as start,                     mock.patch.object(app.time, "sleep"):
+                with mock.patch.object(app.ha, "states", return_value=playing):
+                    first = app.Scheduler()
+                    first.music_tick()
+                    self.assertEqual(start.call_count, 1)
+                    self.assertTrue(app.MUSIC_STATE_FILE.is_file())
+                    # Riavvio: un nuovo motore trova la fascia già in onda e la segue senza ripartire.
+                    second = app.Scheduler()
+                    second.music_tick()
+                    self.assertEqual(start.call_count, 1)
+                    self.assertEqual(second.music_slot_id, "mix-1")
+                    self.assertEqual(second.music_coordinator, "media_player.sala")
+                    self.assertTrue(any("continua senza ripartire" in item["message"] for item in app.store.logs[:3]))
+                # Se dopo il riavvio i Sonos sono fermi, la fascia parte normalmente.
+                with mock.patch.object(app.ha, "states", return_value=paused):
+                    third = app.Scheduler()
+                    third.music_tick()
+                self.assertEqual(start.call_count, 2)
+                # Stato di un altro giorno: non vale.
+                app.MUSIC_STATE_FILE.write_text(json.dumps({"day": "2000-01-01", "slot_key": "x", "players": []}),
+                                                encoding="utf-8")
+                self.assertIsNone(app.Scheduler().music_resume)
         finally:
             app.store.config["music"] = original
 
