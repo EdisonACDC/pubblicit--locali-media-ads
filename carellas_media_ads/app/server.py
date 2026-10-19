@@ -46,6 +46,9 @@ IPTV_DIR = DATA_DIR / "iptv"
 UPLOAD_DIR = DATA_DIR / "uploads"
 CONFIG_FILE = DATA_DIR / "carellas_media_ads.json"
 RUNTIME_FILE = DATA_DIR / "carellas_media_ads_runtime.json"
+# Fascia che il motore sta seguendo: dopo un riavvio (es. aggiornamento) i Sonos continuano a suonarla
+# e non va fatta ripartire dal primo brano.
+MUSIC_STATE_FILE = DATA_DIR / "carellas_music_state.json"
 SPOT_HISTORY_FILE = DATA_DIR / "carellas_spot_history.json"
 SONOS_CATALOG_FILE = DATA_DIR / "carellas_sonos_catalog.json"
 DEFAULT_FILE = APP_DIR / "default_config.json"
@@ -2888,6 +2891,8 @@ class Scheduler(threading.Thread):
         # Controllo della musica ferma durante la fascia (vedi music_watchdog).
         self.music_watch_at = 0.0
         self.music_stopped_since = None
+        # Fascia seguita prima dell'ultimo riavvio dell'add-on (vedi adopt_running_music).
+        self.music_resume = self._load_music_state()
         # Musica accesa o spenta a mano dal pannello: {"mode": "on"/"off", "slot_key": ..., "name": ...}.
         self.music_override = None
         self.music_expected_players = []
@@ -3117,12 +3122,50 @@ class Scheduler(threading.Thread):
         self.music_last_error = None
         self.music_late_start = None
         self.music_stopped_since = None
+        self._save_music_state()
         if late:
             # Il ripiego dopo il primo controllo ha rimesso i volumi di prima: si danno quelli della fascia.
             manual = manual_sonos_volumes(players)
             set_sonos_volume_levels({player: manual.get(player, self.music_volume) for player in players})
             title = slot.get("name") or slot.get("title") or slot.get("content_id", "")
             store.log("info", f"Musica partita con un po' di ritardo: «{title}»")
+
+    @staticmethod
+    def _load_music_state():
+        try:
+            saved = json.loads(MUSIC_STATE_FILE.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, ValueError, TypeError):
+            return None
+        if not isinstance(saved, dict) or saved.get("day") != datetime.now().date().isoformat():
+            return None
+        return saved
+
+    def _save_music_state(self):
+        temporary = MUSIC_STATE_FILE.with_suffix(".tmp")
+        try:
+            temporary.write_text(json.dumps({
+                "day": datetime.now().date().isoformat(), "slot_key": self.music_slot_key,
+                "players": list(self.music_players), "expected": list(self.music_expected_players),
+            }, ensure_ascii=False), encoding="utf-8")
+            os.replace(temporary, MUSIC_STATE_FILE)
+        except OSError as error:
+            temporary.unlink(missing_ok=True)
+            store.log("warning", f"Stato della musica non salvato: {error}")
+
+    def adopt_running_music(self, slot, slot_key, cfg):
+        """Dopo un riavvio dell'add-on (per esempio un aggiornamento) i Sonos continuano a suonare la
+        fascia in corso: si riprende a seguirla invece di rimandarla, che la faceva ripartire dal primo brano."""
+        saved, self.music_resume = self.music_resume, None
+        if not saved or saved.get("slot_key") != slot_key:
+            return False
+        players = [player for player in saved.get("players") or [] if isinstance(player, str)]
+        if not players or sonos_playing(players[0]) is not True:
+            return False
+        expected = [player for player in saved.get("expected") or players if isinstance(player, str)]
+        self.music_started(slot, slot_key, players, expected, cfg)
+        name = slot.get("name") or slot.get("title") or slot.get("content_id", "")
+        store.log("info", f"Musica già in onda dopo il riavvio: «{name}» continua senza ripartire")
+        return True
 
     def music_watchdog(self, slot):
         """La fascia è in corso ma i Sonos sono fermi e nessuno l'ha chiesto dal pannello o dal tablet
@@ -3325,6 +3368,9 @@ class Scheduler(threading.Thread):
             # secondi. Evitiamo una raffica di tentativi a ogni ciclo.
             return
         changed = active and slot_key != self.music_slot_key
+        if changed and self.music_slot_key is None and self.music_resume is not None:
+            # Primo giro dopo un riavvio: se i Sonos suonano già questa fascia la si lascia continuare.
+            changed = not self.adopt_running_music(slot, slot_key, cfg)
         if changed:
             remember_playlist_position(self.music_selection, self.music_coordinator)
             previous_selection = copy.deepcopy(self.music_selection)
