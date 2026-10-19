@@ -1520,6 +1520,45 @@ def remember_playlist_position(selection, coordinator):
     return saved
 
 
+def music_coordinator_now(states):
+    """Sonos che guida la musica in onda: quello del motore oppure il primo che suona una coda."""
+    coordinator = scheduler.music_coordinator
+    if coordinator not in states:
+        coordinator = next((entity for entity, item in states.items() if entity.startswith("media_player.")
+                            and item.get("state") in ("playing", "paused")
+                            and isinstance((item.get("attributes") or {}).get("queue_position"), int)), None)
+    if not coordinator:
+        return None
+    members = (states.get(coordinator, {}).get("attributes") or {}).get("group_members") or [coordinator]
+    return members[0] if members[0] in states else coordinator
+
+
+def music_queue():
+    """Brani nella coda del Sonos che guida la musica: la playlist in onda (una radio non ne ha)."""
+    try:
+        states = {item.get("entity_id"): item for item in ha.states()}
+    except Exception as error:
+        return {"tracks": [], "position": None, "error": f"Sonos non leggibili: {error}"}
+    coordinator = music_coordinator_now(states)
+    if not coordinator:
+        return {"tracks": [], "position": None, "error": "Nessuna musica in onda"}
+    attrs = states.get(coordinator, {}).get("attributes") or {}
+    try:
+        response = ha.service_response("sonos", "get_queue", {"entity_id": coordinator})
+    except Exception as error:
+        return {"coordinator": coordinator, "tracks": [], "position": None,
+                "error": f"Home Assistant non dà l'elenco dei brani (serve Home Assistant 2024.12 o più recente): {error}"}
+    items = response.get(coordinator) if isinstance(response, dict) else None
+    if items is None and isinstance(response, dict) and len(response) == 1:
+        items = next(iter(response.values()))
+    tracks = [{"title": str(item.get("title") or ""), "artist": str(item.get("artist") or ""),
+               "album": str(item.get("album") or "")} for item in (items or []) if isinstance(item, dict)][:1000]
+    position = attrs.get("queue_position")
+    if not isinstance(position, int) or isinstance(position, bool) or not 0 <= position < len(tracks):
+        position = None
+    return {"coordinator": coordinator, "tracks": tracks, "position": position}
+
+
 def resume_playlist_position(coordinator, selection):
     """La playlist appena caricata riparte dal brano (e dal secondo) in cui era stata lasciata."""
     key = playlist_key(selection)
@@ -4738,6 +4777,10 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/iptv/status":
                 self.send_json({"channels": iptv.runtime_status()})
                 return
+            if path == "/api/music/queue":
+                # Brani della playlist in onda, con quello in corso.
+                self.send_json(music_queue())
+                return
             if path in ("/api/spots/history", "/api/spots/history.csv"):
                 query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
                 day = r"\d{4}-\d{2}-\d{2}"
@@ -5178,6 +5221,20 @@ class Handler(BaseHTTPRequestHandler):
                 if not channel:
                     raise RuntimeError("Canale IPTV non trovato")
                 tv_power_off(channel)
+                self.send_json({"ok": True})
+                return
+            if path == "/api/music/queue/play":
+                # Un brano scelto dall'elenco della playlist parte subito.
+                index = int(self.json_body().get("index", -1))
+                states = {item.get("entity_id"): item for item in ha.states()}
+                coordinator = music_coordinator_now(states)
+                if not coordinator:
+                    raise RuntimeError("Nessuna musica in onda")
+                if not 0 <= index < 2000:
+                    raise RuntimeError("Brano non valido")
+                sonos_service("sonos", "play_queue", {"entity_id": coordinator, "queue_position": index})
+                who = f" da {self.remote_user}" if self.remote_user else ""
+                store.log("info", f"Brano scelto dall'elenco: n. {index + 1}{who}")
                 self.send_json({"ok": True})
                 return
             if path == "/api/spot/today":
@@ -5661,9 +5718,9 @@ REMOTE_COOKIE = "carellas_admin"
 # Le sole operazioni permesse agli operatori (pagina per tablet).
 STAFF_POST_PATHS = {"/api/sonos/volume", "/api/music/manual", "/api/audio/pause", "/api/audio/skip",
                     "/api/audio/stop", "/api/test/audio", "/api/zone/music", "/api/zone/spots", "/api/music/control",
-                    "/api/spot/today"}
+                    "/api/spot/today", "/api/music/queue/play"}
 # Letture permesse agli operatori oltre alla pagina: il suo stato e lo storico degli spot.
-STAFF_GET_PATHS = {"/api/staff/state", "/api/spots/history", "/api/spots/history.csv"}
+STAFF_GET_PATHS = {"/api/staff/state", "/api/spots/history", "/api/spots/history.csv", "/api/music/queue"}
 
 
 def remote_account(username):
