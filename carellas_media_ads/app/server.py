@@ -1101,6 +1101,8 @@ def sonos_state_detail(state, configured=()):
         "volume": round(float(volume) * 100) if isinstance(volume, (int, float)) else None,
         "group_members": [m for m in (members or [entity_id]) if isinstance(m, str)],
         "media_title": attrs.get("media_title") or attrs.get("source") or "",
+        # Artista del brano in onda (vuoto per molte radio).
+        "media_artist": attrs.get("media_artist") or "",
     }
 
 
