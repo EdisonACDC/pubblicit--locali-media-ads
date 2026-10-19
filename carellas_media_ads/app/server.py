@@ -1101,6 +1101,8 @@ def sonos_state_detail(state, configured=()):
         "volume": round(float(volume) * 100) if isinstance(volume, (int, float)) else None,
         "group_members": [m for m in (members or [entity_id]) if isinstance(m, str)],
         "media_title": attrs.get("media_title") or attrs.get("source") or "",
+        # Artista del brano in onda (vuoto per molte radio).
+        "media_artist": attrs.get("media_artist") or "",
     }
 
 
@@ -1418,6 +1420,102 @@ def _load_manual_volumes():
 
 
 SONOS_MANUAL_VOLUMES = _load_manual_volumes()
+
+
+# Punto in cui ogni playlist è stata lasciata (brano nella coda e secondi): quando il Mix o il Palinsesto
+# ci ritornano riprende da lì invece di ricominciare dal primo brano. Le radio non hanno una coda.
+PLAYLIST_POSITIONS_FILE = DATA_DIR / "carellas_playlist_positions.json"
+PLAYLIST_POSITIONS_LOCK = threading.Lock()
+
+
+def _load_playlist_positions():
+    try:
+        data = json.loads(PLAYLIST_POSITIONS_FILE.read_text(encoding="utf-8"))
+        return {str(key): value for key, value in data.items() if isinstance(value, dict)}
+    except (FileNotFoundError, OSError, ValueError, TypeError, AttributeError):
+        return {}
+
+
+PLAYLIST_POSITIONS = _load_playlist_positions()
+
+
+def _save_playlist_positions():
+    try:
+        PLAYLIST_POSITIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        temporary = PLAYLIST_POSITIONS_FILE.with_suffix(".tmp")
+        temporary.write_text(json.dumps(PLAYLIST_POSITIONS, ensure_ascii=False), encoding="utf-8")
+        os.replace(temporary, PLAYLIST_POSITIONS_FILE)
+    except OSError as error:
+        store.log("warning", f"Punto delle playlist non salvato: {error}")
+
+
+def playlist_key(selection):
+    """Chiave della playlist della fascia, oppure None per le radio."""
+    if not selection or selection.get("content_type") in ("radio_url", "sonos_radio_source"):
+        return None
+    if slot_looks_like_radio(selection):
+        return None
+    return str(selection.get("content_id") or "") or None
+
+
+def remember_playlist_position(selection, coordinator):
+    """Prima di cambiare sorgente: brano e secondo in cui si trova la playlist, per riprenderla da lì."""
+    key = playlist_key(selection)
+    if not key or not coordinator:
+        return None
+    try:
+        item = next((state for state in ha.states() if state.get("entity_id") == coordinator), None)
+    except Exception:
+        return None
+    attrs = (item or {}).get("attributes") or {}
+    index, duration = attrs.get("queue_position"), attrs.get("media_duration")
+    if not isinstance(index, int) or isinstance(index, bool) or index < 0 or not duration:
+        # Niente coda (radio o sorgente esterna): non c'è un punto da ricordare.
+        return None
+    position = float(attrs.get("media_position") or 0)
+    updated = attrs.get("media_position_updated_at")
+    if item.get("state") == "playing" and updated:
+        try:
+            position += max(0.0, (datetime.now().astimezone() - datetime.fromisoformat(str(updated))).total_seconds())
+        except (TypeError, ValueError):
+            pass
+    size = attrs.get("queue_size")
+    if position > float(duration) - 15:
+        # Brano quasi finito: la prossima volta si parte da quello dopo.
+        index, position = index + 1, 0.0
+    if isinstance(size, int) and size > 0 and index >= size:
+        index, position = 0, 0.0
+    saved = {"index": index, "position": round(position), "title": str(attrs.get("media_title") or ""),
+             "saved_at": now_iso()}
+    with PLAYLIST_POSITIONS_LOCK:
+        PLAYLIST_POSITIONS[key] = saved
+        _save_playlist_positions()
+    return saved
+
+
+def resume_playlist_position(coordinator, selection):
+    """La playlist appena caricata riparte dal brano (e dal secondo) in cui era stata lasciata."""
+    key = playlist_key(selection)
+    with PLAYLIST_POSITIONS_LOCK:
+        saved = dict(PLAYLIST_POSITIONS.get(key) or {}) if key else {}
+    index, position = int(saved.get("index") or 0), int(saved.get("position") or 0)
+    if index <= 0 and position < 5:
+        return False
+    name = selection.get("name") or selection.get("title") or key
+    try:
+        sonos_service("sonos", "play_queue", {"entity_id": coordinator, "queue_position": index})
+        if position >= 5:
+            ha.service("media_player", "media_seek", {"entity_id": coordinator, "seek_position": position})
+    except Exception as error:
+        store.log("warning", f"Playlist «{name}» ripartita dall'inizio: non riesco a riprenderla ({error})")
+        return False
+    # Usato: se più avanti la stessa playlist riparte (es. finita), non si torna di nuovo a questo punto.
+    with PLAYLIST_POSITIONS_LOCK:
+        PLAYLIST_POSITIONS.pop(key, None)
+        _save_playlist_positions()
+    track = f" («{saved['title']}»)" if saved.get("title") else ""
+    store.log("info", f"Playlist «{name}» ripresa dal brano {index + 1}{track}")
+    return True
 
 
 def _save_manual_volumes():
@@ -2103,6 +2201,7 @@ def start_music(selection=None, fade_in=False):
             if content_type == "radio_url" or not sonos_source_rejected(play_error):
                 raise
             play_rejected_source_elsewhere(coordinator, selection, play_error)
+        resume_playlist_position(coordinator, selection)
         title = selection.get("name") or selection.get("title") or content_id
         if not ensure_sonos_playing(coordinator):
             raise SonosNotStarted(f"I Sonos non sono partiti con «{title}»: riprovo tra poco", players)
@@ -3071,6 +3170,7 @@ class Scheduler(threading.Thread):
         players = list(dict.fromkeys(list(self.music_players) + list(extra_players or []))) \
             or mix_settings()["players"]
         transition = store.config["music"].get("transition_seconds", 3)
+        remember_playlist_position(self.music_selection, self.music_coordinator)
         self.music_override = {"mode": "off", "slot_key": self.current_slot_key(), "name": "",
                                "day": datetime.now().date().isoformat()}
         try:
@@ -3089,9 +3189,10 @@ class Scheduler(threading.Thread):
             self._forget_music()
             store.log("info", "Musica riaccesa: riprende il palinsesto")
             return None
+        remember_playlist_position(self.music_selection, self.music_coordinator)
         # Prima si segna la scelta, così il motore non interviene mentre la musica parte.
-        self.music_override = {"mode": "on", "slot_key": self.current_slot_key(),
-                               "name": selection.get("name") or selection.get("content_id", "")}
+        name = selection.get("name") or selection.get("content_id", "")
+        self.music_override = {"mode": "on", "slot_key": self.current_slot_key(), "name": name}
         try:
             players = start_music(selection, fade_in=True)
         except Exception:
@@ -3101,7 +3202,7 @@ class Scheduler(threading.Thread):
         self.music_coordinator = players[0] if players else None
         self.music_selection = copy.deepcopy(selection)
         self.music_active = True
-        store.log("info", f"Musica accesa a mano: {self.music_override['name']}")
+        store.log("info", f"Musica accesa a mano: {name}")
         return players
 
     def audio_tick(self):
@@ -3182,6 +3283,7 @@ class Scheduler(threading.Thread):
             return
         changed = active and slot_key != self.music_slot_key
         if changed:
+            remember_playlist_position(self.music_selection, self.music_coordinator)
             previous_selection = copy.deepcopy(self.music_selection)
             previous = list(self.music_players)
             previous_levels = {}
