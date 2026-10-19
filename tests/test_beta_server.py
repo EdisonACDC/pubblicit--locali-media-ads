@@ -4059,6 +4059,23 @@ class CarellasServerTest(unittest.TestCase):
         for marker in ("L('Spot oggi')", "L('Prossimo cambio')", "L('La giornata')", 'class="tl-block music', "data-tl-wrap"):
             self.assertIn(marker, html)
 
+    def test_now_playing_shows_current_track_and_artist(self):
+        # «Ora in onda» mostra il brano che sta suonando, con l'artista.
+        states = [{"entity_id": "media_player.sala", "state": "playing", "attributes": {
+            "friendly_name": "Sala", "group_members": ["media_player.sala"], "volume_level": 0.3,
+            "media_title": "Albachiara", "media_artist": "Vasco Rossi"}}]
+        with mock.patch.object(self.app.ha, "states", return_value=states):
+            status, payload = self.request("/api/state")
+        self.assertEqual(status, 200)
+        sala = next(s for s in payload["sonos"] if s["entity_id"] == "media_player.sala")
+        self.assertEqual((sala["media_title"], sala["media_artist"]), ("Albachiara", "Vasco Rossi"))
+        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        self.assertIn("function nowTrack(){", html)
+        self.assertIn('class="now-track"', html)
+        self.assertIn("['Brano in onda','Titel läuft']", html)
+        staff = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/operatori.html").read_text(encoding="utf-8")
+        self.assertIn("(c.media_artist?' — '+c.media_artist:'')", staff)
+
     def test_now_playing_shows_real_sonos_volume(self):
         # «Ora in onda» mostra il volume letto dai Sonos, non quello della fascia, e dice se è scelto a mano.
         app = self.app
