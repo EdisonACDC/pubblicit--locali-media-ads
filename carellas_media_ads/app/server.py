@@ -1524,8 +1524,12 @@ def music_queue():
     items = response.get(coordinator) if isinstance(response, dict) else None
     if items is None and isinstance(response, dict) and len(response) == 1:
         items = next(iter(response.values()))
-    tracks = [{"title": str(item.get("title") or ""), "artist": str(item.get("artist") or ""),
-               "album": str(item.get("album") or "")} for item in (items or []) if isinstance(item, dict)][:1000]
+    # Home Assistant restituisce media_title, media_artist e media_album_name (prima si leggeva «title»
+    # e tutti i brani risultavano senza titolo).
+    tracks = [{"title": str(item.get("media_title") or item.get("title") or ""),
+               "artist": str(item.get("media_artist") or item.get("artist") or ""),
+               "album": str(item.get("media_album_name") or item.get("album") or "")}
+              for item in (items or []) if isinstance(item, dict)][:1000]
     position = attrs.get("queue_position")
     if not isinstance(position, int) or isinstance(position, bool) or not 0 <= position < len(tracks):
         position = None

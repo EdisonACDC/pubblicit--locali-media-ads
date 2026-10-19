@@ -122,7 +122,8 @@ class VirtualHomeAssistant:
             ends_at = time.time() + estimate_duration(self.media_dir / title)
         # Le playlist hanno una coda di brani (le radio e gli spot no), come i veri Sonos.
         queue = [] if kind == "spot" or source or "radio" in title.lower() else [
-            {"title": f"{title} · brano {n}", "artist": f"Artista {n}", "album": title} for n in range(1, 13)]
+            {"media_title": f"{title} · brano {n}", "media_artist": f"Artista {n}", "media_album_name": title}
+            for n in range(1, 13)]
         for member in self._members(coordinator):
             spk = self.speakers[member]
             spk.update(state="playing", media_id=media_id, title=title, source=source, kind=kind, ends_at=ends_at,
@@ -182,7 +183,7 @@ class VirtualHomeAssistant:
                     attrs.update(media_title=spk["title"], media_content_id=spk["media_id"])
                     if spk.get("queue"):
                         track = spk["queue"][spk.get("queue_index", 0)]
-                        attrs.update(media_title=track["title"], media_artist=track["artist"], media_duration=200,
+                        attrs.update(media_title=track["media_title"], media_artist=track["media_artist"], media_duration=200,
                                      media_position=0, queue_position=spk.get("queue_index", 0),
                                      queue_size=len(spk["queue"]))
                     if spk["source"]:
