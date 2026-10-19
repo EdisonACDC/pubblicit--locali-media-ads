@@ -3742,8 +3742,10 @@ class CarellasServerTest(unittest.TestCase):
         app = self.app
         states = [{"entity_id": "media_player.sala", "state": "playing", "attributes": {
             "group_members": ["media_player.sala"], "queue_position": 1, "queue_size": 3, "media_title": "Vita spericolata"}}]
-        queue = {"media_player.sala": [{"title": "Albachiara", "artist": "Vasco Rossi", "album": "Best"},
-                                       {"title": "Vita spericolata", "artist": "Vasco Rossi"}, {"title": "Sally"}]}
+        # Come lo restituisce Home Assistant (sonos.get_queue): media_title, media_artist, media_album_name.
+        queue = {"media_player.sala": [{"media_title": "Albachiara", "media_artist": "Vasco Rossi", "media_album_name": "Best"},
+                                       {"media_title": "Vita spericolata", "media_artist": "Vasco Rossi"},
+                                       {"media_title": "Sally"}]}
         calls = []
         with mock.patch.object(app.ha, "states", return_value=states), \
                 mock.patch.object(app.ha, "service_response", return_value=queue) as get_queue, \
@@ -3754,6 +3756,7 @@ class CarellasServerTest(unittest.TestCase):
             get_queue.assert_called_once_with("sonos", "get_queue", {"entity_id": "media_player.sala"})
             self.assertEqual([t["title"] for t in payload["tracks"]], ["Albachiara", "Vita spericolata", "Sally"])
             self.assertEqual(payload["position"], 1)
+            self.assertEqual((payload["tracks"][0]["artist"], payload["tracks"][0]["album"]), ("Vasco Rossi", "Best"))
             status, _ = self.request("/api/music/queue/play", "POST", {"index": 2})
             self.assertEqual(status, 200)
         self.assertIn(("sonos", "play_queue", {"entity_id": "media_player.sala", "queue_position": 2}), calls)
