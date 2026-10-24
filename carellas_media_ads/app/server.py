@@ -1496,17 +1496,40 @@ def remember_playlist_position(selection, coordinator):
     return saved
 
 
+def music_coordinator_candidates(states):
+    """Sonos che possono dare la coda della musica in onda, dal più probabile: quello del motore, poi chi
+    suona una coda. Si saltano quelli spenti o che non rispondono."""
+    order = [scheduler.music_coordinator] + [
+        entity for entity, item in states.items() if entity.startswith("media_player.")
+        and item.get("state") in ("playing", "paused")
+        and isinstance((item.get("attributes") or {}).get("queue_position"), int)]
+    result = []
+    for entity in order:
+        if not entity or entity not in states:
+            continue
+        members = (states[entity].get("attributes") or {}).get("group_members") or [entity]
+        leader = members[0] if members and members[0] in states else entity
+        for candidate in (leader, entity):
+            if candidate not in result and states[candidate].get("state") not in ("unavailable", "unknown") \
+                    and not sonos_unresponsive(candidate):
+                result.append(candidate)
+    return result
+
+
 def music_coordinator_now(states):
-    """Sonos che guida la musica in onda: quello del motore oppure il primo che suona una coda."""
-    coordinator = scheduler.music_coordinator
-    if coordinator not in states:
-        coordinator = next((entity for entity, item in states.items() if entity.startswith("media_player.")
-                            and item.get("state") in ("playing", "paused")
-                            and isinstance((item.get("attributes") or {}).get("queue_position"), int)), None)
-    if not coordinator:
-        return None
-    members = (states.get(coordinator, {}).get("attributes") or {}).get("group_members") or [coordinator]
-    return members[0] if members[0] in states else coordinator
+    """Sonos che guida la musica in onda (None se nessuno)."""
+    candidates = music_coordinator_candidates(states)
+    return candidates[0] if candidates else None
+
+
+def queue_error_message(error, name):
+    """Perché l'elenco dei brani non c'è, detto in modo comprensibile."""
+    text = str(error)
+    if re.search(r"max retries|newconnectionerror|connection refused|timed out|timeout|unreachable|no route", text, re.I):
+        return f"Il Sonos «{name}» non risponde (spento o scollegato dalla rete): non posso leggere i brani."
+    if re.search(r"service not found|unknown service|not a valid service|\b400\b", text, re.I):
+        return "Home Assistant non dà l'elenco dei brani: serve Home Assistant 2024.12 o più recente."
+    return f"Elenco dei brani non disponibile: {text}"
 
 
 def music_queue():
@@ -1515,15 +1538,24 @@ def music_queue():
         states = {item.get("entity_id"): item for item in ha.states()}
     except Exception as error:
         return {"tracks": [], "position": None, "error": f"Sonos non leggibili: {error}"}
-    coordinator = music_coordinator_now(states)
-    if not coordinator:
+    candidates = music_coordinator_candidates(states)
+    if not candidates:
         return {"tracks": [], "position": None, "error": "Nessuna musica in onda"}
+    # Il Sonos che guidava il gruppo può essere spento o scollegato: si prova con il successivo.
+    response, error, coordinator = None, None, candidates[0]
+    for candidate in candidates:
+        try:
+            response = ha.service_response("sonos", "get_queue", {"entity_id": candidate})
+            coordinator, error = candidate, None
+            break
+        except Exception as candidate_error:
+            if error is None:
+                error = (candidate_error, candidate)
+    if error is not None:
+        failed_error, failed = error
+        name = (states.get(failed, {}).get("attributes") or {}).get("friendly_name") or failed.removeprefix("media_player.")
+        return {"coordinator": failed, "tracks": [], "position": None, "error": queue_error_message(failed_error, name)}
     attrs = states.get(coordinator, {}).get("attributes") or {}
-    try:
-        response = ha.service_response("sonos", "get_queue", {"entity_id": coordinator})
-    except Exception as error:
-        return {"coordinator": coordinator, "tracks": [], "position": None,
-                "error": f"Home Assistant non dà l'elenco dei brani (serve Home Assistant 2024.12 o più recente): {error}"}
     items = response.get(coordinator) if isinstance(response, dict) else None
     if items is None and isinstance(response, dict) and len(response) == 1:
         items = next(iter(response.values()))
