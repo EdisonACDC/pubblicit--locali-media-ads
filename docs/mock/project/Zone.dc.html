@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<title>Zona Sala</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#0F1316}
+a{color:#E3B04B}a:hover{color:#F3C96E}
+.mono{font-family:'JetBrains Mono',monospace}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:0 16px;border-radius:10px;font:600 14px 'Figtree',sans-serif;cursor:pointer;border:1px solid transparent}
+.btn:focus-visible,.side a:focus-visible,.sw:focus-visible{outline:2px solid #E3B04B;outline-offset:2px}
+.btn-primary{background:#E3B04B;color:#1B1405}
+.btn-ghost{background:transparent;color:#E8EEF2;border-color:#33414C}
+.side a{display:flex;align-items:center;gap:10px;min-height:44px;padding:0 12px;border-radius:8px;color:#B4C1CB;text-decoration:none;font-weight:500}
+.side a:hover{background:#1A2228;color:#E8EEF2}
+.card{background:#161D22;border:1px solid #26313A;border-radius:14px}
+.sw{width:48px;height:28px;border-radius:99px;border:0;padding:3px;cursor:pointer;display:flex;flex:none}
+.sw[aria-checked="true"]{background:#E3B04B;justify-content:flex-end}
+.sw[aria-checked="false"]{background:#33414C;justify-content:flex-start}
+.knob{width:22px;height:22px;border-radius:50%;background:#FFFFFF}
+.cap{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#93A3B0}
+</style>
+</helmet>
+<div style="min-height: 100vh; background: #0F1316; color: #E8EEF2; font: 400 15px/1.5 'Figtree', sans-serif; display: flex; flex-wrap: wrap">
+  <nav class="side" aria-label="Zone e sezioni" style="flex: 1 1 240px; max-width: 100%; box-sizing: border-box; background: #12171B; border-right: 1px solid #222C33; padding: 20px 14px; display: flex; flex-direction: column; gap: 4px">
+    <div style="display: flex; align-items: center; gap: 10px; padding: 0 8px 18px; font-weight: 700; font-size: 16px">
+      <div style="width: 34px; height: 34px; border-radius: 50%; border: 1.5px solid #E3B04B; color: #E3B04B; display: grid; place-items: center; font-weight: 700">C</div>
+      Carellas Media Ads
+    </div>
+    <div class="cap" style="padding: 8px 12px 4px">Zone</div>
+    <a href="#">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect></svg>
+      Tutte le zone
+    </a>
+    <a href="#" aria-current="page" style="background: #1F2A31; color: #FFFFFF">
+      <span style="width: 8px; height: 8px; border-radius: 50%; background: #4CC38A; flex: none"></span>
+      <span style="flex: 1">Sala</span>
+      <span style="font-size: 12px; color: #93A3B0">Sonos · TV</span>
+    </a>
+    <a href="#">
+      <span style="width: 8px; height: 8px; border-radius: 50%; background: #4CC38A; flex: none"></span>
+      <span style="flex: 1">Terrazza</span>
+      <span style="font-size: 12px; color: #93A3B0">Sonos</span>
+    </a>
+    <a href="#">
+      <span style="width: 8px; height: 8px; border-radius: 1px; background: #F0A35E; transform: rotate(45deg); flex: none"></span>
+      <span style="flex: 1">Bar</span>
+      <span style="font-size: 12px; color: #F0A35E">offline</span>
+    </a>
+    <a href="#" style="color: #E3B04B">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+      Nuova zona
+    </a>
+    <div style="height: 1px; background: #222C33; margin: 14px 4px"></div>
+    <a href="#">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="m3 16 5-5 4 4 3-3 6 6"></path></svg>
+      Contenuti
+    </a>
+    <a href="#">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="17" rx="2"></rect><path d="M3 9h18M8 2v4M16 2v4"></path></svg>
+      Palinsesto
+    </a>
+    <a href="#">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"></path></svg>
+      Registro
+    </a>
+    <a href="#">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14 3h-4l-.5 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6a7 7 0 0 0 0 2.4l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2L10 21h4l.5-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z"></path></svg>
+      Impostazioni
+    </a>
+  </nav>
+
+  <main style="flex: 999 1 560px; min-width: 0; box-sizing: border-box; padding: 28px 32px 48px; display: flex; flex-direction: column; gap: 18px">
+    <div style="display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 14px">
+      <div>
+        <div class="cap">Zona</div>
+        <h1 style="margin: 2px 0 10px; font-size: 34px; font-weight: 700; letter-spacing: -0.01em">Sala</h1>
+        <div style="display: flex; flex-wrap: wrap; gap: 8px">
+          <span style="display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 99px; background: #1A2228; border: 1px solid #26313A; font-size: 13px">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#B4C1CB" stroke-width="1.8" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="3"></rect><circle cx="12" cy="14" r="3.5"></circle><circle cx="12" cy="6.5" r="1"></circle></svg>
+            Sonos Sala <span style="color: #4CC38A">· suona</span>
+          </span>
+          <span style="display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 99px; background: #1A2228; border: 1px solid #26313A; font-size: 13px">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#B4C1CB" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="2" y="4" width="20" height="13" rx="2"></rect><path d="M8 21h8"></path></svg>
+            TV Sala (DLNA) <span style="color: #4CC38A">· accesa</span>
+          </span>
+        </div>
+      </div>
+      <div style="display: flex; flex-wrap: wrap; gap: 10px">
+        <button class="btn btn-ghost" type="button">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"></path></svg>
+          Prova spot in Sala
+        </button>
+        <button class="btn btn-ghost" type="button" style="color: #F08A84; border-color: #4A2B2B">Ferma la zona</button>
+      </div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px">
+      <section class="card" aria-labelledby="c-mus" style="padding: 18px; display: flex; flex-direction: column; gap: 12px">
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px">
+          <h2 id="c-mus" style="margin: 0; font-size: 17px; font-weight: 700">Musica</h2>
+          <button class="sw" type="button" role="switch" aria-checked="true" aria-label="Musica attiva in Sala"><span class="knob"></span></button>
+        </div>
+        <div style="padding: 12px; border-radius: 10px; background: #1C252B">
+          <div style="font-weight: 600">[Playlist pranzo]</div>
+          <div style="font-size: 13px; color: #93A3B0">fino alle 14:00, poi [Radio pomeriggio]</div>
+        </div>
+        <fieldset style="border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 14px">
+          <legend class="cap" style="padding: 0; margin-bottom: 6px">Programma</legend>
+          <label style="display: flex; gap: 8px; align-items: center; min-height: 32px"><input type="radio" name="mp" checked style="accent-color: #E3B04B; width: 18px; height: 18px"> Segue il palinsesto generale</label>
+          <label style="display: flex; gap: 8px; align-items: center; min-height: 32px; color: #B4C1CB"><input type="radio" name="mp" style="accent-color: #E3B04B; width: 18px; height: 18px"> Personalizzato per questa zona</label>
+        </fieldset>
+        <label style="font-size: 13px; color: #93A3B0">Volume della zona <span class="mono" style="color: #E8EEF2">25</span>
+          <input type="range" min="0" max="100" value="25" style="width: 100%; accent-color: #E3B04B">
+        </label>
+      </section>
+
+      <section class="card" aria-labelledby="c-ads" style="padding: 18px; display: flex; flex-direction: column; gap: 12px">
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px">
+          <h2 id="c-ads" style="margin: 0; font-size: 17px; font-weight: 700">Pubblicità audio</h2>
+          <button class="sw" type="button" role="switch" aria-checked="true" aria-label="Pubblicità audio attiva in Sala"><span class="knob"></span></button>
+        </div>
+        <div style="font-size: 14px; color: #B4C1CB">1 spot ogni <strong style="color: #E8EEF2">30 min</strong> · prossimo alle <span class="mono" style="color: #E8EEF2">13:00</span></div>
+        <ol style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px">
+          <li style="display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; background: #1C252B">
+            <span class="mono" style="width: 22px; height: 22px; border-radius: 50%; background: #E3B04B; color: #1B1405; display: grid; place-items: center; font-size: 12px">1</span>
+            <span style="flex: 1; min-width: 0">Spot DE Femminile</span>
+            <span style="font-size: 12px; color: #E3B04B">prossimo</span>
+          </li>
+          <li style="display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; background: #1C252B">
+            <span class="mono" style="width: 22px; height: 22px; border-radius: 50%; background: #33414C; color: #E8EEF2; display: grid; place-items: center; font-size: 12px">2</span>
+            <span style="flex: 1; min-width: 0">Spot DE Maschile</span>
+          </li>
+        </ol>
+        <label style="display: flex; gap: 8px; align-items: center; font-size: 14px; min-height: 32px"><input type="checkbox" checked style="accent-color: #E3B04B; width: 18px; height: 18px"> Solo se la musica sta suonando</label>
+        <label style="font-size: 13px; color: #93A3B0">Volume spot <span class="mono" style="color: #E8EEF2">35</span>
+          <input type="range" min="1" max="100" value="35" style="width: 100%; accent-color: #E3B04B">
+        </label>
+      </section>
+
+      <section class="card" aria-labelledby="c-scr" style="padding: 18px; display: flex; flex-direction: column; gap: 12px">
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px">
+          <h2 id="c-scr" style="margin: 0; font-size: 17px; font-weight: 700">Schermo</h2>
+          <button class="sw" type="button" role="switch" aria-checked="true" aria-label="Schermo attivo in Sala"><span class="knob"></span></button>
+        </div>
+        <img src="/_blob/c0a1aecb5e605d0700e5c5fd54795639" alt="Anteprima canale: Benvenuti da Carellas" style="width: 100%; aspect-ratio: 16/9; object-fit: cover; border-radius: 10px; display: block">
+        <dl style="margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 14px">
+          <dt style="color: #93A3B0">Canale</dt><dd style="margin: 0">TV Demo Carellas</dd>
+          <dt style="color: #93A3B0">Orario</dt><dd class="mono" style="margin: 0">10:00 – 23:00, Lu–Ve</dd>
+          <dt style="color: #93A3B0">Accensione</dt><dd style="margin: 0">automatica, Wake-on-LAN</dd>
+        </dl>
+      </section>
+    </div>
+
+    <section class="card" aria-labelledby="c-seq" style="padding: 18px 18px 0">
+      <div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 14px">
+        <div>
+          <h2 id="c-seq" style="margin: 0; font-size: 17px; font-weight: 700">Sequenza sullo schermo</h2>
+          <div style="font-size: 13px; color: #93A3B0">Trascina per riordinare · si ripete in loop · formato 16:9 intero</div>
+        </div>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap">
+          <button class="btn btn-ghost" type="button">Nuovo collage</button>
+          <button class="btn btn-ghost" type="button">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+            Aggiungi dalla libreria
+          </button>
+        </div>
+      </div>
+      <div style="overflow-x: auto; padding-bottom: 16px">
+        <ol style="list-style: none; margin: 0; padding: 0; display: flex; gap: 12px; min-width: 760px">
+          <li style="flex: 1 1 0; min-width: 170px; background: #1C252B; border-radius: 10px; overflow: hidden; border: 1px solid #2B3740">
+            <div style="aspect-ratio: 16/9; background: #0B0F12; display: grid; place-items: center; position: relative">
+              <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#E8EEF2" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M10 8.5v7l6-3.5z" fill="#E8EEF2"></path></svg>
+              <span class="mono" style="position: absolute; left: 8px; top: 8px; width: 22px; height: 22px; border-radius: 50%; background: #E3B04B; color: #1B1405; display: grid; place-items: center; font-size: 12px">1</span>
+            </div>
+            <div style="padding: 10px">
+              <div style="font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">SmartTV_DLNA.mp4</div>
+              <div style="font-size: 12px; color: #93A3B0">Video · intero</div>
+            </div>
+          </li>
+          <li style="flex: 1 1 0; min-width: 170px; background: #1C252B; border-radius: 10px; overflow: hidden; border: 1px solid #2B3740">
+            <div style="position: relative">
+              <img src="/_blob/c0a1aecb5e605d0700e5c5fd54795639" alt="" style="width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block">
+              <span class="mono" style="position: absolute; left: 8px; top: 8px; width: 22px; height: 22px; border-radius: 50%; background: #E3B04B; color: #1B1405; display: grid; place-items: center; font-size: 12px">2</span>
+            </div>
+            <div style="padding: 10px">
+              <div style="font-size: 13px; font-weight: 600">01_Benvenuti.jpg</div>
+              <div style="font-size: 12px; color: #93A3B0">15 s · Ken Burns diagonale</div>
+            </div>
+          </li>
+          <li style="flex: 1 1 0; min-width: 170px; background: #1C252B; border-radius: 10px; overflow: hidden; border: 2px solid #E3B04B">
+            <div style="position: relative">
+              <img src="/_blob/c74ea9a6d9bff73eb456381a868f0a4e" alt="" style="width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block">
+              <span class="mono" style="position: absolute; left: 8px; top: 8px; width: 22px; height: 22px; border-radius: 50%; background: #E3B04B; color: #1B1405; display: grid; place-items: center; font-size: 12px">3</span>
+            </div>
+            <div style="padding: 10px">
+              <div style="font-size: 13px; font-weight: 600">02_Cucina.jpg</div>
+              <div style="font-size: 12px; color: #93A3B0">15 s · Zoom avanti</div>
+            </div>
+          </li>
+          <li style="flex: 1 1 0; min-width: 170px; background: #1C252B; border-radius: 10px; overflow: hidden; border: 1px solid #2B3740">
+            <div style="position: relative">
+              <img src="/_blob/65a1089b70dcc46466c85417b0cb66f9" alt="" style="width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block">
+              <span class="mono" style="position: absolute; left: 8px; top: 8px; width: 22px; height: 22px; border-radius: 50%; background: #E3B04B; color: #1B1405; display: grid; place-items: center; font-size: 12px">4</span>
+            </div>
+            <div style="padding: 10px">
+              <div style="font-size: 13px; font-weight: 600">03_Genuss.jpg</div>
+              <div style="font-size: 12px; color: #93A3B0">15 s · Dissolvenza</div>
+            </div>
+          </li>
+        </ol>
+      </div>
+      <div style="margin: 0 -18px; padding: 12px 18px; border-top: 1px solid #26313A; background: #1A1F1A; border-radius: 0 0 14px 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+        <span style="width: 8px; height: 8px; border-radius: 50%; background: #E3B04B"></span>
+        <span style="flex: 1 1 240px; font-size: 14px">Ordine modificato: la TV mostra ancora la versione precedente.</span>
+        <button class="btn btn-ghost" type="button">Annulla</button>
+        <button class="btn btn-primary" type="button">Genera e invia alla TV</button>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="c-dev" style="padding: 6px 18px">
+      <details>
+        <summary style="min-height: 52px; display: flex; align-items: center; gap: 10px; cursor: pointer; list-style: none">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#93A3B0" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg>
+          <h2 id="c-dev" style="margin: 0; font-size: 17px; font-weight: 700">Impostazioni avanzate dei dispositivi</h2>
+          <span style="font-size: 13px; color: #93A3B0">MAC Wake-on-LAN, entità di accensione e spegnimento, attesa all'avvio, URI Sonos</span>
+        </summary>
+      </details>
+    </section>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1260}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

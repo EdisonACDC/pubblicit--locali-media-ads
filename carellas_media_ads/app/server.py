@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import copy
+import csv
+import io
 import base64
 import hashlib
 import hmac
@@ -26,7 +28,7 @@ try:
     import websocket
 except ModuleNotFoundError:  # Il pacchetto viene installato nell'immagine dell'add-on.
     websocket = None
-from datetime import datetime
+from datetime import datetime, timedelta
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -40,6 +42,7 @@ IPTV_DIR = DATA_DIR / "iptv"
 UPLOAD_DIR = DATA_DIR / "uploads"
 CONFIG_FILE = DATA_DIR / "carellas_media_ads.json"
 RUNTIME_FILE = DATA_DIR / "carellas_media_ads_runtime.json"
+SPOT_HISTORY_FILE = DATA_DIR / "carellas_spot_history.json"
 SONOS_CATALOG_FILE = DATA_DIR / "carellas_sonos_catalog.json"
 DEFAULT_FILE = APP_DIR / "default_config.json"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
@@ -220,6 +223,28 @@ class Store:
             item["password_hash"] = encoded
             normalized_users.append(item)
         player["users"] = normalized_users
+        # Zone: informazione dell'interfaccia (luoghi del ristorante). Lo Scheduler non le usa.
+        zones = []
+        seen_zones = set()
+        for raw in self.config.get("zones") or []:
+            if not isinstance(raw, dict):
+                continue
+            name = str(raw.get("name", "")).strip()[:60]
+            if not name:
+                raise RuntimeError("Ogni zona deve avere un nome")
+            zone_id = safe_channel_id(str(raw.get("id") or name))
+            if zone_id in seen_zones:
+                raise RuntimeError(f"Zona duplicata: {name}")
+            seen_zones.add(zone_id)
+            zones.append({
+                "id": zone_id,
+                "name": name,
+                "players": [p for p in raw.get("players") or [] if isinstance(p, str) and p.startswith("media_player.")],
+                # True quando lo schermo TV LAN/DLNA principale si trova in questa zona.
+                "main_tv": raw.get("main_tv") is True,
+                "iptv_channels": [safe_channel_id(str(c)) for c in raw.get("iptv_channels") or [] if str(c).strip()],
+            })
+        self.config["zones"] = zones
 
     def install_bundled_media(self):
         source = APP_DIR / "bundled_media"
@@ -341,8 +366,71 @@ class HomeAssistant:
         return self.websocket_command(payload)
 
 
+class SpotHistory:
+    """Storico degli spot andati in onda, salvato su disco per i resoconti agli inserzionisti."""
+
+    MAX_DAYS = 400
+    MAX_ENTRIES = 50000
+
+    def __init__(self, path):
+        self.path = path
+        self.lock = threading.Lock()
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            self.entries = [item for item in data.get("entries", []) if isinstance(item, dict)]
+        except (FileNotFoundError, json.JSONDecodeError, AttributeError):
+            self.entries = []
+
+    def _save(self):
+        cutoff = (datetime.now().astimezone() - timedelta(days=self.MAX_DAYS)).isoformat(timespec="seconds")
+        self.entries = [item for item in self.entries if item.get("time", "") >= cutoff][-self.MAX_ENTRIES:]
+        temporary = self.path.with_suffix(".tmp")
+        try:
+            temporary.write_text(json.dumps({"entries": self.entries}, ensure_ascii=False), encoding="utf-8")
+            os.replace(temporary, self.path)
+        except OSError as error:
+            temporary.unlink(missing_ok=True)
+            store.log("warning", f"Storico spot non salvato: {error}")
+
+    def add(self, spot, players, manual, status="played", duration=None, reason=""):
+        entry = {
+            "id": uuid.uuid4().hex[:12],
+            "time": now_iso(),
+            "spot": spot or "",
+            "players": list(players or []),
+            "trigger": "manual" if manual else "automatic",
+            "status": status,
+            "duration": round(float(duration), 1) if duration else None,
+            "reason": str(reason)[:300],
+        }
+        with self.lock:
+            self.entries.append(entry)
+            self._save()
+        return entry["id"]
+
+    def update(self, entry_id, **fields):
+        with self.lock:
+            for item in reversed(self.entries):
+                if item.get("id") == entry_id:
+                    item.update(fields)
+                    self._save()
+                    return True
+        return False
+
+    def query(self, start=None, end=None):
+        """Voci dal giorno ``start`` al giorno ``end`` compresi (AAAA-MM-GG), le più recenti per prime."""
+        with self.lock:
+            items = list(self.entries)
+        if start:
+            items = [item for item in items if item.get("time", "")[:10] >= start]
+        if end:
+            items = [item for item in items if item.get("time", "")[:10] <= end]
+        return list(reversed(items))
+
+
 store = Store()
 ha = HomeAssistant()
+spot_history = SpotHistory(SPOT_HISTORY_FILE)
 upload_lock = threading.Lock()
 audio_playback_lock = threading.Lock()
 audio_stop_event = threading.Event()
@@ -710,6 +798,37 @@ def validate_music_slots(music):
                 )
 
 
+def configured_sonos_players():
+    """Sonos citati in configurazione: restano visibili anche quando sono offline."""
+    cfg = store.config
+    players = list(cfg.get("audio", {}).get("players", []))
+    players += cfg.get("music", {}).get("players", [])
+    for slot in cfg.get("music", {}).get("slots", []):
+        players += slot.get("players") or []
+    for zone in cfg.get("zones", []):
+        players += zone.get("players") or []
+    return {player for player in players if isinstance(player, str)}
+
+
+def sonos_state_detail(state, configured=()):
+    """Stato leggibile di un Sonos per le schermate Oggi e Zona, oppure None se non è un Sonos."""
+    entity_id = str(state.get("entity_id", ""))
+    attrs = state.get("attributes", {}) or {}
+    members = attrs.get("group_members")
+    if not isinstance(members, list) and entity_id not in configured:
+        return None
+    volume = attrs.get("volume_level")
+    return {
+        "entity_id": entity_id,
+        "name": attrs.get("friendly_name", entity_id),
+        "state": state.get("state"),
+        "available": state.get("state") != "unavailable",
+        "volume": round(float(volume) * 100) if isinstance(volume, (int, float)) else None,
+        "group_members": [m for m in (members or [entity_id]) if isinstance(m, str)],
+        "media_title": attrs.get("media_title") or attrs.get("source") or "",
+    }
+
+
 def available_sonos_players(players):
     """Scarta entità eliminate, non disponibili o non appartenenti all'integrazione Sonos."""
     requested = list(dict.fromkeys(player for player in players if player))
@@ -955,9 +1074,10 @@ def restore_sonos_playback(snapshot_targets, resume_targets, selected_players=No
         store.log("info", f"Ripresa forzata della musica Sonos su {len(resume_targets)} gruppo/i")
 
 
-def play_audio(filename=None, manual=False):
+def play_audio(filename=None, manual=False, players=None):
     cfg = store.config["audio"]
-    players = cfg.get("players", [])
+    # Una prova da una singola zona può indicare i suoi Sonos senza cambiare la configurazione.
+    players = list(players) if players else cfg.get("players", [])
     ads = cfg.get("ads", [])
     if not players:
         raise RuntimeError("Nessun altoparlante selezionato")
@@ -966,6 +1086,8 @@ def play_audio(filename=None, manual=False):
         filename = scheduler.pick_audio(ads, cfg.get("mode", "rotate"))
     if not filename:
         raise RuntimeError("Nessuno spot audio configurato")
+    # Lo storico deve indicare lo spot scelto anche se la trasmissione fallisce dopo.
+    scheduler.last_spot_attempt = filename
 
     players = available_sonos_players(players)
     if not players:
@@ -1030,6 +1152,7 @@ def play_audio(filename=None, manual=False):
                 "media_content_id": media_url(filename),
             })
             scheduler.record_audio_play()
+            history_id = spot_history.add(filename, players, manual, duration=duration)
             store.log(
                 "success",
                 f"Spot sincronizzato su {len(players)} Sonos selezionati: "
@@ -1039,6 +1162,7 @@ def play_audio(filename=None, manual=False):
             # precedenza la dissolvenza iniziava prima della fine e tagliava la
             # traccia; ora il ripristino parte solo dopo la durata completa.
             if audio_stop_event.wait(duration + SONOS_SPOT_TAIL_GUARD_SECONDS):
+                spot_history.update(history_id, status="stopped")
                 stopped = True
                 break
             set_sonos_volume_levels(quiet_levels)
@@ -1734,6 +1858,8 @@ class Scheduler(threading.Thread):
     def __init__(self):
         super().__init__(name="carellas-scheduler")
         self.last_audio = time.monotonic()
+        self.audio_paused_until = 0.0
+        self.last_spot_attempt = None
         self.audio_index = 0
         self.tv_index = 0
         self.tv_next = 0.0
@@ -1815,9 +1941,72 @@ class Scheduler(threading.Thread):
             store.log("error", f"Lettura Sonos non riuscita: {error}")
             return False
 
+    def peek_audio(self, ads, mode):
+        """Spot che verrà trasmesso al prossimo intervallo, senza avanzare la rotazione."""
+        if not ads:
+            return None
+        if mode in ("female", "male"):
+            return self.pick_audio(ads, mode)
+        return ads[self.audio_index % len(ads)]
+
+    def audio_paused(self):
+        return self.audio_paused_until > time.time()
+
+    def pause_audio(self, minutes):
+        """Sospende gli spot automatici; 0 riprende subito."""
+        minutes = max(0, min(int(minutes), 24 * 60))
+        self.audio_paused_until = time.time() + minutes * 60 if minutes else 0.0
+        self.last_audio = time.monotonic()
+        if minutes:
+            store.log("info", f"Pubblicità automatica in pausa per {minutes} minuti")
+        else:
+            store.log("info", "Pubblicità automatica ripresa")
+        return self.audio_paused_until
+
+    def skip_audio(self):
+        """Salta lo spot in arrivo: riparte l'intervallo e la rotazione passa al successivo."""
+        cfg = store.config["audio"]
+        skipped = self.peek_audio(cfg.get("ads", []), cfg.get("mode", "rotate"))
+        if cfg.get("mode", "rotate") == "rotate" and cfg.get("ads"):
+            self.audio_index += 1
+        self.last_audio = time.monotonic()
+        store.log("info", f"Spot saltato: {skipped or 'nessuno'}")
+        return skipped
+
+    def audio_status(self):
+        """Stato degli spot per le schermate: prossimo spot, pausa, motivo dell'attesa."""
+        cfg = store.config["audio"]
+        interval = max(1, int(cfg.get("interval_minutes", 30))) * 60
+        status = {
+            "spot_playing": audio_playback_lock.locked(),
+            "audio_paused_until": (
+                datetime.fromtimestamp(self.audio_paused_until).astimezone().isoformat(timespec="seconds")
+                if self.audio_paused() else None
+            ),
+            "next_spot": self.peek_audio(cfg.get("ads", []), cfg.get("mode", "rotate")),
+            "next_spot_in_seconds": None,
+            "audio_waiting": None,
+        }
+        if not cfg.get("enabled"):
+            status["audio_waiting"] = "disabled"
+        elif not cfg.get("ads"):
+            status["audio_waiting"] = "no_ads"
+        elif self.audio_paused():
+            status["audio_waiting"] = "paused"
+        elif not is_schedule_active(cfg.get("schedule", [])):
+            status["audio_waiting"] = "outside_schedule"
+        elif self.audio_today() >= max(1, int(cfg.get("daily_limit", 20))):
+            status["audio_waiting"] = "daily_limit"
+        else:
+            remaining = max(0, round(interval - (time.monotonic() - self.last_audio)))
+            status["next_spot_in_seconds"] = remaining
+            if remaining == 0 and cfg.get("only_when_playing", True) and not self.selected_playing():
+                status["audio_waiting"] = "no_music"
+        return status
+
     def audio_tick(self):
         cfg = store.config["audio"]
-        if not cfg.get("enabled") or not is_schedule_active(cfg.get("schedule", [])):
+        if not cfg.get("enabled") or not is_schedule_active(cfg.get("schedule", [])) or self.audio_paused():
             self.last_audio = time.monotonic()
             return
         interval = max(1, int(cfg.get("interval_minutes", 30))) * 60
@@ -1830,10 +2019,13 @@ class Scheduler(threading.Thread):
         if not self.busy.acquire(blocking=False):
             return
         self.last_audio = time.monotonic()
+        self.last_spot_attempt = None
         try:
             play_audio()
         except Exception as error:
             store.log("error", f"Spot audio non riuscito: {error}")
+            spot_history.add(self.last_spot_attempt, store.config["audio"].get("players", []), False,
+                             status="failed", reason=error)
         finally:
             self.busy.release()
 
@@ -2087,6 +2279,40 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def send_spot_csv(self, entries, start, end):
+        """Storico spot per Excel: separatore ';' e BOM UTF-8, come si aspetta Excel in IT/DE."""
+        zone_of = {}
+        for zone in store.config.get("zones", []):
+            for player in zone.get("players", []):
+                zone_of.setdefault(player, zone.get("name", player))
+
+        def place(player):
+            return zone_of.get(player) or player.removeprefix("media_player.").replace("_", " ")
+
+        labels = {"played": "Trasmesso", "stopped": "Interrotto", "failed": "Non riuscito"}
+        buffer = io.StringIO()
+        writer = csv.writer(buffer, delimiter=";", lineterminator="\r\n")
+        writer.writerow(["Data", "Ora", "Spot", "Zone", "Tipo", "Durata (s)", "Esito", "Note"])
+        for item in reversed(entries):
+            moment = item.get("time", "")
+            duration = item.get("duration")
+            writer.writerow([
+                moment[:10], moment[11:19], item.get("spot", ""),
+                ", ".join(dict.fromkeys(place(p) for p in item.get("players", []))),
+                "Prova manuale" if item.get("trigger") == "manual" else "Automatico",
+                str(duration).replace(".", ",") if duration is not None else "",
+                labels.get(item.get("status"), item.get("status", "")), item.get("reason", ""),
+            ])
+        data = ("﻿" + buffer.getvalue()).encode("utf-8")
+        name = f"storico-spot_{start or 'inizio'}_{end or datetime.now().date().isoformat()}.csv"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/csv; charset=utf-8")
+        self.send_header("Content-Disposition", f'attachment; filename="{name}"')
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
     def send_iptv_stream(self, channel_id):
         output = iptv.output(channel_id)
         if not output.is_file():
@@ -2199,6 +2425,17 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/iptv/status":
                 self.send_json({"channels": iptv.runtime_status()})
                 return
+            if path in ("/api/spots/history", "/api/spots/history.csv"):
+                query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+                day = r"\d{4}-\d{2}-\d{2}"
+                start = next((v for v in query.get("from", []) if re.fullmatch(day, v)), None)
+                end = next((v for v in query.get("to", []) if re.fullmatch(day, v)), None)
+                entries = spot_history.query(start, end)
+                if path.endswith(".csv"):
+                    self.send_spot_csv(entries, start, end)
+                else:
+                    self.send_json({"entries": entries, "from": start, "to": end})
+                return
             if path == "/iptv/channels.m3u":
                 lines = ["#EXTM3U"]
                 for channel in iptv.channels():
@@ -2256,6 +2493,8 @@ class Handler(BaseHTTPRequestHandler):
                 sonos_detected = False
                 power_entities = []
                 favorites_by_id = {}
+                sonos = []
+                configured = configured_sonos_players()
                 error = None
                 try:
                     for state in ha.states():
@@ -2269,6 +2508,9 @@ class Handler(BaseHTTPRequestHandler):
                         }
                         if entity_id.startswith("media_player."):
                             media_entities.append(item)
+                            sonos_detail = sonos_state_detail(state, configured)
+                            if sonos_detail:
+                                sonos.append(sonos_detail)
                             if isinstance(attrs.get("group_members"), list):
                                 sonos_detected = True
                                 if state.get("state") != "unavailable":
@@ -2308,8 +2550,10 @@ class Handler(BaseHTTPRequestHandler):
                         for media_id, value in favorites_by_id.items()
                     ), key=lambda x: x["name"].lower()),
                     "logs": store.logs,
+                    "sonos": sorted(sonos, key=lambda x: x["name"].lower()),
                     "runtime": {
                         "audio_today": scheduler.audio_today(),
+                        **scheduler.audio_status(),
                         "music_active": scheduler.music_active,
                         "music_slot_id": scheduler.music_slot_id,
                         "tv_active": scheduler.tv_active,
@@ -2331,6 +2575,15 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path in ("/screen", "/screen/"):
                 self.send_file(APP_DIR / "screen.html")
+                return
+            if path == "/favicon.ico":
+                # I browser la chiedono sempre: prima finiva nel Registro come errore.
+                self.send_response(204)
+                self.end_headers()
+                return
+            if path in ("/classic", "/classic/"):
+                # Interfaccia precedente, disponibile fino al collaudo della nuova.
+                self.send_file(APP_DIR / "index_classic.html")
                 return
             self.send_file(APP_DIR / "index.html")
         except (BrokenPipeError, ConnectionResetError):
@@ -2554,11 +2807,30 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path == "/api/test/audio":
                 body = self.json_body()
-                threading.Thread(target=play_audio, args=(body.get("name"), True), daemon=True).start()
+                players = [p for p in body.get("players") or [] if isinstance(p, str) and p.startswith("media_player.")]
+
+                def manual_spot():
+                    try:
+                        play_audio(body.get("name"), True, players or None)
+                    except Exception as error:
+                        # Prima l'errore di una prova manuale andava perso nel thread.
+                        spot_history.add(body.get("name"), players or store.config["audio"].get("players", []),
+                                         True, status="failed", reason=error)
+                        store.log("error", f"Prova spot non riuscita: {error}")
+
+                threading.Thread(target=manual_spot, daemon=True).start()
                 self.send_json({"ok": True})
                 return
             if path == "/api/audio/stop":
                 self.send_json({"ok": True, "active": stop_audio()})
+                return
+            if path == "/api/audio/skip":
+                self.send_json({"ok": True, "skipped": scheduler.skip_audio()})
+                return
+            if path == "/api/audio/pause":
+                body = self.json_body()
+                scheduler.pause_audio(body.get("minutes", 60))
+                self.send_json({"ok": True, **scheduler.audio_status()})
                 return
             if path == "/api/test/tv":
                 play_tv_item(self.json_body())
@@ -2572,10 +2844,36 @@ class Handler(BaseHTTPRequestHandler):
                 tv_power_off()
                 self.send_json({"ok": True})
                 return
+            if path == "/api/sonos/volume":
+                body = self.json_body()
+                entity_id = str(body.get("entity_id", ""))
+                if not entity_id.startswith("media_player."):
+                    raise RuntimeError("Altoparlante Sonos non valido")
+                volume = max(0, min(int(body.get("volume", 0)), 100))
+                ha.service("media_player", "volume_set", {"entity_id": entity_id, "volume_level": volume / 100})
+                self.send_json({"ok": True, "volume": volume})
+                return
+            if path == "/api/sonos/refresh":
+                body = self.json_body()
+                entity_id = str(body.get("entity_id", ""))
+                if not entity_id.startswith("media_player."):
+                    raise RuntimeError("Altoparlante Sonos non valido")
+                ha.service("homeassistant", "update_entity", {"entity_id": entity_id})
+                self.send_json({"ok": True})
+                return
             if path == "/api/music/start":
                 body = self.json_body()
                 selection = None
-                if body.get("scheduled"):
+                slot_id = str(body.get("slot_id") or "")
+                if slot_id:
+                    # Prova di una singola fascia dal Palinsesto.
+                    selection = next((
+                        slot for slot in store.config["music"].get("slots", [])
+                        if str(slot.get("id")) == slot_id
+                    ), None)
+                    if not selection:
+                        raise RuntimeError("Fascia musicale non trovata: salva prima le modifiche")
+                elif body.get("scheduled"):
                     music = store.config["music"]
                     selection = active_music_slot(music)
                     if not selection:
@@ -2613,7 +2911,15 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"ok": True, "browser": browser})
                 return
             if path == "/api/music/stop":
-                stop_music()
+                body = self.json_body()
+                players = [p for p in body.get("players") or [] if isinstance(p, str) and p.startswith("media_player.")]
+                if not players and body.get("all"):
+                    # Con le fasce i Sonos stanno nelle singole fasce, non in music.players.
+                    music = store.config["music"]
+                    players = list(music.get("players", [])) + list(scheduler.music_players or [])
+                    for slot in music.get("slots", []):
+                        players += slot.get("players") or []
+                stop_music(players or None)
                 self.send_json({"ok": True})
                 return
             self.send_json({"error": "Operazione sconosciuta"}, 404)
