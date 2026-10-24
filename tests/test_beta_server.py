@@ -4154,6 +4154,37 @@ class CarellasServerTest(unittest.TestCase):
             self.assertIn('data-act="queue-toggle"', html, page)
             self.assertIn("api/music/queue/play", html, page)
 
+    def test_playlist_tracks_when_leading_sonos_does_not_answer(self):
+        # Il Sonos che guidava il gruppo è scollegato: si legge la coda da un altro e, se nessuno risponde,
+        # il messaggio dice che la cassa non risponde (non che Home Assistant è vecchio).
+        app = self.app
+        offline = "HTTPConnectionPool(host='192.168.178.12', port=1400): Max retries exceeded (NewConnectionError)"
+        states = [
+            {"entity_id": "media_player.wein", "state": "playing", "attributes": {
+                "friendly_name": "Restaurant auf Weinkühlschrank", "group_members": ["media_player.wein"],
+                "queue_position": 0}},
+            {"entity_id": "media_player.sala", "state": "playing", "attributes": {
+                "friendly_name": "Sala", "group_members": ["media_player.sala"], "queue_position": 1}}]
+
+        def get_queue(domain, service, payload):
+            if payload["entity_id"] == "media_player.wein":
+                raise RuntimeError("Home Assistant 500: " + offline)
+            return {"media_player.sala": [{"media_title": "Albachiara"}, {"media_title": "Sally"}]}
+
+        with mock.patch.object(app.ha, "states", return_value=states), \
+                mock.patch.object(app.ha, "service_response", side_effect=get_queue), \
+                mock.patch.object(app.scheduler, "music_coordinator", "media_player.wein"):
+            payload = app.music_queue()
+        self.assertEqual(payload["coordinator"], "media_player.sala")
+        self.assertEqual([t["title"] for t in payload["tracks"]], ["Albachiara", "Sally"])
+        self.assertEqual(payload["position"], 1)
+        with mock.patch.object(app.ha, "states", return_value=states[:1]), \
+                mock.patch.object(app.ha, "service_response", side_effect=get_queue), \
+                mock.patch.object(app.scheduler, "music_coordinator", "media_player.wein"):
+            payload = app.music_queue()
+        self.assertIn("«Restaurant auf Weinkühlschrank» non risponde", payload["error"])
+        self.assertNotIn("2024.12", payload["error"])
+
     def test_now_playing_shows_real_sonos_volume(self):
         # «Ora in onda» mostra il volume letto dai Sonos, non quello della fascia, e dice se è scelto a mano.
         app = self.app
