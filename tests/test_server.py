@@ -1275,6 +1275,51 @@ class CarellasServerTest(unittest.TestCase):
         self.assertGreater(engine.music_retry_at, 0)
         self.assertFalse(engine.music_active)
 
+    def test_music_slot_end_restores_volume_after_fade_out(self):
+        original = json.loads(json.dumps(self.app.store.config["music"]))
+        slot = {
+            "id": "sera", "name": "Playlist", "players": ["media_player.sala", "media_player.bar"],
+            "content_id": "S:/Sera", "content_type": "playlist", "volume": 20,
+        }
+        states = [{
+            "entity_id": "media_player.sala", "state": "playing",
+            "attributes": {"group_members": ["media_player.sala", "media_player.bar"], "volume_level": 0.3},
+        }, {
+            "entity_id": "media_player.bar", "state": "playing",
+            "attributes": {"group_members": ["media_player.sala", "media_player.bar"], "volume_level": 0.45},
+        }]
+        engine = self.app.Scheduler()
+        self.app.store.config["music"] = {
+            "enabled": True, "players": slot["players"], "slots": [slot],
+            "schedule": [], "stop_at_end": True, "volume": 25, "transition_seconds": 3,
+        }
+        try:
+            with mock.patch.object(self.app, "active_music_slot", side_effect=[slot, None]), mock.patch.object(
+                self.app, "start_music", return_value=slot["players"]
+            ), mock.patch.object(self.app.ha, "states", return_value=states), mock.patch.object(
+                self.app.time, "sleep"
+            ):
+                engine.music_tick()
+                self.calls.clear()
+                engine.music_tick()
+        finally:
+            self.app.store.config["music"] = original
+        names = [call[1] for call in self.calls]
+        stop = names.index("media_stop")
+        self.assertEqual(self.calls[stop][2]["entity_id"], ["media_player.sala", "media_player.bar"])
+        faded = self.calls[stop - 1]
+        self.assertEqual(faded[1], "volume_set")
+        self.assertEqual(faded[2]["volume_level"], self.app.SONOS_QUIET_VOLUME)
+        restored = {
+            player: call[2]["volume_level"]
+            for call in self.calls[stop + 1:] if call[1] == "volume_set"
+            for player in call[2]["entity_id"]
+        }
+        self.assertEqual(restored, {"media_player.sala": 0.3, "media_player.bar": 0.45})
+        # Il volume torna com'era, ma la musica resta ferma.
+        self.assertFalse({"media_play", "play_media", "select_source"} & set(names[stop + 1:]))
+        self.assertFalse(engine.music_active)
+
     def test_music_slot_editor_is_available_on_phone(self):
         html = (Path(__file__).parents[1] / "carellas_media_ads/app/index.html").read_text(encoding="utf-8")
         self.assertIn("Orari di accensione musica", html)
