@@ -400,6 +400,7 @@ table.hist td.num{font-variant-numeric:tabular-nums;font-family:var(--mono);font
 .pause-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
 @media(max-width:700px){.top{padding:10px 14px}main{padding:16px 14px calc(150px + env(safe-area-inset-bottom))}.page-head h1{font-size:30px}}
 .top .brand-op{display:none}
+.embed .side .brand,.embed .side>.label,.embed .top .brand-op{display:none!important}
 .lane .mblock.ro{cursor:default}
 /* Il giorno resta visibile mentre si scorre la settimana di lato. */
 .week-row>div:first-child{position:sticky;left:0;z-index:4;background:var(--card);align-self:stretch;display:flex;flex-direction:column;justify-content:center}
@@ -423,6 +424,8 @@ table.hist td.num{font-variant-numeric:tabular-nums;font-family:var(--mono);font
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script>
 'use strict';
+// Dentro la plancia di Home Assistant (?embed=1) il logo c'è già: qui resta solo il menu delle sezioni.
+if(new URLSearchParams(location.search).get('embed')==='1')document.documentElement.classList.add('embed');
 // Pagina Operatori: musica, casse e pubblicità per i tablet del locale (grafica di «Ora in onda»). Nessuna impostazione.
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
