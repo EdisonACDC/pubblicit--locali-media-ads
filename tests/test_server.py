@@ -4274,6 +4274,9 @@ class CarellasServerTest(unittest.TestCase):
         # Agli operatori gli interruttori valgono solo per oggi: nessuna scrittura della configurazione.
         self.assertIn('data-act="zones-sheet"', staff)
         self.assertIn("function zonesSheet()", staff)
+        # Dalla plancia si arriva direttamente alla tabella, che resta aggiornata mentre è aperta.
+        self.assertIn("get('open')==='zones')S.sheet='zones'", staff)
+        self.assertIn("S.sheet!==true", staff)
         self.assertIn("{zone_id:z.id,on:!spotsOnIn(z),today:true}", staff)
         self.assertNotIn("api/config", staff)
         self.assertIn("'Musica e spot per zona':'Musik und Spots pro Zone'", staff)
