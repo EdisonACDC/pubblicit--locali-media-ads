@@ -1112,7 +1112,13 @@ def sonos_state_detail(state, configured=()):
 # Sonos spento o scollegato che Home Assistant non segna ancora come «non disponibile»: i comandi
 # inviati a più Sonos insieme fallivano tutti per colpa sua. Viene saltato per qualche minuto.
 SONOS_UNRESPONSIVE = {}
-SONOS_UNRESPONSIVE_SECONDS = 180
+# Se continua a non rispondere la pausa si allunga: riprovarla ogni 3 minuti bloccava spot e musica ogni volta.
+SONOS_UNRESPONSIVE_STEPS = (180, 600, 1800)
+SONOS_UNRESPONSIVE_STRIKES = {}
+SONOS_UNRESPONSIVE_FORGET_SECONDS = 3600
+# Casse già segnalate come «ignorate»: il motore le controlla ogni pochi secondi e riempivano il Registro.
+SONOS_IGNORED_LOGGED = {}
+SONOS_IGNORED_LOG_SECONDS = 3600
 
 
 def sonos_unresponsive(player):
@@ -1124,10 +1130,59 @@ def sonos_unresponsive(player):
 
 
 def mark_sonos_unresponsive(player, error):
-    if not sonos_unresponsive(player):
-        store.log("warning", f"Il Sonos {player.removeprefix('media_player.')} non risponde ({error}): "
-                             "lo salto per 3 minuti, gli altri continuano")
-    SONOS_UNRESPONSIVE[player] = time.monotonic() + SONOS_UNRESPONSIVE_SECONDS
+    if sonos_unresponsive(player):
+        return
+    now = time.monotonic()
+    strikes, last = SONOS_UNRESPONSIVE_STRIKES.get(player, (0, None))
+    strikes = 1 if last is None or now - last > SONOS_UNRESPONSIVE_FORGET_SECONDS \
+        else min(strikes + 1, len(SONOS_UNRESPONSIVE_STEPS))
+    seconds = SONOS_UNRESPONSIVE_STEPS[strikes - 1]
+    SONOS_UNRESPONSIVE_STRIKES[player] = (strikes, now)
+    SONOS_UNRESPONSIVE[player] = now + seconds
+    store.log("warning", f"Il Sonos {player.removeprefix('media_player.')} non risponde ({error}): "
+                         f"lo salto per {seconds // 60} minuti, gli altri continuano")
+
+
+def sonos_connection_error(error):
+    """La cassa non si raggiunge o non risponde in tempo (non è un rifiuto del comando)."""
+    return bool(re.search(r"max retries|newconnectionerror|connection refused|unable to connect|timed out|timeout"
+                          r"|unreachable|no route|upnp error (code )?1001", str(error), re.I))
+
+
+def find_unresponsive_sonos(error, players):
+    """Trova e segna la cassa che ha fatto fallire un comando di gruppo. L'errore spesso non la nomina
+    («timed out»): allora si prova a ridare a ogni cassa il volume che ha già, così si vede chi non risponde."""
+    if not sonos_connection_error(error):
+        return []
+    try:
+        states = {item.get("entity_id"): item for item in ha.states()}
+    except Exception:
+        return []
+    candidates = []
+    for player in players:
+        candidates += [player] + list(states.get(player, {}).get("attributes", {}).get("group_members") or [])
+    candidates = [player for player in dict.fromkeys(candidates)
+                  if states.get(player, {}).get("state") not in (None, "unavailable")]
+    text = str(error)
+    named = re.search(r"Error on ([^:(]+?)\s*[:(]", text)
+    # Con l'errore UPnP viene nominata la cassa che ha ricevuto il rifiuto, non quella che non risponde.
+    found = [player for player in candidates if player in text]
+    if not found and named and "upnp" not in text.lower():
+        found = [player for player in candidates
+                 if states[player].get("attributes", {}).get("friendly_name") == named.group(1)]
+    if not found:
+        for player in candidates:
+            level = states[player].get("attributes", {}).get("volume_level")
+            if sonos_unresponsive(player) or not isinstance(level, (int, float)):
+                continue
+            try:
+                ha.service("media_player", "volume_set", {"entity_id": player, "volume_level": level})
+            except Exception as probe_error:
+                if sonos_connection_error(probe_error):
+                    found.append(player)
+    for player in found:
+        mark_sonos_unresponsive(player, error)
+    return found
 
 
 def sonos_service_each(domain, name, payload, call=None, split_on_timeout=True):
@@ -1175,8 +1230,14 @@ def available_sonos_players(players):
     else:
         valid = [player for player in requested if states.get(player, {}).get("state") != "unavailable"]
     removed = [player for player in requested if player not in valid]
-    if removed:
-        store.log("warning", "Altoparlanti ignorati perché non sono Sonos disponibili: " + ", ".join(removed))
+    now = time.monotonic()
+    for player in valid:
+        SONOS_IGNORED_LOGGED.pop(player, None)
+    fresh = [player for player in removed
+             if player not in SONOS_IGNORED_LOGGED or now - SONOS_IGNORED_LOGGED[player] >= SONOS_IGNORED_LOG_SECONDS]
+    if fresh:
+        SONOS_IGNORED_LOGGED.update({player: now for player in fresh})
+        store.log("warning", "Altoparlanti ignorati perché non sono Sonos disponibili: " + ", ".join(fresh))
     # Sonos che non hanno risposto da poco: si saltano senza aspettare un altro errore.
     valid = [player for player in valid if not sonos_unresponsive(player)]
     return valid
@@ -1214,14 +1275,18 @@ def prepare_sonos_group(players, force=False):
                 "group_members": players[1:],
             })
         except Exception as error:
-            if len(players) < 3 or sonos_transition_busy(error):
+            if sonos_transition_busy(error):
                 raise
-            # Un Sonos spento fa fallire tutto il raggruppamento: si aggiungono uno alla volta.
-            for member in players[1:]:
-                try:
-                    sonos_service("media_player", "join", {"entity_id": coordinator, "group_members": [member]})
-                except Exception as member_error:
-                    mark_sonos_unresponsive(member, member_error)
+            if len(players) < 3:
+                if players[1] not in find_unresponsive_sonos(error, players):
+                    raise
+            else:
+                # Un Sonos spento fa fallire tutto il raggruppamento: si aggiungono uno alla volta.
+                for member in players[1:]:
+                    try:
+                        sonos_service("media_player", "join", {"entity_id": coordinator, "group_members": [member]})
+                    except Exception as member_error:
+                        mark_sonos_unresponsive(member, member_error)
         if SONOS_GROUP_SETTLE_SECONDS > 0:
             time.sleep(SONOS_GROUP_SETTLE_SECONDS)
         store.log("info", f"Gruppo Sonos sincronizzato: {len(players)} altoparlanti")
@@ -1261,7 +1326,9 @@ def sonos_group_ready(players, groups):
     if len(groups) != 1:
         return None
     coordinator, members = next(iter(groups.items()))
-    if coordinator in players and set(members) == set(players):
+    # Una cassa saltata non conta: staccare gli altri per lei lascerebbe solo più silenzio.
+    reachable = {member for member in members if not sonos_unresponsive(member)}
+    if coordinator in players and reachable == {player for player in players if not sonos_unresponsive(player)}:
         return coordinator
     return None
 
@@ -1692,12 +1759,21 @@ def set_sonos_volume_levels(levels):
     """Imposta anche volumi diversi senza perdere il bilanciamento tra le sale."""
     grouped = {}
     for player, level in levels.items():
-        grouped.setdefault(round(max(0.0, min(float(level), 1.0)), 3), []).append(player)
+        if not sonos_unresponsive(player):
+            grouped.setdefault(round(max(0.0, min(float(level), 1.0)), 3), []).append(player)
     for level, players in grouped.items():
-        sonos_service_each("media_player", "volume_set", {
-            "entity_id": players,
-            "volume_level": level,
-        }, call=sonos_service)
+        try:
+            sonos_service_each("media_player", "volume_set", {
+                "entity_id": players,
+                "volume_level": level,
+            }, call=sonos_service)
+        except Exception as error:
+            # Una cassa con un volume tutto suo viene comandata da sola: se non risponde si salta, come nel
+            # gruppo, e le altre continuano. Se le casse sono tutte qui l'errore resta (può essere Home Assistant).
+            if len(players) > 1 or len(grouped) < 2 or not sonos_connection_error(error):
+                raise
+            mark_sonos_unresponsive(players[0], error)
+            continue
         # Ultimo volume dato dall'add-on: serve a riconoscere quello cambiato a mano dall'app Sonos.
         with SONOS_VOLUME_MEMORY_LOCK:
             for player in players:
@@ -1745,7 +1821,9 @@ def wait_sonos_groups(groups, seconds=None):
         ready = True
         for coordinator, members in (groups or {}).items():
             current = set(states.get(coordinator, {}).get("attributes", {}).get("group_members") or [coordinator])
-            reachable = {m for m in members if states.get(m, {}).get("state") not in (None, "unavailable")}
+            # Una cassa che non risponde non torna nel gruppo: aspettarla allungava il silenzio dopo lo spot.
+            reachable = {m for m in members if states.get(m, {}).get("state") not in (None, "unavailable")
+                         and not sonos_unresponsive(m)}
             if not reachable.issubset(current):
                 ready = False
         if ready:
@@ -1754,8 +1832,26 @@ def wait_sonos_groups(groups, seconds=None):
     return False
 
 
+def take_sonos_snapshot(targets, players):
+    """Salva lo stato prima dello spot. Con il gruppo incluso basta una cassa che non risponde a far fallire
+    tutto: in quel caso si salvano le sole casse dello spot. Restituisce le destinazioni e se c'è il gruppo."""
+    try:
+        sonos_service_each("sonos", "snapshot", {"entity_id": targets, "with_group": True})
+        return targets, True
+    except Exception as error:
+        if sonos_transition_busy(error) or not sonos_connection_error(error):
+            raise
+        find_unresponsive_sonos(error, players)
+        reachable = [player for player in players if not sonos_unresponsive(player)]
+        if not reachable:
+            raise
+        store.log("warning", "Stato Sonos salvato senza il gruppo: una cassa del gruppo non risponde")
+        sonos_service_each("sonos", "snapshot", {"entity_id": reachable, "with_group": False})
+        return reachable, False
+
+
 def restore_sonos_playback(snapshot_targets, resume_targets, selected_players=None, volume_levels=None,
-                           transition_seconds=0, groups=None):
+                           transition_seconds=0, groups=None, with_group=True):
     """Ripristina gruppi/coda e riavvia la musica che proveniva direttamente da Sonos."""
     last_error = None
     for attempt in range(SONOS_RESTORE_RETRIES):
@@ -1764,7 +1860,7 @@ def restore_sonos_playback(snapshot_targets, resume_targets, selected_players=No
             # Se Home Assistant è solo lento (timeout) non si ripete: vedi sotto.
             sonos_service_each("sonos", "restore", {
                 "entity_id": snapshot_targets,
-                "with_group": True,
+                "with_group": with_group,
             }, split_on_timeout=False)
             last_error = None
             break
@@ -1777,6 +1873,11 @@ def restore_sonos_playback(snapshot_targets, resume_targets, selected_players=No
                 last_error = None
                 break
             last_error = error
+            if with_group and sonos_connection_error(error):
+                # Una cassa del gruppo non si raggiunge: si ripristina senza il gruppo, che poi viene
+                # ricomposto da repair_sonos_topology. Altrimenti la musica non ripartiva più su nessuna.
+                find_unresponsive_sonos(error, snapshot_targets)
+                with_group = False
             store.log("warning", f"Ripristino Sonos, tentativo {attempt + 1}/{SONOS_RESTORE_RETRIES}: {error}")
             if attempt + 1 < SONOS_RESTORE_RETRIES:
                 time.sleep(0.75)
@@ -1805,6 +1906,25 @@ def restore_sonos_playback(snapshot_targets, resume_targets, selected_players=No
 
 
 def play_audio(filename=None, manual=False, players=None):
+    """Trasmette lo spot. Se una cassa non risponde e lo spot non è ancora andato in onda si riprova
+    subito senza di lei: prima saltava l'intero spot, su tutte le casse."""
+    automatic = not filename
+    aired = scheduler.audio_today()
+    scheduler.last_spot_attempt = None
+    try:
+        return play_audio_once(filename, manual, players)
+    except Exception as error:
+        chosen = scheduler.last_spot_attempt
+        if not chosen or scheduler.audio_today() != aired:
+            raise
+        found = find_unresponsive_sonos(error, players or store.config["audio"].get("players", []))
+        if not found:
+            raise
+        store.log("warning", "Spot: riprovo senza " + ", ".join(p.removeprefix("media_player.") for p in found))
+        return play_audio_once(chosen, manual, players, automatic=automatic)
+
+
+def play_audio_once(filename=None, manual=False, players=None, automatic=False):
     cfg = store.config["audio"]
     # Una prova da una singola zona può indicare i suoi Sonos senza cambiare la configurazione.
     if players:
@@ -1818,8 +1938,8 @@ def play_audio(filename=None, manual=False, players=None):
     ads = active_ads(cfg)
     if not players:
         raise RuntimeError("Nessun altoparlante selezionato")
-    automatically_selected = not filename
-    if automatically_selected:
+    automatically_selected = automatic or not filename
+    if not filename:
         filename = scheduler.pick_audio(ads, cfg.get("mode", "rotate"))
     if not filename:
         raise RuntimeError("Nessuno spot audio configurato")
@@ -1850,6 +1970,7 @@ def play_audio(filename=None, manual=False, players=None):
     audio_stop_event.clear()
     snapshot_created = False
     snapshot_targets = list(players)
+    snapshot_with_group = True
     original_groups = {}
     resume_targets = []
     stopped = False
@@ -1862,10 +1983,7 @@ def play_audio(filename=None, manual=False, players=None):
         # normale flusso sul coordinatore del gruppo temporaneo.
         snapshot_targets, resume_targets = sonos_playback_context(players)
         original_groups = sonos_group_topology(players)
-        sonos_service_each("sonos", "snapshot", {
-            "entity_id": snapshot_targets,
-            "with_group": True,
-        })
+        snapshot_targets, snapshot_with_group = take_sonos_snapshot(snapshot_targets, players)
         snapshot_created = True
         fade_sonos(players, SONOS_QUIET_VOLUME, transition, previous_volumes)
         coordinator = sonos_group_ready(players, original_groups)
@@ -1919,6 +2037,7 @@ def play_audio(filename=None, manual=False, players=None):
                     previous_volumes,
                     transition,
                     groups=original_groups,
+                    with_group=snapshot_with_group,
                 )
                 repaired, unavailable = repair_sonos_topology(original_groups, previous_volumes)
                 if repaired:
@@ -2144,6 +2263,10 @@ def sonos_playing(entity_id):
     if state is None:
         return None
     return state in ("playing", "buffering")
+
+
+class MusicChoiceNeeded(RuntimeError):
+    """Si è chiesto di riaccendere il programma, ma adesso non c'è nessuna fascia: non è un guasto."""
 
 
 class SonosNotStarted(RuntimeError):
@@ -3302,7 +3425,7 @@ class Scheduler(threading.Thread):
         (anche fuori dal programma) finché non la spegni o inizia un'altra fascia."""
         if not selection:
             if not self.current_slot_key():
-                raise RuntimeError("Fuori programma: scegli cosa suonare")
+                raise MusicChoiceNeeded("Fuori programma: scegli cosa suonare")
             self.music_override = None
             self._forget_music()
             store.log("info", "Musica riaccesa: riprende il palinsesto")
@@ -3439,6 +3562,7 @@ class Scheduler(threading.Thread):
                         self.music_active = True
                         return
                 rejected = sonos_source_rejected(error)
+                find_unresponsive_sonos(error, slot.get("players") or cfg.get("players") or [])
                 message = f"Avvio musica non riuscito: {music_error_message(error, slot)}"
                 # Lo stesso errore sulla stessa fascia si scrive una volta sola nel Registro.
                 if (slot_key, message) != self.music_last_error:
@@ -4407,7 +4531,7 @@ class Handler(BaseHTTPRequestHandler):
             "runtime": {key: runtime.get(key) for key in (
                 "music_active", "music_slot_id", "music_override", "music_excluded", "spots_excluded", "ads_excluded",
                 "manual_volumes",
-                "music_coordinator",
+                "music_coordinator", "music_scheduled_now",
                 "mix_week", "next_spot", "next_spot_in_seconds",
                 "spot_playing", "audio_paused_until", "audio_waiting", "audio_today")},
             "ha_error": data.get("ha_error"),
@@ -4584,6 +4708,8 @@ class Handler(BaseHTTPRequestHandler):
                                            manual_sonos_volumes(list(SONOS_MANUAL_VOLUMES)).items()},
                         "ads_excluded": sorted(ads_excluded_today()),
                         "music_coordinator": scheduler.music_coordinator,
+                        # C'è una fascia adesso: se no, per accendere la musica bisogna scegliere cosa suonare.
+                        "music_scheduled_now": bool(scheduler.current_slot_key()),
                         "music_override": (
                             {"mode": scheduler.music_override["mode"], "name": scheduler.music_override.get("name", "")}
                             if scheduler.music_override else None
@@ -5094,6 +5220,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"ok": True})
                 return
             self.send_json({"error": "Operazione sconosciuta"}, 404)
+        except MusicChoiceNeeded as error:
+            self.send_json({"error": str(error)}, 409)
         except Exception as error:
             store.log("error", f"POST {path}: {error}")
             self.send_json({"error": str(error)}, 500)
