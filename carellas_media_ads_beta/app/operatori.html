@@ -605,7 +605,7 @@ function pageOra(){
     ${stats}
     ${timeline}
     ${pauseCard}
-    <section><div class="row" style="justify-content:space-between;margin-bottom:12px"><h2 style="margin:0;font:500 20px var(--display);color:var(--title)">${esc(L('Zone'))}</h2></div><div class="grid-auto">${zoneCards}</div></section>
+    <section><div class="row" style="justify-content:space-between;margin-bottom:12px"><h2 style="margin:0;font:500 20px var(--display);color:var(--title)">${esc(L('Zone'))}</h2><button class="btn btn-ghost btn-sm" type="button" data-act="zones-sheet">${esc(L('Musica e spot per zona'))}</button></div><div class="grid-auto">${zoneCards}</div></section>
     ${S.sheet==='zones'?zonesSheet():S.sheet?sheet():''}`;
 }
 function days(){return S.lang==='de'?DAYS_DE:DAYS_IT}
@@ -877,7 +877,9 @@ document.addEventListener('change',e=>{const t=e.target;
   if(t.dataset.pvol!==undefined){S.drag=null;const s=sonosById(t.dataset.pvol);if(s)s.volume=+t.value;api('api/sonos/volume',{entity_id:t.dataset.pvol,volume:+t.value}).then(()=>setTimeout(load,700)).catch(x=>toast(x.message,true));return}
   if(t.dataset.zvol!==undefined){S.drag=null;setZone(t.dataset.zvol,+t.value)}});
 setInterval(()=>{const c=$('clock');if(c)c.textContent=hhmm(nowMin())},10000);
-load();setInterval(()=>{if(!S.busy&&!S.sheet&&!audioPlaying()){load();if(S.queueOpen&&!(S.queue&&S.queue.loading)&&Date.now()-((S.queue&&S.queue.at)||0)>15000)loadQueue()}},4000);
+// Dalla plancia di Home Assistant si arriva direttamente alla tabella delle zone.
+if(new URLSearchParams(location.search).get('open')==='zones')S.sheet='zones';
+load();setInterval(()=>{if(!S.busy&&S.sheet!==true&&!audioPlaying()){load();if(S.queueOpen&&!(S.queue&&S.queue.loading)&&Date.now()-((S.queue&&S.queue.at)||0)>15000)loadQueue()}},4000);
 </script>
 </body>
 </html>
