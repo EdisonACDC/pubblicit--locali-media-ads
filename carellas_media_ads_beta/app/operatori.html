@@ -485,7 +485,8 @@ const toMin=t=>{const [h,m]=String(t||'0:0').split(':').map(Number);return h*60+
 const hhmm=m=>`${String(Math.floor(m/60)%24).padStart(2,'0')}:${String(Math.round(m)%60).padStart(2,'0')}`;
 const pretty=n=>String(n||'').replace(/\.[a-z0-9]{2,4}$/i,'').replace(/^Carellas_Ristorante_/,'').replace(/^Demo_Carellas_/,'').replace(/_/g,' ');
 function toast(msg,bad){const t=$('toast');t.textContent=L(msg);t.className='toast show'+(bad?' bad':'');clearTimeout(toast.t);toast.t=setTimeout(()=>t.className='toast',3500)}
-async function api(path,body){const r=await fetch(path,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined,cache:'no-store'});
+// Una richiesta rimasta appesa (Wi-Fi caduto, tablet in standby) non deve fermare gli aggiornamenti.
+async function api(path,body){const r=await fetch(path,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined,cache:'no-store',signal:AbortSignal.timeout?AbortSignal.timeout(body?60000:15000):undefined});
   if(r.status===401){location.href='login';throw new Error('login')}const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||('HTTP '+r.status));return j}
 async function act(path,body,ok){try{S.busy=true;await api(path,body);if(ok)toast(ok);setTimeout(load,600)}catch(e){if(e.message!=='login')toast(e.message,true)}finally{S.busy=false}}
 async function load(){try{S.state=await api('api/staff/state');if(!S.langChosen){try{S.langChosen=!!localStorage.getItem('carellas.oplang')}catch(e){}if(!S.langChosen)S.lang=S.state.config.language==='de'?'de':'it'}document.documentElement.lang=S.lang;if(S.route==='storico'&&Date.now()-(S.hist.at||0)>30000&&!S.hist.loading)loadHistory();render()}catch(e){if(e.message!=='login')$('main').innerHTML=`<div class="notice warn">${esc(e.message)}</div>`}}
@@ -880,6 +881,8 @@ document.addEventListener('change',e=>{const t=e.target;
 setInterval(()=>{const c=$('clock');if(c)c.textContent=hhmm(nowMin())},10000);
 // Dalla plancia di Home Assistant si arriva direttamente alla tabella delle zone.
 if(new URLSearchParams(location.search).get('open')==='zones')S.sheet='zones';
+// Tornando sulla scheda (o riaccendendo il tablet) i dati si rileggono subito.
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!S.busy&&S.sheet!==true&&!audioPlaying())load()});
 load();setInterval(()=>{if(!S.busy&&S.sheet!==true&&!audioPlaying()){load();if(S.queueOpen&&!(S.queue&&S.queue.loading)&&Date.now()-((S.queue&&S.queue.at)||0)>15000)loadQueue()}},4000);
 </script>
 </body>
