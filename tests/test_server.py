@@ -127,7 +127,19 @@ class CarellasServerTest(unittest.TestCase):
                     status, html = call(prefix + path)
                     self.assertEqual(status, 200)
                     self.assertIn("api/staff/state", html, path)
-                self.assertEqual(call(prefix + "/api/staff/state")[0], 200)
+                # Lo stato deve arrivare pieno: sull'impianto era vuoto, «0 di 0 Sonos» e nessuno spot.
+                limit = app.store.config["audio"].get("daily_limit")
+                self.addCleanup(app.store.update, {"audio": {"daily_limit": limit}})
+                app.store.update({"audio": {"daily_limit": 7}})
+                states = [{"entity_id": "media_player.sala", "state": "playing",
+                           "attributes": {"friendly_name": "Sonos Sala", "device_class": "speaker", "group_members": []}}]
+                with mock.patch.object(app.ha, "states", return_value=states):
+                    status, body = call(prefix + "/api/staff/state")
+                self.assertEqual(status, 200)
+                state = json.loads(body)
+                self.assertEqual(state["config"]["audio"]["daily_limit"], 7)
+                self.assertEqual([s["entity_id"] for s in state["sonos"]], ["media_player.sala"])
+                self.assertNotIn("remote_admin", state["config"])
                 for path in ("/api/state", "/classic", "/media/Foto_riservata.jpg"):
                     self.assertEqual(call(prefix + path)[0], 403, path)
                 language = app.store.config.get("language")
