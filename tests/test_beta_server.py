@@ -4600,6 +4600,24 @@ class CarellasServerTest(unittest.TestCase):
         self.assertNotIn("pageImpostazioni", html)
         self.assertNotIn("['tv','TV']", html)
 
+    def test_music_list_scrolls_and_zones_button_on_small_screens(self):
+        base = Path(__file__).parents[1] / "carellas_media_ads_beta/app"
+        staff = (base / "operatori.html").read_text(encoding="utf-8")
+        panel = (base / "index.html").read_text(encoding="utf-8")
+        # La barra in basso copriva la fine della lista: il foglio deve starle sopra e scorrere al suo interno.
+        self.assertIn(".overlay{position:fixed;inset:0;z-index:35;", staff)
+        self.assertIn("overflow-y:auto;overscroll-behavior:contain", staff)
+        self.assertIn('<div class="sheet-body list" data-sheet-body>', staff)
+        self.assertIn("overflow-y:auto;overscroll-behavior:contain", panel)
+        self.assertIn("view-pop.offsetHeight-16", panel)
+        self.assertIn('href="#/zone">${icon(\'speaker\')}${esc(L(\'Musica e spot per zona\'))}', panel)
+        # Agli operatori gli interruttori valgono solo per oggi: nessuna scrittura della configurazione.
+        self.assertIn('data-act="zones-sheet"', staff)
+        self.assertIn("function zonesSheet()", staff)
+        self.assertIn("{zone_id:z.id,on:!spotsOnIn(z),today:true}", staff)
+        self.assertNotIn("api/config", staff)
+        self.assertIn("'Musica e spot per zona':'Musik und Spots pro Zone'", staff)
+
     def test_overnight_schedule(self):
         schedule = [{"days": [6], "start": "22:00", "end": "02:00", "enabled": True}]
         self.assertTrue(self.app.is_schedule_active(schedule, datetime(2026, 9, 13, 23, 0)))
