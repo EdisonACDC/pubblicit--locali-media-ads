@@ -4281,6 +4281,31 @@ class CarellasServerTest(unittest.TestCase):
         self.assertNotIn("api/config", staff)
         self.assertIn("'Musica e spot per zona':'Musik und Spots pro Zone'", staff)
 
+    def test_operators_without_saved_zones_get_one_zone_per_sonos(self):
+        # Impianto reale: zone mai confermate nel pannello, e la tabella degli operatori diceva «Nessuna».
+        app = self.app
+        saved = app.store.config.get("zones")
+        app.store.config["zones"] = []
+        self.addCleanup(app.store.config.__setitem__, "zones", saved)
+        self.addCleanup(app.SPOTS_EXCLUDED.clear)
+        states = [
+            {"entity_id": "media_player.sala", "state": "playing",
+             "attributes": {"friendly_name": "Sonos Sala", "device_class": "speaker", "group_members": []}},
+            {"entity_id": "media_player.tv", "state": "on", "attributes": {"friendly_name": "TV"}},
+        ]
+        with mock.patch.object(app.ha, "states", return_value=states):
+            self.assertEqual(app.find_zone("media_player.sala")["players"], ["media_player.sala"])
+            # Un'entità che non è un Sonos non diventa una zona.
+            self.assertIsNone(app.find_zone("media_player.tv"))
+            self.assertIsNone(app.find_zone("light.sala"))
+            self.assertEqual(self.request("/api/zone/spots", "POST",
+                                          {"zone_id": "media_player.sala", "on": False, "today": True})[0], 200)
+            self.assertIn("media_player.sala", app.SPOTS_EXCLUDED)
+        # Con zone salvate il Sonos da solo non è una zona.
+        app.store.config["zones"] = [{"id": "sala", "name": "Sala", "players": ["media_player.sala"]}]
+        with mock.patch.object(app.ha, "states", return_value=states):
+            self.assertIsNone(app.find_zone("media_player.sala"))
+
     def test_overnight_schedule(self):
         schedule = [{"days": [6], "start": "22:00", "end": "02:00", "enabled": True}]
         self.assertTrue(self.app.is_schedule_active(schedule, datetime(2026, 9, 13, 23, 0)))

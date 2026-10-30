@@ -494,7 +494,8 @@ const sonos=()=>S.state.sonos||[];
 const sonosById=id=>sonos().find(s=>s.entity_id===id);
 const sonosName=id=>{const s=sonosById(id);return s?String(s.name).replace(/^sonos\s+/i,''):String(id).replace(/^media_player\.(sonos_)?/,'')};
 const namesOf=l=>(l||[]).map(sonosName).join(', ');
-function zones(){const z=(cfg().zones||[]).filter(z=>(z.players||[]).length);return z.length?z:[{id:'all',name:L('Tutte le casse'),players:sonos().map(s=>s.entity_id)}]}
+// Senza zone salvate ogni Sonos è una zona, come quelle proposte dal pannello.
+function zones(){const z=(cfg().zones||[]).filter(z=>(z.players||[]).length);return z.length?z:sonos().map(s=>({id:s.entity_id,name:sonosName(s.entity_id),players:[s.entity_id]}))}
 function todayIdx(){const d=new Date().getDay();return d===0?6:d-1}
 function nowMin(){const d=new Date();return d.getHours()*60+d.getMinutes()}
 function windowsOf(rows,day){const out=[];(rows||[]).filter(r=>r.enabled!==false).forEach(r=>{const a=toMin(r.start),b=toMin(r.end);if((r.days||[]).includes(day))out.push(a<b?[a,b]:[a,1440]);if(a>=b&&(r.days||[]).includes((day+6)%7))out.push([0,b])});
@@ -572,7 +573,7 @@ function pageOra(){
       ${v==null?'':`<div class="tiny muted" style="margin-top:4px">${esc(L('Volume'))}</div><div class="zvol"><button type="button" data-step="-5" data-z="${esc(z.id)}" aria-label="−">−</button><div class="val" data-out="${esc(z.id)}">${v}</div><button type="button" data-step="5" data-z="${esc(z.id)}" aria-label="+">+</button></div>
         <input type="range" min="0" max="100" value="${v}" data-zvol="${esc(z.id)}" aria-label="${esc(L('Volume')+' '+z.name)}">
         <button class="btn btn-ghost btn-sm" type="button" data-mute="${esc(z.id)}" style="align-self:flex-start">${esc(L('Muto'))}</button>`}
-      ${z.id==='all'?'':`<div class="toggles"><button class="toggle" type="button" data-zmusic="${esc(z.id)}" aria-pressed="${musicOnIn(z)}">♫ ${esc(L('Musica'))}: ${esc(L(musicOnIn(z)?'sì':'no'))}</button><button class="toggle" type="button" data-zspots="${esc(z.id)}" aria-pressed="${spotsOnIn(z)}" ${spotsAdminOn(z)?'':'disabled'}>${esc(L('Spot'))}: ${esc(L(spotsOnIn(z)?'sì':'no'))}</button></div>${musicOnIn(z)?'':`<div class="tiny warn-text">${esc(L('Musica tolta da questa zona per oggi'))}</div>`}${!spotsAdminOn(z)?`<div class="tiny muted">${esc(L('Spot spenti dall’amministratore'))}</div>`:spotsOnIn(z)?'':`<div class="tiny warn-text">${esc(L('Spot tolti per oggi: domani tornano'))}</div>`}`}
+      <div class="toggles"><button class="toggle" type="button" data-zmusic="${esc(z.id)}" aria-pressed="${musicOnIn(z)}">♫ ${esc(L('Musica'))}: ${esc(L(musicOnIn(z)?'sì':'no'))}</button><button class="toggle" type="button" data-zspots="${esc(z.id)}" aria-pressed="${spotsOnIn(z)}" ${spotsAdminOn(z)?'':'disabled'}>${esc(L('Spot'))}: ${esc(L(spotsOnIn(z)?'sì':'no'))}</button></div>${musicOnIn(z)?'':`<div class="tiny warn-text">${esc(L('Musica tolta da questa zona per oggi'))}</div>`}${!spotsAdminOn(z)?`<div class="tiny muted">${esc(L('Spot spenti dall’amministratore'))}</div>`:spotsOnIn(z)?'':`<div class="tiny warn-text">${esc(L('Spot tolti per oggi: domani tornano'))}</div>`}
       ${(z.players||[]).length>1?`<div class="speakers"><div class="tiny muted">${esc(L('Casse della zona'))}</div>${z.players.map(p=>{const s=sonosById(p);return s&&s.volume!=null&&s.available!==false?`<label class="speaker"><span>${esc(sonosName(p))}</span><input type="range" min="0" max="100" value="${s.volume}" data-pvol="${esc(p)}" aria-label="${esc(sonosName(p))}"><span class="mono" data-pout="${esc(p)}" style="text-align:right">${s.volume}</span></label>`:''}).join('')}</div>`:''}
     </div>`}).join('');
   // Riepilogo come nel pannello: spot di oggi, musica, prossimo cambio.
@@ -812,7 +813,7 @@ function sheet(){const list=sources().filter(f=>f.kind===S.tab);
     <div class="sheet-body list" data-sheet-body><button type="button" data-src="__sched__">♫ ${esc(L('Musica del palinsesto'))}</button>${list.map(f=>`<button type="button" data-src="${esc(f.id)}">${esc(f.name)}</button>`).join('')||`<div class="small muted">${esc(L('Nessuna'))}</div>`}</div></div></div>`}
 // Come la tabella del pannello, ma qui ogni interruttore vale solo per oggi: togliere per sempre spetta all'amministratore.
 function zonesSheet(){const sw=(on,attr,label,off)=>`<button class="sw" type="button" role="switch" aria-checked="${on}" aria-label="${esc(label)}" ${attr} ${off?'disabled':''}><span class="knob"></span></button>`;
-  const rows=zones().filter(z=>z.id!=='all').map(z=>`<div class="zone-row"><div style="min-width:0"><div style="font-weight:600;color:var(--title)">${esc(z.name)}</div><div class="tiny muted">Sonos ${esc(namesOf(z.players))}</div>${spotsAdminOn(z)?'':`<div class="tiny muted">${esc(L('Spot spenti dall’amministratore'))}</div>`}</div>
+  const rows=zones().map(z=>`<div class="zone-row"><div style="min-width:0"><div style="font-weight:600;color:var(--title)">${esc(z.name)}</div><div class="tiny muted">Sonos ${esc(namesOf(z.players))}</div>${spotsAdminOn(z)?'':`<div class="tiny muted">${esc(L('Spot spenti dall’amministratore'))}</div>`}</div>
       <div class="cell">${sw(musicOnIn(z),`data-zmusic="${esc(z.id)}"`,Lf('Musica attiva in {0}',z.name))}</div>
       <div class="cell">${sw(spotsOnIn(z),`data-zspots="${esc(z.id)}"`,Lf('Pubblicità audio attiva in {0}',z.name),!spotsAdminOn(z))}</div></div>`).join('');
   return `<div class="overlay" data-act="close"><div class="sheet" role="dialog" aria-label="${esc(L('Musica e spot per zona'))}">
