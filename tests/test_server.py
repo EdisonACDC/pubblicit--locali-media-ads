@@ -127,7 +127,28 @@ class CarellasServerTest(unittest.TestCase):
                     status, html = call(prefix + path)
                     self.assertEqual(status, 200)
                     self.assertIn("api/staff/state", html, path)
-                self.assertEqual(call(prefix + "/api/staff/state")[0], 200)
+                # Lo stato deve arrivare pieno: sull'impianto era vuoto, «0 di 0 Sonos» e nessuno spot.
+                limit = app.store.config["audio"].get("daily_limit")
+                self.addCleanup(app.store.update, {"audio": {"daily_limit": limit}})
+                app.store.update({"audio": {"daily_limit": 7}})
+                states = [{"entity_id": "media_player.sala", "state": "playing",
+                           "attributes": {"friendly_name": "Sonos Sala", "device_class": "speaker", "group_members": []}}]
+                with mock.patch.object(app.ha, "states", return_value=states):
+                    status, body = call(prefix + "/api/staff/state")
+                self.assertEqual(status, 200)
+                state = json.loads(body)
+                self.assertEqual(state["config"]["audio"]["daily_limit"], 7)
+                self.assertEqual([s["entity_id"] for s in state["sonos"]], ["media_player.sala"])
+                self.assertNotIn("remote_admin", state["config"])
+                # Ogni utente di Home Assistant legge gli stessi dati, amministratore o no.
+                with mock.patch.object(app.ha, "states", return_value=states), \
+                        mock.patch.object(app, "ha_user_is_admin", return_value=True):
+                    admin_state = json.loads(call(prefix + "/api/staff/state", user="capo")[1])
+                for key in ("sonos", "config"):
+                    self.assertEqual(state[key], admin_state[key], key)
+                self.assertEqual(state["runtime"]["music_override"], admin_state["runtime"]["music_override"])
+                self.assertEqual(state["runtime"]["music_excluded"], admin_state["runtime"]["music_excluded"])
+                self.assertEqual(state["runtime"]["spots_excluded"], admin_state["runtime"]["spots_excluded"])
                 for path in ("/api/state", "/classic", "/media/Foto_riservata.jpg"):
                     self.assertEqual(call(prefix + path)[0], 403, path)
                 language = app.store.config.get("language")
@@ -4260,6 +4281,51 @@ class CarellasServerTest(unittest.TestCase):
             self.assertIn(marker, html)
         self.assertNotIn("pageImpostazioni", html)
         self.assertNotIn("['tv','TV']", html)
+
+    def test_music_list_scrolls_and_zones_button_on_small_screens(self):
+        base = Path(__file__).parents[1] / "carellas_media_ads/app"
+        staff = (base / "operatori.html").read_text(encoding="utf-8")
+        panel = (base / "index.html").read_text(encoding="utf-8")
+        # La barra in basso copriva la fine della lista: il foglio deve starle sopra e scorrere al suo interno.
+        self.assertIn(".overlay{position:fixed;inset:0;z-index:35;", staff)
+        self.assertIn("overflow-y:auto;overscroll-behavior:contain", staff)
+        self.assertIn('<div class="sheet-body list" data-sheet-body>', staff)
+        self.assertIn("overflow-y:auto;overscroll-behavior:contain", panel)
+        self.assertIn("view-pop.offsetHeight-16", panel)
+        # Agli operatori gli interruttori valgono solo per oggi: nessuna scrittura della configurazione.
+        self.assertIn('data-act="zones-sheet"', staff)
+        self.assertIn("function zonesSheet()", staff)
+        # Dalla plancia si arriva direttamente alla tabella, che resta aggiornata mentre è aperta.
+        self.assertIn("get('open')==='zones')S.sheet='zones'", staff)
+        self.assertIn("S.sheet!==true", staff)
+        self.assertIn("{zone_id:z.id,on:!spotsOnIn(z),today:true}", staff)
+        self.assertNotIn("api/config", staff)
+        self.assertIn("'Musica e spot per zona':'Musik und Spots pro Zone'", staff)
+
+    def test_operators_without_saved_zones_get_one_zone_per_sonos(self):
+        # Impianto reale: zone mai confermate nel pannello, e la tabella degli operatori diceva «Nessuna».
+        app = self.app
+        saved = app.store.config.get("zones")
+        app.store.config["zones"] = []
+        self.addCleanup(app.store.config.__setitem__, "zones", saved)
+        self.addCleanup(app.SPOTS_EXCLUDED.clear)
+        states = [
+            {"entity_id": "media_player.sala", "state": "playing",
+             "attributes": {"friendly_name": "Sonos Sala", "device_class": "speaker", "group_members": []}},
+            {"entity_id": "media_player.tv", "state": "on", "attributes": {"friendly_name": "TV"}},
+        ]
+        with mock.patch.object(app.ha, "states", return_value=states):
+            self.assertEqual(app.find_zone("media_player.sala")["players"], ["media_player.sala"])
+            # Un'entità che non è un Sonos non diventa una zona.
+            self.assertIsNone(app.find_zone("media_player.tv"))
+            self.assertIsNone(app.find_zone("light.sala"))
+            self.assertEqual(self.request("/api/zone/spots", "POST",
+                                          {"zone_id": "media_player.sala", "on": False, "today": True})[0], 200)
+            self.assertIn("media_player.sala", app.SPOTS_EXCLUDED)
+        # Con zone salvate il Sonos da solo non è una zona.
+        app.store.config["zones"] = [{"id": "sala", "name": "Sala", "players": ["media_player.sala"]}]
+        with mock.patch.object(app.ha, "states", return_value=states):
+            self.assertIsNone(app.find_zone("media_player.sala"))
 
     def test_overnight_schedule(self):
         schedule = [{"days": [6], "start": "22:00", "end": "02:00", "enabled": True}]

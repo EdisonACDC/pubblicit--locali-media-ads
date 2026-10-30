@@ -1088,6 +1088,20 @@ def configured_sonos_players():
     return {player for player in players if isinstance(player, str)}
 
 
+def find_zone(zone_id):
+    """La zona salvata; se non ce ne sono, ogni Sonos è una zona, come quelle proposte dal pannello."""
+    zones = store.config.get("zones", [])
+    zone = next((z for z in zones if str(z.get("id")) == str(zone_id)), None)
+    if zone or any(z.get("players") for z in zones):
+        return zone
+    for state in ha.states():
+        if state.get("entity_id") == zone_id:
+            detail = sonos_state_detail(state)
+            if detail:
+                return {"id": zone_id, "name": detail.get("name", zone_id), "players": [zone_id]}
+    return None
+
+
 def sonos_state_detail(state, configured=()):
     """Stato leggibile di un Sonos per le schermate Oggi e Zona, oppure None se non è un Sonos."""
     entity_id = str(state.get("entity_id", ""))
@@ -4302,6 +4316,8 @@ class Handler(BaseHTTPRequestHandler):
     remote_user = None
     # Richiesta di un operatore (pagina per tablet): i cambi valgono solo per oggi.
     staff_request = False
+    # staff_state sta leggendo lo stato per conto suo: l'operatore riceve solo il riassunto filtrato.
+    reading_staff_state = False
 
     def log_message(self, fmt, *args):
         return
@@ -4498,11 +4514,16 @@ class Handler(BaseHTTPRequestHandler):
         original_send, original_path = self.send_json, self.path
         self.send_json = lambda payload, status=200: captured.update(payload=payload)
         self.path = "/api/state"
+        self.reading_staff_state = True
         try:
             Handler.do_GET(self)
         finally:
             self.send_json, self.path = original_send, original_path
+            self.reading_staff_state = False
         data = captured.get("payload") or {}
+        if "config" not in data:
+            # Meglio un messaggio di una pagina vuota che sembra un impianto senza casse né spot.
+            raise RuntimeError(data.get("error") or "Stato del locale non disponibile")
         config = data.get("config") or {}
         music = config.get("music") or {}
         audio = config.get("audio") or {}
@@ -4558,7 +4579,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = self.route_path()
-        if self.ingress_staff():
+        if not self.reading_staff_state and self.ingress_staff():
             if path in ("/", "/operatori", "/operatori/"):
                 self.send_file(APP_DIR / "operatori.html")
                 return
@@ -5088,7 +5109,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path in ("/api/zone/music", "/api/zone/spots"):
                 body = self.json_body()
-                zone = next((z for z in store.config.get("zones", []) if str(z.get("id")) == str(body.get("zone_id"))), None)
+                zone = find_zone(body.get("zone_id"))
                 players = [p for p in (zone or {}).get("players") or [] if isinstance(p, str)]
                 if not zone or not players:
                     raise RuntimeError("Zona non trovata o senza casse Sonos")
