@@ -97,6 +97,74 @@ class CarellasServerTest(unittest.TestCase):
         # Senza accesso con password non c'è «Esci».
         self.assertIsNone(payload["remote_user"])
 
+    def test_ingress_user_without_admin_rights_is_an_operator(self):
+        # Dalla plancia di Home Assistant: nessuna password in più, ma chi non è amministratore
+        # di Home Assistant vede solo la pagina degli operatori.
+        app = self.app
+
+        def call(path, method="GET", body=None, user="operaio"):
+            data = None if body is None else json.dumps(body).encode()
+            headers = {"Content-Type": "application/json", "X-Remote-User-Id": user}
+            request = urllib.request.Request(self.base + path, data=data, method=method, headers=headers)
+            try:
+                with urllib.request.urlopen(request) as response:
+                    return response.status, response.read().decode("utf-8", "replace")
+            except urllib.error.HTTPError as error:
+                try:
+                    return error.code, error.read().decode("utf-8", "replace")
+                finally:
+                    error.close()
+
+        users = [{"id": "capo", "is_owner": True, "group_ids": ["system-admin"]},
+                 {"id": "vice", "is_owner": False, "group_ids": ["system-admin"]},
+                 {"id": "operaio", "is_owner": False, "group_ids": ["system-users"]}]
+        app.HA_ADMINS.update(at=-1e9, ids=set())
+        prefix = "/api/hassio_ingress/token"
+        (app.MEDIA_DIR / "Foto_riservata.jpg").write_bytes(b"jpg")
+        try:
+            with mock.patch.object(app.ha, "websocket_command", return_value=users) as listing:
+                for path in ("/", "/operatori"):
+                    status, html = call(prefix + path)
+                    self.assertEqual(status, 200)
+                    self.assertIn("api/staff/state", html, path)
+                self.assertEqual(call(prefix + "/api/staff/state")[0], 200)
+                for path in ("/api/state", "/classic", "/media/Foto_riservata.jpg"):
+                    self.assertEqual(call(prefix + path)[0], 403, path)
+                language = app.store.config.get("language")
+                self.assertEqual(call(prefix + "/api/config", "POST", {"language": "de"})[0], 403)
+                self.assertEqual(app.store.config.get("language"), language)
+                self.assertEqual(call(prefix + "/api/media/x.mp3", "DELETE")[0], 403)
+                # Gli amministratori (e il proprietario) vedono tutto il pannello.
+                for admin in ("capo", "vice"):
+                    status, html = call(prefix + "/", user=admin)
+                    self.assertEqual(status, 200)
+                    self.assertNotIn("api/staff/state", html)
+                    self.assertEqual(call(prefix + "/api/state", user=admin)[0], 200)
+                # L'elenco degli utenti non si rilegge a ogni richiesta.
+                listing.assert_called_once()
+            # Spot tolto dall'operatore: solo per oggi, anche se la richiesta non lo dice.
+            saved_zones = json.loads(json.dumps(app.store.config.get("zones", [])))
+            saved_audio = json.loads(json.dumps(app.store.config["audio"]))
+            app.store.update({"zones": [{"id": "sala", "name": "Sala", "players": ["media_player.sala"]}],
+                              "audio": {"players": ["media_player.sala"]}})
+            try:
+                self.assertEqual(call(prefix + "/api/zone/spots", "POST", {"zone_id": "sala", "on": False})[0], 200)
+                self.assertEqual(app.store.config["audio"]["players"], ["media_player.sala"])
+                self.assertIn("media_player.sala", app.spots_excluded_players())
+            finally:
+                app.SPOTS_EXCLUDED.clear()
+                app.store.update({"zones": saved_zones, "audio": saved_audio})
+            # Elenco non leggibile: nessuno è amministratore (si resta alla pagina degli operatori).
+            app.HA_ADMINS.update(at=-1e9, ids=set())
+            with mock.patch.object(app.ha, "websocket_command", side_effect=RuntimeError("no")):
+                self.assertEqual(call(prefix + "/api/state", user="capo")[0], 403)
+            # Senza l'ID di Home Assistant (rete locale) non cambia nulla.
+            status, _ = self.request("/api/state")
+            self.assertEqual(status, 200)
+        finally:
+            app.HA_ADMINS.update(at=-1e9, ids=set())
+            (app.MEDIA_DIR / "Foto_riservata.jpg").unlink(missing_ok=True)
+
     def test_instagram_token_stays_on_server(self):
         self.app.INSTAGRAM_TOKEN_FILE.unlink(missing_ok=True)
         with mock.patch.object(self.app.InstagramImporter, "_get", return_value={"username": "carellas.ristorante"}) as get:

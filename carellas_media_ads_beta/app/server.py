@@ -4594,6 +4594,36 @@ class WebsiteEventsImporter(threading.Thread):
 website_events = WebsiteEventsImporter()
 
 
+# Utenti di Home Assistant amministratori: chi entra dall'Ingress senza esserlo vede solo la pagina
+# degli operatori, come un utente con ruolo Operatore. L'elenco si rilegge al massimo ogni minuto.
+HA_ADMINS = {"at": -1e9, "ids": set()}
+HA_ADMINS_LOCK = threading.Lock()
+HA_ADMINS_SECONDS = 60
+
+
+def ha_user_is_admin(user_id):
+    with HA_ADMINS_LOCK:
+        if time.monotonic() - HA_ADMINS["at"] >= HA_ADMINS_SECONDS:
+            HA_ADMINS["at"] = time.monotonic()
+            try:
+                users = ha.websocket_command({"type": "config/auth/list"}) or []
+                HA_ADMINS["ids"] = {user.get("id") for user in users
+                                    if user.get("is_owner") or "system-admin" in (user.get("group_ids") or [])}
+            except Exception as error:
+                # Se l'elenco non si legge vale l'ultimo noto; senza elenco nessuno è amministratore.
+                store.log("warning", f"Elenco degli amministratori di Home Assistant non leggibile: {error}")
+        return user_id in HA_ADMINS["ids"]
+
+
+def staff_may_read(route):
+    """Letture permesse agli operatori oltre alla pagina: stato, storico e spot in rotazione."""
+    if route in STAFF_GET_PATHS:
+        return True
+    # Ascolto degli spot in rotazione; gli altri file (foto e video) restano chiusi.
+    return route.startswith("/media/") and urllib.parse.unquote(route.removeprefix("/media/")) in \
+        store.config.get("audio", {}).get("ads", [])
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "CarellasMediaAds/0.4.47"
     # Utente entrato dalla porta per l'accesso da Internet (None sulla porta locale).
@@ -4846,8 +4876,23 @@ class Handler(BaseHTTPRequestHandler):
             "ha_error": data.get("ha_error"),
         }
 
+    def ingress_staff(self):
+        """Utente di Home Assistant non amministratore arrivato dall'Ingress (Supervisor passa il suo ID)."""
+        user_id = self.headers.get("X-Remote-User-Id")
+        return bool(user_id) and not ha_user_is_admin(user_id)
+
+    def staff_forbidden(self):
+        self.send_json({"error": "Gli operatori possono gestire solo musica, casse e pubblicità"}, 403)
+
     def do_GET(self):
         path = self.route_path()
+        if self.ingress_staff():
+            if path in ("/", "/operatori", "/operatori/"):
+                self.send_file(APP_DIR / "operatori.html")
+                return
+            if not staff_may_read(path):
+                self.staff_forbidden()
+                return
         try:
             if path == "/api/staff/state":
                 self.send_json(self.staff_state())
@@ -5169,6 +5214,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.route_path()
+        if self.ingress_staff():
+            if path not in STAFF_POST_PATHS:
+                self.staff_forbidden()
+                return
+            self.staff_request = True
         try:
             if path == "/api/config":
                 old_channels = {
@@ -5548,6 +5598,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):
         path = self.route_path()
+        if self.ingress_staff():
+            self.staff_forbidden()
+            return
         if not path.startswith("/api/media/"):
             self.send_json({"error": "Operazione sconosciuta"}, 404)
             return
@@ -6033,9 +6086,6 @@ class RemoteAdminHandler(Handler):
         account = remote_account(self.remote_user)
         return bool(account and account.get("role") == "staff")
 
-    def staff_forbidden(self):
-        self.send_json({"error": "Gli operatori possono gestire solo musica, casse e pubblicità"}, 403)
-
     def do_GET(self):
         path = urllib.parse.urlsplit(self.path).path.rstrip("/") or "/"
         if path == "/login":
@@ -6051,11 +6101,7 @@ class RemoteAdminHandler(Handler):
                 route = self.route_path()
                 if path in ("/", "/operatori"):
                     self.send_file(APP_DIR / "operatori.html")
-                elif route in STAFF_GET_PATHS:
-                    super().do_GET()
-                elif route.startswith("/media/") and urllib.parse.unquote(route.removeprefix("/media/")) in \
-                        store.config.get("audio", {}).get("ads", []):
-                    # Ascolto degli spot in rotazione; gli altri file (foto e video) restano chiusi.
+                elif staff_may_read(route):
                     super().do_GET()
                 else:
                     self.staff_forbidden()
