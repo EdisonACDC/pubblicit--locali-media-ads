@@ -3472,6 +3472,22 @@ class CarellasServerTest(unittest.TestCase):
             with self.assertRaises(TimeoutError):
                 app.set_sonos_volume_levels({"media_player.bar": 0.5})
 
+    def test_volume_that_never_arrived_is_not_a_manual_choice(self):
+        # Registro reale: la cassa dei bagni risultava «scelta a mano» a 17 perché il comando non le arrivava.
+        app = self.app
+        app.SONOS_UNRESPONSIVE.clear()
+        self.addCleanup(app.SONOS_UNRESPONSIVE.clear)
+        self.addCleanup(app.SONOS_UNRESPONSIVE_STRIKES.clear)
+        player = "media_player.bar"
+        with app.SONOS_VOLUME_MEMORY_LOCK:
+            app.SONOS_LAST_SET[player] = 0.25
+            app.SONOS_LAST_SET_AT[player] = -1e9
+        app.mark_sonos_unresponsive(player, "timed out")
+        with mock.patch.object(app, "set_manual_sonos_volume") as manual:
+            app.detect_manual_sonos_volumes({player: 0.17})
+            app.detect_manual_sonos_volumes({player: 0.17})
+        manual.assert_not_called()
+
     def test_unresponsive_speaker_pause_grows_and_is_forgotten(self):
         app = self.app
         app.SONOS_UNRESPONSIVE.clear()
@@ -3529,6 +3545,9 @@ class CarellasServerTest(unittest.TestCase):
         self.assertFalse(snapshot["with_group"])
         self.assertFalse(restore["with_group"])
         self.assertNotIn("media_player.bar", snapshot["entity_id"])
+        # Le casse sane non pagano per quella guasta, anche se lo snapshot del loro gruppo è fallito.
+        self.assertFalse(app.sonos_unresponsive("media_player.sala"))
+        self.assertFalse(app.sonos_unresponsive("media_player.terrazza"))
         # Il gruppo della musica va bene così: nessun distacco che lascerebbe silenzio prima dello spot.
         self.assertNotIn("unjoin", names)
 

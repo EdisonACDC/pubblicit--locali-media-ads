@@ -1129,7 +1129,15 @@ def sonos_unresponsive(player):
     return False
 
 
+def forget_sonos_last_set(player):
+    """Il volume non è arrivato alla cassa: al ritorno quello che ha non è una scelta fatta a mano."""
+    with SONOS_VOLUME_MEMORY_LOCK:
+        SONOS_LAST_SET.pop(player, None)
+        SONOS_MANUAL_CANDIDATES.pop(player, None)
+
+
 def mark_sonos_unresponsive(player, error):
+    forget_sonos_last_set(player)
     if sonos_unresponsive(player):
         return
     now = time.monotonic()
@@ -1759,7 +1767,9 @@ def set_sonos_volume_levels(levels):
     """Imposta anche volumi diversi senza perdere il bilanciamento tra le sale."""
     grouped = {}
     for player, level in levels.items():
-        if not sonos_unresponsive(player):
+        if sonos_unresponsive(player):
+            forget_sonos_last_set(player)
+        else:
             grouped.setdefault(round(max(0.0, min(float(level), 1.0)), 3), []).append(player)
     for level, players in grouped.items():
         try:
@@ -1836,7 +1846,8 @@ def take_sonos_snapshot(targets, players):
     """Salva lo stato prima dello spot. Con il gruppo incluso basta una cassa che non risponde a far fallire
     tutto: in quel caso si salvano le sole casse dello spot. Restituisce le destinazioni e se c'è il gruppo."""
     try:
-        sonos_service_each("sonos", "snapshot", {"entity_id": targets, "with_group": True})
+        # Non uno alla volta: la cassa indicata può essere sana e fallire per un'altra del suo gruppo.
+        sonos_service("sonos", "snapshot", {"entity_id": targets, "with_group": True})
         return targets, True
     except Exception as error:
         if sonos_transition_busy(error) or not sonos_connection_error(error):
