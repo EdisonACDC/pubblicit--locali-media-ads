@@ -3772,6 +3772,230 @@ class CarellasServerTest(unittest.TestCase):
         # Durante uno spot i volumi non vengono letti né scambiati per scelte a mano.
         self.assertIn("if not result[\"missing\"] and not audio_playback_lock.locked():", source)
 
+    def _flaky_speaker(self, error="timed out", when=lambda name, targets: True):
+        """Bar con un volume tutto suo che non risponde: gli altri due sono nello stesso gruppo."""
+        app = self.app
+        app.SONOS_UNRESPONSIVE.clear()
+        app.SONOS_UNRESPONSIVE_STRIKES.clear()
+        players = ["media_player.sala", "media_player.terrazza", "media_player.bar"]
+        states = [{"entity_id": p, "state": "playing",
+                   "attributes": {"group_members": players, "friendly_name": p.split(".")[1].title(),
+                                  "volume_level": 0.5 if p.endswith("bar") else 0.3}} for p in players]
+        calls = []
+
+        def service(domain, name, payload):
+            targets = payload.get("entity_id")
+            targets = targets if isinstance(targets, list) else [targets]
+            if "media_player.bar" in targets + list(payload.get("group_members") or []) and when(name, targets):
+                raise TimeoutError(error) if error == "timed out" else RuntimeError(error)
+            calls.append((name, payload))
+        self.addCleanup(app.SONOS_UNRESPONSIVE.clear)
+        self.addCleanup(app.SONOS_UNRESPONSIVE_STRIKES.clear)
+        return players, states, calls, service
+
+    def test_speaker_with_own_volume_does_not_block_the_others(self):
+        app = self.app
+        players, states, calls, service = self._flaky_speaker(
+            "Home Assistant 500: Error on media_player.bar: HTTPConnectionPool(host='192.168.178.18', port=1400): "
+            "Read timed out. (read timeout=9.5)")
+        with mock.patch.object(app.ha, "service", side_effect=service):
+            app.set_sonos_volume_levels({"media_player.sala": 0.3, "media_player.terrazza": 0.3, "media_player.bar": 0.5})
+            self.assertTrue(app.sonos_unresponsive("media_player.bar"))
+            before = len(calls)
+            # Durante la pausa la cassa non viene neanche provata: niente più attese a ogni passo.
+            app.set_sonos_volume_levels({"media_player.bar": 0.2, "media_player.sala": 0.2})
+        self.assertEqual(calls[before:], [("volume_set", {"entity_id": ["media_player.sala"], "volume_level": 0.2})])
+        # Tutte le casse insieme che falliscono possono essere Home Assistant: l'errore resta visibile.
+        app.SONOS_UNRESPONSIVE.clear()
+        with mock.patch.object(app.ha, "service", side_effect=TimeoutError("timed out")):
+            with self.assertRaises(TimeoutError):
+                app.set_sonos_volume_levels({"media_player.bar": 0.5})
+
+    def test_volume_that_never_arrived_is_not_a_manual_choice(self):
+        # Registro reale: la cassa dei bagni risultava «scelta a mano» a 17 perché il comando non le arrivava.
+        app = self.app
+        app.SONOS_UNRESPONSIVE.clear()
+        self.addCleanup(app.SONOS_UNRESPONSIVE.clear)
+        self.addCleanup(app.SONOS_UNRESPONSIVE_STRIKES.clear)
+        player = "media_player.bar"
+        with app.SONOS_VOLUME_MEMORY_LOCK:
+            app.SONOS_LAST_SET[player] = 0.25
+            app.SONOS_LAST_SET_AT[player] = -1e9
+        app.mark_sonos_unresponsive(player, "timed out")
+        with mock.patch.object(app, "set_manual_sonos_volume") as manual:
+            app.detect_manual_sonos_volumes({player: 0.17})
+            app.detect_manual_sonos_volumes({player: 0.17})
+        manual.assert_not_called()
+
+    def test_unresponsive_speaker_pause_grows_and_is_forgotten(self):
+        app = self.app
+        app.SONOS_UNRESPONSIVE.clear()
+        app.SONOS_UNRESPONSIVE_STRIKES.clear()
+        self.addCleanup(app.SONOS_UNRESPONSIVE.clear)
+        self.addCleanup(app.SONOS_UNRESPONSIVE_STRIKES.clear)
+        now = [1000.0]
+        with mock.patch.object(app.time, "monotonic", side_effect=lambda: now[0]):
+            for minutes in (3, 10, 30, 30):
+                app.mark_sonos_unresponsive("media_player.bar", "timed out")
+                self.assertEqual(app.SONOS_UNRESPONSIVE["media_player.bar"], now[0] + minutes * 60)
+                self.assertIn(f"lo salto per {minutes} minuti", app.store.logs[0]["message"])
+                # Già in pausa: nessuna riga in più nel Registro.
+                count = len(app.store.logs)
+                app.mark_sonos_unresponsive("media_player.bar", "timed out")
+                self.assertEqual(len(app.store.logs), count)
+                now[0] += minutes * 60 + 1
+            # Un'ora senza errori: si ricomincia da 3 minuti.
+            now[0] += app.SONOS_UNRESPONSIVE_FORGET_SECONDS + 1
+            app.mark_sonos_unresponsive("media_player.bar", "timed out")
+            self.assertEqual(app.SONOS_UNRESPONSIVE["media_player.bar"], now[0] + 180)
+
+    def _spot(self, service, states, players):
+        app = self.app
+        ad = "Carellas_Ristorante_Spot_DE_Maschile.mp3"
+        saved = json.loads(json.dumps(app.store.config["audio"]))
+        self.addCleanup(lambda: app.store.config.__setitem__("audio", saved))
+        app.store.update({"audio": {"players": players, "ads": [ad], "repeat_count": 1, "volume": 40,
+                                    "transition_seconds": 2}})
+        with mock.patch.object(app.ha, "states", return_value=states), \
+                mock.patch.object(app.ha, "service", side_effect=service), \
+                mock.patch.object(app, "probe_media_duration", return_value=10), \
+                mock.patch.object(app.time, "sleep"), \
+                mock.patch.object(app.audio_stop_event, "wait", return_value=False):
+            return app.play_audio()
+
+    def test_spot_goes_on_air_when_grouped_speaker_times_out(self):
+        # Registro reale: «Spot audio non riuscito: timed out» a ogni giro per colpa di una sola cassa del gruppo.
+        app = self.app
+        players, states, calls, service = self._flaky_speaker()
+        real = service
+
+        def snapshot_touches_the_group(domain, name, payload):
+            # Lo snapshot con il gruppo interroga anche i membri, compreso quello che non risponde.
+            if name == "snapshot" and payload.get("with_group"):
+                raise TimeoutError("timed out")
+            return real(domain, name, payload)
+
+        self.assertIsNotNone(self._spot(snapshot_touches_the_group, states, players))
+        names = [name for name, _ in calls]
+        self.assertEqual(names.count("play_media"), 1)
+        self.assertTrue(app.sonos_unresponsive("media_player.bar"))
+        snapshot = next(payload for name, payload in calls if name == "snapshot")
+        restore = next(payload for name, payload in calls if name == "restore")
+        self.assertFalse(snapshot["with_group"])
+        self.assertFalse(restore["with_group"])
+        self.assertNotIn("media_player.bar", snapshot["entity_id"])
+        # Le casse sane non pagano per quella guasta, anche se lo snapshot del loro gruppo è fallito.
+        self.assertFalse(app.sonos_unresponsive("media_player.sala"))
+        self.assertFalse(app.sonos_unresponsive("media_player.terrazza"))
+        # Il gruppo della musica va bene così: nessun distacco che lascerebbe silenzio prima dello spot.
+        self.assertNotIn("unjoin", names)
+
+    def test_spot_not_repeated_after_it_went_on_air(self):
+        # Se l'errore arriva con lo spot già in onda, riprovare lo manderebbe due volte.
+        app = self.app
+        players, states, calls, service = self._flaky_speaker(when=lambda name, targets: False)
+        real = service
+
+        def fails_after_air(domain, name, payload):
+            real(domain, name, payload)
+            if name == "play_media":
+                app.scheduler.record_audio_play()
+                raise TimeoutError("timed out")
+
+        with self.assertRaises(TimeoutError):
+            self._spot(fails_after_air, states, players)
+        self.assertEqual([name for name, _ in calls].count("play_media"), 1)
+
+    def test_music_starts_when_speaker_with_own_volume_is_unreachable(self):
+        # Registro reale: «Avvio musica non riuscito» e «Cambio sorgente annullato» per la cassa dei bagni.
+        app = self.app
+        players, states, calls, service = self._flaky_speaker(
+            "Home Assistant 500: Error on media_player.bar: HTTPConnectionPool(host='192.168.178.18', port=1400): "
+            "Max retries exceeded with url: /MediaRenderer/RenderingControl/Control",
+            when=lambda name, targets: name == "volume_set")
+        saved = dict(app.SONOS_MANUAL_VOLUMES)
+        self.addCleanup(lambda: (app.SONOS_MANUAL_VOLUMES.clear(), app.SONOS_MANUAL_VOLUMES.update(saved)))
+        with mock.patch.object(app.ha, "states", return_value=states), \
+                mock.patch.object(app.ha, "service", side_effect=service), \
+                mock.patch.object(app, "manual_sonos_volumes", return_value={"media_player.bar": 0.5}), \
+                mock.patch.object(app, "ensure_sonos_playing", return_value=True), \
+                mock.patch.object(app.time, "sleep"):
+            result = app.start_music({"name": "Mix", "players": players, "content_id": "FV:2/9",
+                                      "content_type": "favorite_item_id", "volume": 25})
+        self.assertEqual(result[0], "media_player.sala")
+        self.assertIn("play_media", [name for name, _ in calls])
+        self.assertTrue(app.sonos_unresponsive("media_player.bar"))
+
+    def test_two_speakers_group_without_the_one_not_answering(self):
+        app = self.app
+        players, states, calls, service = self._flaky_speaker()
+        pair = players[0], players[2]
+        alone = [{"entity_id": p, "state": "playing",
+                  "attributes": {"group_members": [p], "volume_level": 0.3}} for p in pair]
+        with mock.patch.object(app.ha, "states", return_value=alone), \
+                mock.patch.object(app.ha, "service", side_effect=service), mock.patch.object(app.time, "sleep"):
+            self.assertEqual(app.prepare_sonos_group(list(pair)), "media_player.sala")
+        self.assertTrue(app.sonos_unresponsive("media_player.bar"))
+        self.assertFalse(app.sonos_unresponsive("media_player.sala"))
+
+    def test_music_resumes_when_group_restore_cannot_reach_a_speaker(self):
+        # Registro reale: «Ripristino Sonos non riuscito» per la cassa dei bagni, e la musica restava ferma.
+        app = self.app
+        players, states, calls, service = self._flaky_speaker(when=lambda name, targets: False)
+        real = service
+
+        def restore(domain, name, payload):
+            if name == "restore" and payload.get("with_group"):
+                raise RuntimeError("Home Assistant 500: Error on media_player.bar: Max retries exceeded with url")
+            return real(domain, name, payload)
+
+        with mock.patch.object(app.ha, "states", return_value=states), \
+                mock.patch.object(app.ha, "service", side_effect=restore), mock.patch.object(app.time, "sleep"):
+            app.restore_sonos_playback(["media_player.sala"], ["media_player.sala"], players)
+            self.assertTrue(app.wait_sonos_groups({"media_player.sala": players}, seconds=1))
+        names = [name for name, _ in calls]
+        self.assertFalse(next(payload for name, payload in calls if name == "restore")["with_group"])
+        self.assertIn("media_play", names)
+        self.assertTrue(app.sonos_unresponsive("media_player.bar"))
+
+    def test_ignored_speaker_is_logged_once(self):
+        # Registro reale: la stessa riga ogni 5 secondi per una cassa che non è un Sonos.
+        app = self.app
+        app.SONOS_IGNORED_LOGGED.clear()
+        self.addCleanup(app.SONOS_IGNORED_LOGGED.clear)
+        states = [{"entity_id": "media_player.sala", "state": "idle", "attributes": {"group_members": ["media_player.sala"]}},
+                  {"entity_id": "media_player.terasse_2", "state": "idle", "attributes": {}}]
+        wanted = ["media_player.sala", "media_player.terasse_2"]
+        now = [5000.0]
+
+        def lines():
+            return sum("terasse_2" in item["message"] for item in app.store.logs)
+
+        start = lines()
+        with mock.patch.object(app.ha, "states", return_value=states), \
+                mock.patch.object(app.time, "monotonic", side_effect=lambda: now[0]):
+            for _ in range(5):
+                self.assertEqual(app.available_sonos_players(wanted), ["media_player.sala"])
+                now[0] += 5
+            self.assertEqual(lines(), start + 1)
+            # Passata un'ora lo si ricorda una volta.
+            now[0] += app.SONOS_IGNORED_LOG_SECONDS
+            app.available_sonos_players(wanted)
+            self.assertEqual(lines(), start + 2)
+
+    def test_music_on_outside_schedule_is_not_an_error(self):
+        app = self.app
+        before = sum("Fuori programma" in item["message"] for item in app.store.logs)
+        with mock.patch.object(app.scheduler, "current_slot_key", return_value=None):
+            with self.assertRaises(urllib.error.HTTPError) as caught:
+                self.request("/api/music/manual", "POST", {"action": "on"})
+            self.assertEqual(caught.exception.code, 409)
+            self.assertIn("Fuori programma", json.loads(caught.exception.read())["error"])
+            caught.exception.close()
+            self.assertEqual(sum("Fuori programma" in item["message"] for item in app.store.logs), before)
+            _, state = self.request("/api/staff/state")
+            self.assertIs(state["runtime"]["music_scheduled_now"], False)
+
     def test_switched_off_sonos_does_not_stop_the_others(self):
         app = self.app
         app.SONOS_UNRESPONSIVE.clear()
