@@ -140,6 +140,15 @@ class CarellasServerTest(unittest.TestCase):
                 self.assertEqual(state["config"]["audio"]["daily_limit"], 7)
                 self.assertEqual([s["entity_id"] for s in state["sonos"]], ["media_player.sala"])
                 self.assertNotIn("remote_admin", state["config"])
+                # Ogni utente di Home Assistant legge gli stessi dati, amministratore o no.
+                with mock.patch.object(app.ha, "states", return_value=states), \
+                        mock.patch.object(app, "ha_user_is_admin", return_value=True):
+                    admin_state = json.loads(call(prefix + "/api/staff/state", user="capo")[1])
+                for key in ("sonos", "config"):
+                    self.assertEqual(state[key], admin_state[key], key)
+                self.assertEqual(state["runtime"]["music_override"], admin_state["runtime"]["music_override"])
+                self.assertEqual(state["runtime"]["music_excluded"], admin_state["runtime"]["music_excluded"])
+                self.assertEqual(state["runtime"]["spots_excluded"], admin_state["runtime"]["spots_excluded"])
                 for path in ("/api/state", "/classic", "/media/Foto_riservata.jpg"):
                     self.assertEqual(call(prefix + path)[0], 403, path)
                 language = app.store.config.get("language")
