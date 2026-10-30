@@ -1206,9 +1206,18 @@ def start_music(selection=None, fade_in=False):
 def stop_music(players=None, fade_seconds=0):
     players = list(dict.fromkeys(players or store.config["music"].get("players", [])))
     if players:
+        previous_levels = {}
         if fade_seconds:
-            fade_sonos(players, SONOS_QUIET_VOLUME, fade_seconds)
+            previous_levels = sonos_volume_levels(available_sonos_players(players))
+            fade_sonos(players, SONOS_QUIET_VOLUME, fade_seconds, previous_levels)
         ha.service("media_player", "media_stop", {"entity_id": players})
+        if previous_levels:
+            # Dopo la dissolvenza i Sonos resterebbero all'1%: a musica ferma
+            # riportiamo il volume di prima, così l'app Sonos non parte muta.
+            try:
+                set_sonos_volume_levels(previous_levels)
+            except Exception as error:
+                store.log("warning", f"Volume Sonos non ripristinato dopo l'arresto: {error}")
         store.log("info", "Musica del locale arrestata dalla programmazione")
 
 
