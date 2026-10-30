@@ -1115,6 +1115,20 @@ def configured_sonos_players():
     return {player for player in players if isinstance(player, str)}
 
 
+def find_zone(zone_id):
+    """La zona salvata; se non ce ne sono, ogni Sonos è una zona, come quelle proposte dal pannello."""
+    zones = store.config.get("zones", [])
+    zone = next((z for z in zones if str(z.get("id")) == str(zone_id)), None)
+    if zone or any(z.get("players") for z in zones):
+        return zone
+    for state in ha.states():
+        if state.get("entity_id") == zone_id:
+            detail = sonos_state_detail(state)
+            if detail:
+                return {"id": zone_id, "name": detail.get("name", zone_id), "players": [zone_id]}
+    return None
+
+
 def sonos_state_detail(state, configured=()):
     """Stato leggibile di un Sonos per le schermate Oggi e Zona, oppure None se non è un Sonos."""
     entity_id = str(state.get("entity_id", ""))
@@ -5586,7 +5600,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if path in ("/api/zone/music", "/api/zone/spots"):
                 body = self.json_body()
-                zone = next((z for z in store.config.get("zones", []) if str(z.get("id")) == str(body.get("zone_id"))), None)
+                zone = find_zone(body.get("zone_id"))
                 players = [p for p in (zone or {}).get("players") or [] if isinstance(p, str)]
                 if not zone or not players:
                     raise RuntimeError("Zona non trovata o senza casse Sonos")
