@@ -1482,6 +1482,53 @@ def repair_sonos_group(players, preferred_coordinator=None, volume_level=None):
     return {"coordinator": coordinator, "missing": missing, "unavailable": unavailable}
 
 
+# Casse fermate perché suonavano un altro brano fuori dal gruppo: si riprova solo dopo un po'.
+SONOS_STRAY_STOPPED = {}
+SONOS_STRAY_RETRY_SECONDS = 120
+
+
+def stray_sonos(players, coordinator, states):
+    """Casse della musica rimaste fuori dal gruppo che suonano ancora per conto loro (cassa saltata
+    perché non rispondeva, o tolta dalla fascia senza fermarsi): nel locale si sentivano due brani."""
+    group = set(states.get(coordinator, {}).get("attributes", {}).get("group_members") or [coordinator])
+    found = []
+    for player in dict.fromkeys(players):
+        item = states.get(player, {})
+        if player in group or item.get("state") not in ("playing", "buffering"):
+            continue
+        # Si ferma chi guida il suo gruppo: fermare un membro fermerebbe un altro coordinatore.
+        lead = (item.get("attributes", {}).get("group_members") or [player])[0]
+        if lead not in group and lead not in found:
+            found.append(lead)
+    return found
+
+
+def silence_stray_sonos(players, coordinator):
+    """Ferma in sottofondo le casse che suonano un altro brano: una cassa lenta non blocca la musica."""
+    if not coordinator:
+        return []
+    try:
+        states = {item.get("entity_id"): item for item in ha.states()}
+    except Exception:
+        return []
+    now = time.monotonic()
+    stray = [player for player in stray_sonos(players, coordinator, states)
+             if now - SONOS_STRAY_STOPPED.get(player, -1e9) >= SONOS_STRAY_RETRY_SECONDS]
+    for player in stray:
+        SONOS_STRAY_STOPPED[player] = now
+
+        def stop(player=player):
+            try:
+                ha.service("media_player", "media_stop", {"entity_id": player})
+            except Exception:
+                # Cassa che non risponde: Home Assistant può mostrarla ancora «in riproduzione».
+                return
+            store.log("info", f"Fermata la musica rimasta da sola su {player.removeprefix('media_player.')}: "
+                              "suonava un altro brano")
+        threading.Thread(target=stop, daemon=True, name="sonos-stray").start()
+    return stray
+
+
 def repair_sonos_topology(groups, volume_levels=None):
     """Verifica dopo lo spot che ogni gruppo salvato sia stato davvero ripristinato."""
     repaired = []
@@ -2505,10 +2552,10 @@ def start_music(selection=None, fade_in=False):
                 raise
             play_rejected_source_elsewhere(coordinator, selection, play_error)
         resume_playlist_position(coordinator, selection)
-        keep_playlist_repeating(coordinator, content_type)
         title = selection.get("name") or selection.get("title") or content_id
         if not ensure_sonos_playing(coordinator):
             raise SonosNotStarted(f"I Sonos non sono partiti con «{title}»: riprovo tra poco", players)
+        keep_playlist_repeating(coordinator, content_type)
     except Exception:
         # Se il cambio non riesce, non lasciare i diffusori muti: prova a
         # riprendere il flusso che Sonos stava già eseguendo e il suo volume.
@@ -3590,6 +3637,10 @@ class Scheduler(threading.Thread):
         # Musica accesa o spenta a mano dal pannello: {"mode": "on"/"off", "slot_key": ..., "name": ...}.
         self.music_override = None
         self.music_expected_players = []
+        # Casse tolte dall'ultima fascia: se nei 10 minuti dopo il cambio suonano ancora il brano di
+        # prima vengono fermate. Dopo no: in una zona fuori fascia si può usare l'app Sonos.
+        self.music_left_behind = []
+        self.music_left_behind_until = 0.0
         self.music_coordinator = None
         self.music_group_check_at = 0.0
         self.music_group_issue = None
@@ -3885,8 +3936,8 @@ class Scheduler(threading.Thread):
         store.log("warning", f"La musica «{title}» si era fermata da sola: la faccio ripartire")
         try:
             ha.service("media_player", "media_play", {"entity_id": coordinator})
-            keep_playlist_repeating(coordinator, selection.get("content_type"))
             if ensure_sonos_playing(coordinator, checks=8) and sonos_playing(coordinator) is True:
+                keep_playlist_repeating(coordinator, selection.get("content_type"))
                 store.log("info", f"Musica ripartita: «{title}»")
                 return
         except Exception as error:
@@ -3976,6 +4027,16 @@ class Scheduler(threading.Thread):
         self.music_override = {"mode": "on", "slot_key": self.current_slot_key(), "name": name}
         try:
             players = start_music(selection, fade_in=True)
+        except SonosNotStarted as error:
+            if not error.players:
+                self.music_override = None
+                raise
+            # Playlist lunga: il comando è arrivato ma i Sonos ci mettono di più. Prima compariva un errore
+            # «riprovo tra poco» e poi nessuno riprovava; ora si controlla di nuovo in sottofondo.
+            players = error.players
+            store.log("info", f"La musica «{name}» sta partendo: i Sonos ci mettono qualche secondo in più")
+            threading.Thread(target=self.check_slow_start, args=(players[0], selection),
+                             daemon=True, name="music-slow-start").start()
         except Exception:
             self.music_override = None
             raise
@@ -3985,6 +4046,17 @@ class Scheduler(threading.Thread):
         self.music_active = True
         store.log("info", f"Musica accesa a mano: {name}")
         return players
+
+    def check_slow_start(self, coordinator, selection, checks=40):
+        """Musica accesa a mano che tardava a partire: si guarda se è partita e si scrive com'è andata."""
+        name = selection.get("name") or selection.get("content_id", "")
+        if ensure_sonos_playing(coordinator, checks=checks) and sonos_playing(coordinator) is True:
+            keep_playlist_repeating(coordinator, selection.get("content_type"))
+            store.log("success", f"Musica partita: «{name}»")
+            return True
+        if (self.music_override or {}).get("name") == name:
+            store.log("warning", f"La musica «{name}» non è partita: riprova o scegli un'altra playlist")
+        return False
 
     def audio_tick(self):
         cfg = store.config["audio"]
@@ -4090,6 +4162,9 @@ class Scheduler(threading.Thread):
                     if SONOS_GROUP_SETTLE_SECONDS > 0:
                         time.sleep(SONOS_GROUP_SETTLE_SECONDS)
                 self.music_late_start = None
+                self.music_left_behind = [player for player in dict.fromkeys(previous + self.music_expected_players)
+                                          if player not in target_players]
+                self.music_left_behind_until = time.monotonic() + 600
                 players = start_music(slot, fade_in=True)
                 self.music_started(slot, slot_key, players, target_players, cfg)
             except Exception as error:
@@ -4184,6 +4259,9 @@ class Scheduler(threading.Thread):
                     result["coordinator"] = self.music_players[0] if self.music_players else None
                 if result["coordinator"]:
                     self.music_coordinator = result["coordinator"]
+                    if not audio_playback_lock.locked():
+                        left = self.music_left_behind if time.monotonic() < self.music_left_behind_until else []
+                        silence_stray_sonos(expected + left, result["coordinator"])
                 if not result["missing"] and not audio_playback_lock.locked():
                     # Gruppo a posto: aggiorna i volumi noti e riconosce quelli cambiati dall'app Sonos.
                     # Durante uno spot i volumi sono quelli dello spot: non vanno letti.
