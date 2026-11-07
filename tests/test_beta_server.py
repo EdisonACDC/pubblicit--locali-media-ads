@@ -4016,6 +4016,37 @@ class CarellasServerTest(unittest.TestCase):
         with mock.patch.object(app.ha, "service", side_effect=RuntimeError("UPnP Error 712")):
             app.keep_playlist_repeating("media_player.sala", "favorite_item_id")
 
+    def test_speaker_playing_another_song_outside_the_group_is_stopped(self):
+        # Sull'impianto si sentivano due brani: una cassa fuori dal gruppo suonava ancora per conto suo.
+        app = self.app
+        app.SONOS_STRAY_STOPPED.clear()
+        self.addCleanup(app.SONOS_STRAY_STOPPED.clear)
+        group = ["media_player.sala", "media_player.terrazza"]
+        states = {
+            "media_player.sala": {"state": "playing", "attributes": {"group_members": group}},
+            "media_player.terrazza": {"state": "playing", "attributes": {"group_members": group}},
+            # Fuori dal gruppo e ancora in riproduzione: è il brano di troppo.
+            "media_player.bagni": {"state": "playing", "attributes": {"group_members": ["media_player.bagni"]}},
+            # Fuori dal gruppo ma ferma: non si tocca.
+            "media_player.bar": {"state": "idle", "attributes": {"group_members": ["media_player.bar"]}},
+            # Membro di un altro gruppo che suona: si ferma chi lo guida, non lui.
+            "media_player.cucina": {"state": "playing",
+                                    "attributes": {"group_members": ["media_player.bagni", "media_player.cucina"]}},
+        }
+        players = group + ["media_player.bagni", "media_player.bar", "media_player.cucina"]
+        self.assertEqual(app.stray_sonos(players, "media_player.sala", states), ["media_player.bagni"])
+        calls = []
+        listing = [{"entity_id": k, **v} for k, v in states.items()]
+        with mock.patch.object(app.ha, "states", return_value=listing), \
+                mock.patch.object(app.ha, "service", side_effect=lambda d, n, payload: calls.append((n, payload))), \
+                mock.patch.object(app.threading, "Thread",
+                                  side_effect=lambda target, **kw: mock.Mock(start=target)):
+            self.assertEqual(app.silence_stray_sonos(players, "media_player.sala"), ["media_player.bagni"])
+            # Subito dopo non si ripete: una cassa lenta non viene tempestata di comandi.
+            self.assertEqual(app.silence_stray_sonos(players, "media_player.sala"), [])
+        self.assertEqual(calls, [("media_stop", {"entity_id": "media_player.bagni"})])
+        self.assertTrue(any("suonava un altro brano" in item["message"] for item in app.store.logs[:3]))
+
     def test_two_speakers_group_without_the_one_not_answering(self):
         app = self.app
         players, states, calls, service = self._flaky_speaker()
@@ -4072,6 +4103,36 @@ class CarellasServerTest(unittest.TestCase):
             now[0] += app.SONOS_IGNORED_LOG_SECONDS
             app.available_sonos_players(wanted)
             self.assertEqual(lines(), start + 2)
+
+    def test_manual_music_slow_to_start_is_not_an_error(self):
+        # Registro reale: «POST /api/music/manual: I Sonos non sono partiti con «Mix Cocciante und Raf»:
+        # riprovo tra poco», e poi nessuno riprovava.
+        app = self.app
+        engine = app.Scheduler()
+        selection = {"name": "Mix Cocciante und Raf", "content_id": "FV:2/9", "content_type": "sonos_playlist_source",
+                     "players": ["media_player.sala"]}
+        slow = app.SonosNotStarted("I Sonos non sono partiti", ["media_player.sala"])
+        started = []
+        with mock.patch.object(app, "start_music", side_effect=slow), \
+                mock.patch.object(engine, "current_slot_key", return_value=None), \
+                mock.patch.object(app.threading, "Thread",
+                                  side_effect=lambda target, args=(), **kw: mock.Mock(start=lambda: started.append(args))):
+            self.assertEqual(engine.music_on(selection), ["media_player.sala"])
+        # Resta accesa a mano e si controlla in sottofondo.
+        self.assertEqual(engine.music_override["name"], "Mix Cocciante und Raf")
+        self.assertEqual(started, [("media_player.sala", selection)])
+        calls = []
+        with mock.patch.object(app, "ensure_sonos_playing", return_value=True), \
+                mock.patch.object(app, "sonos_playing", return_value=True), \
+                mock.patch.object(app.ha, "service", side_effect=lambda d, n, payload: calls.append(n)):
+            self.assertTrue(engine.check_slow_start("media_player.sala", selection, checks=1))
+        # Solo a musica partita si mette la playlist in ripetizione.
+        self.assertEqual(calls, ["repeat_set"])
+        self.assertIn("Musica partita", app.store.logs[0]["message"])
+        with mock.patch.object(app, "ensure_sonos_playing", return_value=False), \
+                mock.patch.object(app, "sonos_playing", return_value=False):
+            self.assertFalse(engine.check_slow_start("media_player.sala", selection, checks=1))
+        self.assertIn("non è partita", app.store.logs[0]["message"])
 
     def test_music_on_outside_schedule_is_not_an_error(self):
         app = self.app
