@@ -1154,8 +1154,12 @@ def sonos_state_detail(state, configured=()):
 # inviati a più Sonos insieme fallivano tutti per colpa sua. Viene saltato per qualche minuto.
 SONOS_UNRESPONSIVE = {}
 # Se continua a non rispondere la pausa si allunga: riprovarla ogni 3 minuti bloccava spot e musica ogni volta.
-SONOS_UNRESPONSIVE_STEPS = (180, 600, 1800)
+SONOS_UNRESPONSIVE_STEPS = (180, 600, 1800, 7200)
 SONOS_UNRESPONSIVE_STRIKES = {}
+# Subito dopo una cassa guasta Home Assistant resta impegnato con lei: un «timed out» senza altri dettagli
+# sulle casse sane è attesa, non un guasto. Registro reale: tre casse sane segnate insieme a quella dei bagni.
+SONOS_BUSY_AFTER_MARK_SECONDS = 120
+SONOS_LAST_MARK = {"at": None}
 SONOS_UNRESPONSIVE_FORGET_SECONDS = 3600
 # Casse già segnalate come «ignorate»: il motore le controlla ogni pochi secondi e riempivano il Registro.
 SONOS_IGNORED_LOGGED = {}
@@ -1182,12 +1186,14 @@ def mark_sonos_unresponsive(player, error):
     if sonos_unresponsive(player):
         return
     now = time.monotonic()
-    strikes, last = SONOS_UNRESPONSIVE_STRIKES.get(player, (0, None))
-    strikes = 1 if last is None or now - last > SONOS_UNRESPONSIVE_FORGET_SECONDS \
+    # L'ora senza errori si conta dalla fine della pausa: quella di due ore non deve azzerare tutto.
+    strikes, last_end = SONOS_UNRESPONSIVE_STRIKES.get(player, (0, None))
+    strikes = 1 if last_end is None or now - last_end > SONOS_UNRESPONSIVE_FORGET_SECONDS \
         else min(strikes + 1, len(SONOS_UNRESPONSIVE_STEPS))
     seconds = SONOS_UNRESPONSIVE_STEPS[strikes - 1]
-    SONOS_UNRESPONSIVE_STRIKES[player] = (strikes, now)
+    SONOS_UNRESPONSIVE_STRIKES[player] = (strikes, now + seconds)
     SONOS_UNRESPONSIVE[player] = now + seconds
+    SONOS_LAST_MARK["at"] = now
     store.log("warning", f"Il Sonos {player.removeprefix('media_player.')} non risponde ({error}): "
                          f"lo salto per {seconds // 60} minuti, gli altri continuano")
 
@@ -1196,6 +1202,24 @@ def sonos_connection_error(error):
     """La cassa non si raggiunge o non risponde in tempo (non è un rifiuto del comando)."""
     return bool(re.search(r"max retries|newconnectionerror|connection refused|unable to connect|timed out|timeout"
                           r"|unreachable|no route|upnp error (code )?1001", str(error), re.I))
+
+
+def sonos_error_names_speaker(error):
+    """Errore che viene dalla cassa stessa (Home Assistant la nomina con il suo indirizzo), non un'attesa
+    scaduta da parte nostra."""
+    return bool(re.search(r"httpconnectionpool|max retries|newconnectionerror|connecttimeout|connection refused"
+                          r"|unable to connect|unreachable|no route|upnp error", str(error), re.I))
+
+
+def blame_sonos(player, error):
+    """Segna la cassa come guasta, tranne quando l'errore è solo un'attesa scaduta mentre Home Assistant
+    è ancora impegnato con un'altra cassa appena segnata."""
+    last = SONOS_LAST_MARK.get("at")
+    if not sonos_error_names_speaker(error) and last is not None \
+            and time.monotonic() - last < SONOS_BUSY_AFTER_MARK_SECONDS:
+        return False
+    mark_sonos_unresponsive(player, error)
+    return True
 
 
 def find_unresponsive_sonos(error, players):
@@ -1228,10 +1252,9 @@ def find_unresponsive_sonos(error, players):
                 ha.service("media_player", "volume_set", {"entity_id": player, "volume_level": level})
             except Exception as probe_error:
                 if sonos_connection_error(probe_error):
-                    found.append(player)
-    for player in found:
-        mark_sonos_unresponsive(player, error)
-    return found
+                    # Basta il primo: le prove successive aspettano Home Assistant, ancora fermo su di lei.
+                    return [player] if blame_sonos(player, probe_error) else []
+    return [player for player in found if blame_sonos(player, error)]
 
 
 def sonos_service_each(domain, name, payload, call=None, split_on_timeout=True):
@@ -1249,7 +1272,7 @@ def sonos_service_each(domain, name, payload, call=None, split_on_timeout=True):
                 call(domain, name, {**payload, "entity_id": [entity]})
                 done += 1
             except Exception as single_error:
-                mark_sonos_unresponsive(entity, single_error)
+                blame_sonos(entity, single_error)
         if not done:
             raise
         return []
@@ -1432,7 +1455,7 @@ def repair_sonos_group(players, preferred_coordinator=None, volume_level=None):
             # Un Sonos appena spento risulta ancora acceso per qualche secondo: riprovare ogni
             # controllo bloccava tutto fino al timeout. Si salta per qualche minuto.
             if len(missing) == 1:
-                mark_sonos_unresponsive(missing[0], error)
+                blame_sonos(missing[0], error)
                 return {"coordinator": coordinator, "missing": [], "unavailable": unavailable + missing}
             joined = []
             for member in missing:
@@ -1440,7 +1463,7 @@ def repair_sonos_group(players, preferred_coordinator=None, volume_level=None):
                     ha.service("media_player", "join", {"entity_id": coordinator, "group_members": [member]})
                     joined.append(member)
                 except Exception as member_error:
-                    mark_sonos_unresponsive(member, member_error)
+                    blame_sonos(member, member_error)
             unavailable = unavailable + [m for m in missing if m not in joined]
             missing = joined
             if not missing:
@@ -1886,20 +1909,35 @@ def wait_sonos_groups(groups, seconds=None):
 def take_sonos_snapshot(targets, players):
     """Salva lo stato prima dello spot. Con il gruppo incluso basta una cassa che non risponde a far fallire
     tutto: in quel caso si salvano le sole casse dello spot. Restituisce le destinazioni e se c'è il gruppo."""
+    skipped = sonos_group_skipped(targets)
+    if not skipped:
+        try:
+            # Non uno alla volta: la cassa indicata può essere sana e fallire per un'altra del suo gruppo.
+            sonos_service("sonos", "snapshot", {"entity_id": targets, "with_group": True})
+            return targets, True
+        except Exception as error:
+            if sonos_transition_busy(error) or not sonos_connection_error(error):
+                raise
+            find_unresponsive_sonos(error, players)
+    reachable = [player for player in players if not sonos_unresponsive(player)]
+    if not reachable:
+        raise RuntimeError("Nessun Sonos dello spot risponde")
+    # Non è un errore: dopo lo spot il gruppo viene ricomposto da repair_sonos_topology.
+    store.log("info", "Stato Sonos salvato senza il gruppo: una cassa del gruppo non risponde")
+    sonos_service_each("sonos", "snapshot", {"entity_id": reachable, "with_group": False})
+    return reachable, False
+
+
+def sonos_group_skipped(targets):
+    """Casse già saltate perché non rispondono, nel gruppo di quelle indicate."""
     try:
-        # Non uno alla volta: la cassa indicata può essere sana e fallire per un'altra del suo gruppo.
-        sonos_service("sonos", "snapshot", {"entity_id": targets, "with_group": True})
-        return targets, True
-    except Exception as error:
-        if sonos_transition_busy(error) or not sonos_connection_error(error):
-            raise
-        find_unresponsive_sonos(error, players)
-        reachable = [player for player in players if not sonos_unresponsive(player)]
-        if not reachable:
-            raise
-        store.log("warning", "Stato Sonos salvato senza il gruppo: una cassa del gruppo non risponde")
-        sonos_service_each("sonos", "snapshot", {"entity_id": reachable, "with_group": False})
-        return reachable, False
+        states = {item.get("entity_id"): item for item in ha.states()}
+    except Exception:
+        return []
+    members = []
+    for target in targets:
+        members += [target] + list(states.get(target, {}).get("attributes", {}).get("group_members") or [])
+    return [player for player in dict.fromkeys(members) if sonos_unresponsive(player)]
 
 
 def restore_sonos_playback(snapshot_targets, resume_targets, selected_players=None, volume_levels=None,
@@ -2093,7 +2131,8 @@ def play_audio_once(filename=None, manual=False, players=None, automatic=False):
                 )
                 repaired, unavailable = repair_sonos_topology(original_groups, previous_volumes)
                 if repaired:
-                    store.log("warning", "Sonos riagganciati dopo lo spot: " + ", ".join(repaired))
+                    store.log("info", "Sonos riagganciati dopo lo spot: " + ", ".join(repaired))
+                unavailable = [player for player in unavailable if not sonos_unresponsive(player)]
                 if unavailable:
                     store.log("warning", "Sonos non raggiungibili dopo lo spot: " + ", ".join(unavailable))
                 store.log("info", f"Musica e gruppi ripristinati su {len(players)} Sonos selezionati")
@@ -2381,6 +2420,17 @@ def select_sonos_source(entity_id, source, retries=None):
     raise last_error
 
 
+def keep_playlist_repeating(coordinator, content_type):
+    """Ripetizione di tutta la playlist: finita l'ultima canzone ricomincia senza silenzio. Le radio
+    non hanno una fine; se Sonos rifiuta la ripetizione la musica suona lo stesso."""
+    if content_type in ("radio_url", "sonos_radio_source"):
+        return
+    try:
+        ha.service("media_player", "repeat_set", {"entity_id": coordinator, "repeat": "all"})
+    except Exception as error:
+        store.log("info", f"Ripetizione della playlist non impostata: {error}")
+
+
 def start_music(selection=None, fade_in=False):
     cfg = store.config["music"]
     selection = selection or cfg
@@ -2455,6 +2505,7 @@ def start_music(selection=None, fade_in=False):
                 raise
             play_rejected_source_elsewhere(coordinator, selection, play_error)
         resume_playlist_position(coordinator, selection)
+        keep_playlist_repeating(coordinator, content_type)
         title = selection.get("name") or selection.get("title") or content_id
         if not ensure_sonos_playing(coordinator):
             raise SonosNotStarted(f"I Sonos non sono partiti con «{title}»: riprovo tra poco", players)
@@ -3834,6 +3885,7 @@ class Scheduler(threading.Thread):
         store.log("warning", f"La musica «{title}» si era fermata da sola: la faccio ripartire")
         try:
             ha.service("media_player", "media_play", {"entity_id": coordinator})
+            keep_playlist_repeating(coordinator, selection.get("content_type"))
             if ensure_sonos_playing(coordinator, checks=8) and sonos_playing(coordinator) is True:
                 store.log("info", f"Musica ripartita: «{title}»")
                 return
@@ -4140,9 +4192,10 @@ class Scheduler(threading.Thread):
                     if not audio_playback_lock.locked():
                         detect_manual_sonos_volumes(live)
                         remember_sonos_volumes(live)
-                issue = tuple(sorted(result["unavailable"]))
+                # Le casse saltate perché non rispondono sono già nel Registro: non si ripetono.
+                issue = tuple(sorted(player for player in result["unavailable"] if not sonos_unresponsive(player)))
                 if result["missing"]:
-                    store.log("warning", "Sonos riagganciati automaticamente: " + ", ".join(result["missing"]))
+                    store.log("info", "Sonos riagganciati automaticamente: " + ", ".join(result["missing"]))
                 if issue and issue != self.music_group_issue:
                     store.log("warning", "Sonos momentaneamente non raggiungibili: " + ", ".join(issue))
                 if not issue and self.music_group_issue:
