@@ -23,12 +23,15 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           import re
-          html = Path("carellas_media_ads/app/index.html").read_text()
-          scripts = re.findall(r"<script>(.*?)</script>", html, re.S)
-          if not scripts:
-              raise SystemExit("No inline JavaScript found")
-          Path("/tmp/carellas-dashboard.js").write_text("\n".join(scripts))
+          # Nuova interfaccia e interfaccia precedente (/classic).
+          for name in ("index", "index_classic"):
+              html = Path(f"carellas_media_ads/app/{name}.html").read_text()
+              scripts = re.findall(r"<script>(.*?)</script>", html, re.S)
+              if not scripts:
+                  raise SystemExit(f"No inline JavaScript found in {name}.html")
+              Path(f"/tmp/carellas-{name}.js").write_text("\n".join(scripts))
           PY
-          node --check /tmp/carellas-dashboard.js
+          node --check /tmp/carellas-index.js
+          node --check /tmp/carellas-index_classic.js
       - name: Unit tests
         run: python -m unittest discover -s tests -v

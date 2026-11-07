@@ -1,0 +1,19 @@
+{
+  "v": 3,
+  "createdOnFiles": {"v": 1, "at": "2026-10-12T21:40:00Z"},
+  "title": "Carellas Media Ads — UI Redesign",
+  "launch": {"view": "canvas"},
+  "pages": [],
+  "boards": {
+    "Main.dc.html": {"x": 0, "y": 0, "w": 1440, "h": 1260, "title": "A · Regia — Ora in onda", "expand": "fill"},
+    "Palinsesto.dc.html": {"x": 1520, "y": 0, "w": 1440, "h": 1140, "title": "B · Palinsesto unico", "expand": "fill"},
+    "Zone.dc.html": {"x": 3040, "y": 0, "w": 1440, "h": 1260, "title": "C · Per zona e dispositivo", "expand": "fill"},
+    "Guidata.dc.html": {"x": 0, "y": 1420, "w": 1440, "h": 1080, "title": "D · Configurazione guidata", "expand": "fill"},
+    "Mobile.dc.html": {"x": 1520, "y": 1420, "w": 1400, "h": 1040, "title": "E · Mobile, al banco"}
+  },
+  "order": ["Main.dc.html", "Palinsesto.dc.html", "Zone.dc.html", "Guidata.dc.html", "Mobile.dc.html"],
+  "notes": {
+    "title": {"x": 0, "y": -300, "text": "Carellas Media Ads — 5 direzioni UI/UX", "kind": "title1", "maxW": 4480}
+  },
+  "designSystems": []
+}

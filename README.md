@@ -244,3 +244,14 @@ Non è necessaria un'app IPTV a pagamento. In **IPTV multi-TV → Player TV via 
 4. Aprire nel browser della TV `http://IP-HOME-ASSISTANT:8101`, accedere e premere una volta **Avvia video e audio** se il browser blocca l'avvio automatico con suono.
 
 Per l'accesso da Internet, il sottodominio pubblico deve inoltrare esclusivamente al Player sulla porta `8101`. La porta amministrativa `8099` deve rimanere accessibile soltanto dalla LAN o tramite l'accesso protetto di Home Assistant.
+
+
+## Prova in locale senza Home Assistant
+
+Per vedere e provare il pannello sul proprio PC, con Sonos e TV virtuali:
+
+```bash
+python dev/run_local.py
+```
+
+Su Windows usare `py dev/run_local.py`. Poi aprire http://127.0.0.1:8099 (pannello) e http://127.0.0.1:8098 (simulatore delle casse). Al primo avvio vengono caricati dati di esempio; `--reset` riparte da zero. Dettagli in `plan.md`.

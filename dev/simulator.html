@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Simulatore Sonos · Carellas</title>
+<style>
+  :root{--bg:#100d0b;--panel:#1e1814;--gold:#d9a441;--red:#a52e28;--cream:#f5ead8;--muted:#bcae9e;--green:#42b883;--line:#3d3027;--blue:#6aa8d8;color-scheme:dark}
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(circle at 50% -20%,#4a2518 0,#17100c 36%,#0e0b09 100%) var(--bg);color:var(--cream);font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif;min-height:100vh}
+  .shell{max-width:1200px;margin:auto;padding:16px}
+  header{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;background:linear-gradient(120deg,#20303d,#17100c 70%);border:1px solid #3c5568;border-radius:18px;padding:14px 18px}
+  header h1{margin:0;font:700 24px Georgia,serif;color:#fff5df}
+  header p{margin:2px 0 0;color:var(--muted)}
+  .tag{background:#20303d;border:1px solid #3c5568;color:#bfe0f7;border-radius:99px;padding:4px 10px;font-size:12px;font-weight:700}
+  a{color:var(--gold)}
+  .layout{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:14px;margin-top:14px}
+  .speakers{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
+  .card{background:linear-gradient(145deg,#241c17,#191411);border:1px solid var(--line);border-radius:16px;padding:14px;min-width:0}
+  .card h2{margin:0 0 10px;font:700 18px Georgia,serif;color:#ffe7b6}
+  .spk{display:grid;gap:9px}
+  .spk.off{opacity:.55;border-style:dashed}
+  .spk-head{display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .spk-head b{font-size:16px}
+  .state{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;border-radius:99px;padding:3px 9px;background:#221b16;color:var(--muted)}
+  .state.playing{background:#15301f;color:#7fd9ab}.state.spot{background:#412b14;color:#f5c66e}.state.paused{background:#2a2216;color:#e0c48a}.state.unavailable{background:#3a1513;color:#ff9d97}
+  .now{min-height:20px;color:#e6d6c0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .group{font-size:12px;color:var(--muted)}
+  .row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  select,input[type=range]{width:100%}
+  select{background:#100d0b;color:var(--cream);border:1px solid #594638;border-radius:9px;padding:7px}
+  input[type=range]{accent-color:var(--gold)}
+  button{border:0;border-radius:9px;background:#382b23;color:var(--cream);border:1px solid #574234;padding:7px 10px;font:600 13px system-ui,sans-serif;cursor:pointer}
+  button.primary{background:var(--gold);color:#21150a;border-color:var(--gold)}
+  button.danger{background:#762520;border-color:#762520;color:#fff}
+  button:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+  .vol{display:grid;grid-template-columns:1fr 44px;gap:8px;align-items:center;font-variant-numeric:tabular-nums}
+  .devices{display:grid;gap:8px}
+  .device{display:flex;justify-content:space-between;align-items:center;gap:8px;background:#120f0d;border:1px solid #382d26;border-radius:10px;padding:8px 10px}
+  .events{display:grid;gap:4px;max-height:70vh;overflow:auto}
+  .ev{display:grid;grid-template-columns:62px minmax(0,1fr);gap:8px;font-size:12px;padding:5px 7px;border-radius:8px;background:#120f0d;border-left:3px solid #6b5d50}
+  .ev time{color:var(--muted);font-family:ui-monospace,Consolas,monospace}
+  .ev.spot{border-color:var(--gold)}.ev.music{border-color:var(--green)}.ev.group{border-color:var(--blue)}.ev.snapshot{border-color:#8a5a9c}.ev.app{border-color:#c97a3a}.ev.tv{border-color:#6aa8d8}.ev.volume{border-color:#555}
+  .hint{color:var(--muted);font-size:12px}
+  .err{color:#ff9d97;min-height:18px}
+  @media(max-width:860px){.layout{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="shell">
+  <header>
+    <div><h1>Simulatore Sonos</h1><p>Casse e TV virtuali per provare Carellas Media Ads senza Home Assistant.</p></div>
+    <div class="row"><span class="tag">SOLO TEST LOCALE</span><a href="http://127.0.0.1:8099" target="_blank" rel="noopener">Apri il pannello →</a></div>
+  </header>
+  <p class="err" id="err" role="alert"></p>
+  <div class="layout">
+    <div style="display:grid;gap:14px;align-content:start">
+      <div class="speakers" id="speakers"></div>
+      <div class="card">
+        <h2>TV e prese</h2>
+        <div class="devices" id="devices"></div>
+        <p class="hint">Accensione e spegnimento arrivano dall'add-on (Wake-on-LAN, script, prese). Qui puoi anche cambiarli a mano.</p>
+      </div>
+    </div>
+    <div class="card">
+      <div class="row" style="justify-content:space-between"><h2 style="margin:0">Cosa riceve Home Assistant</h2><button id="clear">Svuota</button></div>
+      <p class="hint">Ogni comando inviato dall'add-on o dall'"app Sonos" qui a sinistra.</p>
+      <div class="events" id="events"></div>
+    </div>
+  </div>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+let data=null,busy=false;
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+async function act(body){
+  try{const r=await fetch('/api/sim/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const j=await r.json();if(!r.ok)throw new Error(j.error);$('err').textContent='';data=j;render()}
+  catch(e){$('err').textContent=e.message}
+}
+function stateLabel(s){
+  if(!s.reachable)return['unavailable','Scollegata'];
+  if(s.state==='playing')return s.kind==='spot'?['spot','Spot']:['playing','In riproduzione'];
+  if(s.state==='paused')return['paused','In pausa'];
+  return['','Ferma'];
+}
+function render(){
+  if(!data)return;
+  const names=Object.fromEntries(data.speakers.map(s=>[s.entity_id,s.name.replace('Sonos ','')]));
+  const options=data.content.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
+  if(!busy)$('speakers').innerHTML=data.speakers.map(s=>{
+    const [cls,label]=stateLabel(s);
+    const others=data.speakers.filter(o=>o.entity_id!==s.entity_id&&o.reachable);
+    const grp=s.group.length>1?`Gruppo: ${s.group.map(g=>esc(names[g])).join(' + ')}${s.coordinator===s.entity_id?' (coordinatore)':''}`:'Da sola';
+    return `<div class="card spk ${s.reachable?'':'off'}">
+      <div class="spk-head"><b>${esc(s.name)}</b><span class="state ${cls}">${label}</span></div>
+      <div class="now">${s.state!=='idle'&&s.title?(s.kind==='spot'?'🎙 ':'♫ ')+esc(s.title):'<span class="hint">Nessun brano</span>'}</div>
+      <div class="group">${grp}</div>
+      ${s.reachable?`
+      <div class="vol"><input type="range" min="0" max="100" value="${s.volume}" aria-label="Volume ${esc(s.name)}" data-vol="${s.entity_id}"><span>${s.volume}%</span></div>
+      <div class="row"><select data-src="${s.entity_id}" aria-label="Contenuto per ${esc(s.name)}">${options}</select></div>
+      <div class="row">
+        <button class="primary" data-act="app_play" data-e="${s.entity_id}">▶ Suona da app</button>
+        <button data-act="app_pause" data-e="${s.entity_id}">Pausa</button>
+        <button data-act="app_stop" data-e="${s.entity_id}">Stop</button>
+      </div>
+      <div class="row">
+        ${s.group.length>1?`<button data-act="unjoin" data-e="${s.entity_id}">Separa dal gruppo</button>`:`<select data-join="${s.entity_id}" aria-label="Unisci ${esc(s.name)} a"><option value="">Unisci a…</option>${others.map(o=>`<option value="${o.entity_id}">${esc(names[o.entity_id])}</option>`).join('')}</select>`}
+      </div>`:'<p class="hint">Simula una cassa spenta o fuori dalla rete Wi-Fi.</p>'}
+      <button class="${s.reachable?'danger':'primary'}" data-act="toggle_reachable" data-e="${s.entity_id}">${s.reachable?'Scollega dalla rete':'Ricollega'}</button>
+    </div>`}).join('');
+  $('devices').innerHTML=data.devices.map(d=>`<div class="device"><span><b>${esc(d.name)}</b><br><span class="hint">${esc(d.entity_id)}</span></span><span class="row"><span class="state ${d.state==='on'?'playing':''}">${d.state==='on'?'Accesa':'Spenta'}</span><button data-act="device_toggle" data-e="${d.entity_id}">Cambia</button></span></div>`).join('');
+  $('events').innerHTML=data.events.length?data.events.map(e=>`<div class="ev ${esc(e.kind)}"><time>${esc(e.time)}</time><span>${esc(e.text)}</span></div>`).join(''):'<p class="hint">Ancora nessun comando.</p>';
+}
+document.addEventListener('click',e=>{
+  const b=e.target.closest('button[data-act]');if(!b)return;
+  const body={action:b.dataset.act,entity_id:b.dataset.e};
+  if(body.action==='app_play')body.media_id=document.querySelector(`[data-src="${b.dataset.e}"]`).value;
+  act(body);
+});
+document.addEventListener('change',e=>{
+  if(e.target.dataset.join&&e.target.value)act({action:'join',entity_id:e.target.dataset.join,target:e.target.value});
+  if(e.target.dataset.vol){busy=false;act({action:'volume',entity_id:e.target.dataset.vol,value:+e.target.value})}
+});
+document.addEventListener('input',e=>{if(e.target.dataset.vol){busy=true;e.target.nextElementSibling.textContent=e.target.value+'%'}});
+document.addEventListener('focusin',e=>{if(e.target.matches('select'))busy=true});
+document.addEventListener('focusout',e=>{if(e.target.matches('select'))busy=false});
+$('clear').onclick=()=>act({action:'clear_log'});
+async function poll(){try{const r=await fetch('/api/sim/state');data=await r.json();render()}catch(e){$('err').textContent='Simulatore non raggiungibile: è ancora avviato?'}}
+poll();setInterval(poll,1500);
+</script>
+</body>
+</html>

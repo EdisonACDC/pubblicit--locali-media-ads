@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<title>Mobile al banco</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&amp;family=Atkinson+Hyperlegible:wght@400;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#E6B04E}a:hover{color:#F5CB78}
+.phone{width:390px;height:844px;border-radius:44px;background:#120F0D;border:8px solid #2B2521;box-sizing:content-box;overflow:hidden;position:relative;display:flex;flex-direction:column;color:#FAF3E8;font:400 16px/1.45 'Atkinson Hyperlegible',sans-serif}
+.disp{font-family:'Bricolage Grotesque',sans-serif}
+.btn{display:flex;align-items:center;justify-content:center;gap:8px;min-height:56px;border-radius:16px;font:700 16px 'Atkinson Hyperlegible',sans-serif;cursor:pointer;border:1px solid transparent}
+.btn:focus-visible,.tab:focus-visible{outline:2px solid #E6B04E;outline-offset:2px}
+.btn-primary{background:#E6B04E;color:#1D1406}
+.btn-ghost{background:#231D18;color:#FAF3E8;border-color:#3B322B}
+.tabs{display:flex;border-top:1px solid #2B2521;background:#16120F;padding:6px 8px 18px}
+.tab{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;min-height:52px;justify-content:center;color:#A99A88;text-decoration:none;font-size:12px;font-weight:700}
+.card{background:#1E1915;border:1px solid #2F2721;border-radius:20px}
+.muted{color:#B5A796}
+</style>
+</helmet>
+<div style="width: 1400px; height: 1040px; box-sizing: border-box; background: #0B0908; padding: 48px 47px; display: flex; gap: 60px; font-family: 'Atkinson Hyperlegible', sans-serif">
+
+  <div style="display: flex; flex-direction: column; gap: 18px">
+    <div style="color: #CDBFAE; font-size: 15px"><strong style="color: #FAF3E8">1 · Oggi</strong> — controllo rapido durante il servizio</div>
+    <div class="phone">
+      <div style="flex: 1; overflow: hidden; padding: 28px 20px 16px; display: flex; flex-direction: column; gap: 14px">
+        <div style="display: flex; justify-content: space-between; align-items: center">
+          <h1 class="disp" style="margin: 0; font-size: 32px; font-weight: 700">In onda</h1>
+          <button type="button" aria-label="Lingua: italiano. Cambia in tedesco" style="min-width: 44px; min-height: 44px; border-radius: 12px; background: #231D18; border: 1px solid #3B322B; color: #FAF3E8; font: 700 14px 'Atkinson Hyperlegible', sans-serif">IT</button>
+        </div>
+        <div class="card" style="padding: 16px; display: flex; flex-direction: column; gap: 10px">
+          <div style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #8FD9B0; font-weight: 700"><span style="width: 8px; height: 8px; border-radius: 50%; background: #5CC38F"></span>MUSICA</div>
+          <div class="disp" style="font-size: 22px; font-weight: 500">[Playlist pranzo]</div>
+          <div class="muted" style="font-size: 14px">Sala · Terrazza · fino alle 14:00</div>
+          <div style="height: 6px; border-radius: 3px; background: #3B322B"><div style="width: 70%; height: 100%; border-radius: 3px; background: #E6B04E"></div></div>
+        </div>
+        <div class="card" style="padding: 16px; display: flex; flex-direction: column; gap: 12px">
+          <div style="display: flex; justify-content: space-between; align-items: baseline">
+            <div style="font-size: 13px; color: #F0C877; font-weight: 700">PROSSIMO SPOT</div>
+            <div class="disp" style="font-size: 26px; font-weight: 700">12 min</div>
+          </div>
+          <div class="muted" style="font-size: 14px; margin-top: -8px">13:00 · voce femminile · 6 di 20 oggi</div>
+          <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px">
+            <button class="btn btn-primary" type="button">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"></path></svg>
+              Spot ora
+            </button>
+            <button class="btn btn-ghost" type="button">Salta</button>
+          </div>
+        </div>
+        <div class="card" style="padding: 16px">
+          <div style="font-weight: 700; margin-bottom: 10px">Pausa pubblicità</div>
+          <div role="group" aria-label="Durata pausa" style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px">
+            <button class="btn btn-ghost" type="button" style="min-height: 48px; font-size: 15px">30 min</button>
+            <button class="btn btn-ghost" type="button" style="min-height: 48px; font-size: 15px">1 ora</button>
+            <button class="btn btn-ghost" type="button" style="min-height: 48px; font-size: 15px">Oggi</button>
+          </div>
+        </div>
+        <div class="card" style="padding: 14px 16px; display: flex; flex-direction: column; gap: 10px">
+          <label style="display: grid; grid-template-columns: 82px 1fr 28px; align-items: center; gap: 8px; font-size: 15px">Sala <input type="range" min="0" max="100" value="25" style="accent-color: #E6B04E; width: 100%"> <span style="text-align: right">25</span></label>
+          <label style="display: grid; grid-template-columns: 82px 1fr 28px; align-items: center; gap: 8px; font-size: 15px">Terrazza <input type="range" min="0" max="100" value="30" style="accent-color: #E6B04E; width: 100%"> <span style="text-align: right">30</span></label>
+          <div style="display: grid; grid-template-columns: 82px 1fr; align-items: center; gap: 8px; font-size: 15px">Bar <span style="color: #F2A866; font-size: 14px">Offline · <a href="#">riprova</a></span></div>
+        </div>
+      </div>
+      <nav class="tabs" aria-label="Sezioni">
+        <a class="tab" href="#" aria-current="page" style="color: #E6B04E">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M6.3 6.3a8 8 0 0 0 0 11.4M17.7 6.3a8 8 0 0 1 0 11.4"></path></svg>Oggi</a>
+        <a class="tab" href="#">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="17" rx="2"></rect><path d="M3 9h18M8 2v4M16 2v4"></path></svg>Palinsesto</a>
+        <a class="tab" href="#">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="m3 16 5-5 4 4 3-3 6 6"></path></svg>Contenuti</a>
+        <a class="tab" href="#">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"></path></svg>Altro</a>
+      </nav>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 18px">
+    <div style="color: #CDBFAE; font-size: 15px"><strong style="color: #FAF3E8">2 · Contenuti</strong> — libreria con anteprime e utilizzo</div>
+    <div class="phone">
+      <div style="flex: 1; overflow: hidden; padding: 28px 20px 16px; display: flex; flex-direction: column; gap: 14px; position: relative">
+        <h1 class="disp" style="margin: 0; font-size: 32px; font-weight: 700">Contenuti</h1>
+        <div style="position: relative">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#A99A88" stroke-width="2" stroke-linecap="round" aria-hidden="true" style="position: absolute; left: 14px; top: 15px"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+          <input type="search" aria-label="Cerca nei contenuti" placeholder="Cerca" style="width: 100%; box-sizing: border-box; min-height: 48px; border-radius: 14px; border: 1px solid #3B322B; background: #1E1915; color: #FAF3E8; padding: 0 14px 0 42px; font: 400 16px 'Atkinson Hyperlegible', sans-serif">
+        </div>
+        <div role="group" aria-label="Filtro" style="display: flex; gap: 6px">
+          <button type="button" aria-pressed="true" style="min-height: 40px; padding: 0 14px; border-radius: 99px; border: 0; background: #FAF3E8; color: #1D1406; font: 700 14px 'Atkinson Hyperlegible', sans-serif">Tutti 6</button>
+          <button type="button" aria-pressed="false" style="min-height: 40px; padding: 0 14px; border-radius: 99px; border: 1px solid #3B322B; background: transparent; color: #FAF3E8; font: 700 14px 'Atkinson Hyperlegible', sans-serif">Audio 2</button>
+          <button type="button" aria-pressed="false" style="min-height: 40px; padding: 0 14px; border-radius: 99px; border: 1px solid #3B322B; background: transparent; color: #FAF3E8; font: 700 14px 'Atkinson Hyperlegible', sans-serif">Foto 3</button>
+          <button type="button" aria-pressed="false" style="min-height: 40px; padding: 0 14px; border-radius: 99px; border: 1px solid #3B322B; background: transparent; color: #FAF3E8; font: 700 14px 'Atkinson Hyperlegible', sans-serif">Video 1</button>
+        </div>
+        <ul style="list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px">
+          <li class="card" style="overflow: hidden">
+            <img src="/_blob/c0a1aecb5e605d0700e5c5fd54795639" alt="" style="width: 100%; aspect-ratio: 16/10; object-fit: cover; display: block">
+            <div style="padding: 8px 10px"><div style="font-size: 14px; font-weight: 700">01_Benvenuti</div><div style="font-size: 12px; color: #8FD9B0">In uso · TV Sala</div></div>
+          </li>
+          <li class="card" style="overflow: hidden">
+            <img src="/_blob/c74ea9a6d9bff73eb456381a868f0a4e" alt="" style="width: 100%; aspect-ratio: 16/10; object-fit: cover; display: block">
+            <div style="padding: 8px 10px"><div style="font-size: 14px; font-weight: 700">02_Cucina</div><div style="font-size: 12px; color: #8FD9B0">In uso · TV Sala</div></div>
+          </li>
+          <li class="card" style="overflow: hidden">
+            <img src="/_blob/65a1089b70dcc46466c85417b0cb66f9" alt="" style="width: 100%; aspect-ratio: 16/10; object-fit: cover; display: block">
+            <div style="padding: 8px 10px"><div style="font-size: 14px; font-weight: 700">03_Genuss</div><div style="font-size: 12px; color: #8FD9B0">In uso · TV Sala</div></div>
+          </li>
+          <li class="card" style="overflow: hidden">
+            <div style="aspect-ratio: 16/10; background: #2A221C; display: grid; place-items: center">
+              <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#FAF3E8" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M10 8.5v7l6-3.5z" fill="#FAF3E8"></path></svg>
+            </div>
+            <div style="padding: 8px 10px"><div style="font-size: 14px; font-weight: 700">SmartTV_DLNA</div><div style="font-size: 12px; color: #8FD9B0">In uso · TV Sala</div></div>
+          </li>
+          <li class="card" style="overflow: hidden">
+            <div style="aspect-ratio: 16/10; background: #2A2016; display: grid; place-items: center">
+              <svg width="64" height="28" viewBox="0 0 64 28" fill="none" stroke="#E6B04E" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M4 14v0M10 9v10M16 4v20M22 10v8M28 6v16M34 11v6M40 3v22M46 9v10M52 12v4M58 8v12"></path></svg>
+            </div>
+            <div style="padding: 8px 10px"><div style="font-size: 14px; font-weight: 700">Spot femminile</div><div style="font-size: 12px; color: #F0C877">In uso · spot</div></div>
+          </li>
+          <li class="card" style="overflow: hidden">
+            <div style="aspect-ratio: 16/10; background: #2A2016; display: grid; place-items: center">
+              <svg width="64" height="28" viewBox="0 0 64 28" fill="none" stroke="#E6B04E" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M4 12v4M10 6v16M16 10v8M22 3v22M28 9v10M34 5v18M40 11v6M46 7v14M52 10v8M58 13v2"></path></svg>
+            </div>
+            <div style="padding: 8px 10px"><div style="font-size: 14px; font-weight: 700">Spot maschile</div><div style="font-size: 12px; color: #F0C877">In uso · spot</div></div>
+          </li>
+        </ul>
+        <button class="btn btn-primary" type="button" style="position: absolute; right: 20px; bottom: 16px; padding: 0 22px; border-radius: 999px; box-shadow: 0 10px 30px rgba(0,0,0,.5)">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"></path></svg>
+          Carica
+        </button>
+      </div>
+      <nav class="tabs" aria-label="Sezioni">
+        <a class="tab" href="#">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M6.3 6.3a8 8 0 0 0 0 11.4M17.7 6.3a8 8 0 0 1 0 11.4"></path></svg>Oggi</a>
+        <a class="tab" href="#">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="17" rx="2"></rect><path d="M3 9h18M8 2v4M16 2v4"></path></svg>Palinsesto</a>
+        <a class="tab" href="#" aria-current="page" style="color: #E6B04E">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="m3 16 5-5 4 4 3-3 6 6"></path></svg>Contenuti</a>
+        <a class="tab" href="#">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"></path></svg>Altro</a>
+      </nav>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 18px">
+    <div style="color: #CDBFAE; font-size: 15px"><strong style="color: #FAF3E8">3 · Schermo TV</strong> — riordina e invia in un gesto</div>
+    <div class="phone">
+      <div style="flex: 1; overflow: hidden; padding: 20px 20px 0; display: flex; flex-direction: column; gap: 14px">
+        <a href="#" style="display: inline-flex; align-items: center; gap: 4px; min-height: 44px; font-weight: 700; text-decoration: none; width: max-content">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="m15 18-6-6 6-6"></path></svg>Zone</a>
+        <div>
+          <h1 class="disp" style="margin: 0; font-size: 32px; font-weight: 700">TV Sala</h1>
+          <div class="muted" style="font-size: 14px">Canale TV Demo Carellas · in loop · 16:9</div>
+        </div>
+        <ol style="list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px">
+          <li class="card" style="display: flex; align-items: center; gap: 12px; padding: 10px">
+            <div style="width: 88px; height: 50px; border-radius: 8px; background: #2A221C; display: grid; place-items: center; flex: none">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="#FAF3E8" aria-hidden="true"><path d="M8 5v14l11-7z"></path></svg>
+            </div>
+            <div style="flex: 1; min-width: 0"><div style="font-weight: 700; font-size: 15px">SmartTV_DLNA</div><div class="muted" style="font-size: 13px">Video · intero</div></div>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="#7D6E5F" aria-label="Trascina per spostare" role="img"><circle cx="9" cy="6" r="1.6"></circle><circle cx="15" cy="6" r="1.6"></circle><circle cx="9" cy="12" r="1.6"></circle><circle cx="15" cy="12" r="1.6"></circle><circle cx="9" cy="18" r="1.6"></circle><circle cx="15" cy="18" r="1.6"></circle></svg>
+          </li>
+          <li class="card" style="display: flex; align-items: center; gap: 12px; padding: 10px; border-color: #E6B04E; box-shadow: 0 12px 30px rgba(0,0,0,.55); transform: rotate(-1deg)">
+            <img src="/_blob/c74ea9a6d9bff73eb456381a868f0a4e" alt="" style="width: 88px; height: 50px; object-fit: cover; border-radius: 8px; flex: none">
+            <div style="flex: 1; min-width: 0"><div style="font-weight: 700; font-size: 15px">02_Cucina</div><div class="muted" style="font-size: 13px">15 s · Zoom avanti</div></div>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="#E6B04E" aria-label="Trascina per spostare" role="img"><circle cx="9" cy="6" r="1.6"></circle><circle cx="15" cy="6" r="1.6"></circle><circle cx="9" cy="12" r="1.6"></circle><circle cx="15" cy="12" r="1.6"></circle><circle cx="9" cy="18" r="1.6"></circle><circle cx="15" cy="18" r="1.6"></circle></svg>
+          </li>
+          <li class="card" style="display: flex; align-items: center; gap: 12px; padding: 10px">
+            <img src="/_blob/c0a1aecb5e605d0700e5c5fd54795639" alt="" style="width: 88px; height: 50px; object-fit: cover; border-radius: 8px; flex: none">
+            <div style="flex: 1; min-width: 0"><div style="font-weight: 700; font-size: 15px">01_Benvenuti</div><div class="muted" style="font-size: 13px">15 s · Ken Burns</div></div>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="#7D6E5F" aria-label="Trascina per spostare" role="img"><circle cx="9" cy="6" r="1.6"></circle><circle cx="15" cy="6" r="1.6"></circle><circle cx="9" cy="12" r="1.6"></circle><circle cx="15" cy="12" r="1.6"></circle><circle cx="9" cy="18" r="1.6"></circle><circle cx="15" cy="18" r="1.6"></circle></svg>
+          </li>
+          <li class="card" style="display: flex; align-items: center; gap: 12px; padding: 10px">
+            <img src="/_blob/65a1089b70dcc46466c85417b0cb66f9" alt="" style="width: 88px; height: 50px; object-fit: cover; border-radius: 8px; flex: none">
+            <div style="flex: 1; min-width: 0"><div style="font-weight: 700; font-size: 15px">03_Genuss</div><div class="muted" style="font-size: 13px">15 s · Dissolvenza</div></div>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="#7D6E5F" aria-label="Trascina per spostare" role="img"><circle cx="9" cy="6" r="1.6"></circle><circle cx="15" cy="6" r="1.6"></circle><circle cx="9" cy="12" r="1.6"></circle><circle cx="15" cy="12" r="1.6"></circle><circle cx="9" cy="18" r="1.6"></circle><circle cx="15" cy="18" r="1.6"></circle></svg>
+          </li>
+        </ol>
+        <button class="btn btn-ghost" type="button" style="border-style: dashed">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+          Aggiungi foto o video
+        </button>
+      </div>
+      <div style="padding: 14px 20px 26px; background: #16120F; border-top: 1px solid #2B2521; display: flex; flex-direction: column; gap: 10px">
+        <div style="display: flex; align-items: center; gap: 8px; font-size: 14px; color: #F0C877"><span style="width: 8px; height: 8px; border-radius: 50%; background: #E6B04E"></span>Ordine cambiato · la TV mostra ancora quello vecchio</div>
+        <button class="btn btn-primary" type="button">Genera e invia alla TV</button>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1400,"height":1040}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return {};
+  }
+}
+</script>
+</body>
+</html>

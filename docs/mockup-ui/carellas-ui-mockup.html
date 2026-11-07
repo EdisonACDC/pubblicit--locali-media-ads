@@ -1,0 +1,647 @@
+<title>Carellas UI Redesign</title>
+<style>
+/* Layout: pagina-documento con proposte in alto e mockup a grandezza reale, stessi token del pannello Carellas */
+:root{
+  --bg:#100d0b;--panel:#1e1814;--panel2:#292019;--well:#120f0d;--gold:#d9a441;--gold-ink:#21150a;
+  --red:#a52e28;--red-deep:#762520;--cream:#f5ead8;--title:#ffe7b6;--muted:#bcae9e;--green:#42b883;
+  --line:#3d3027;--line2:#594638;--amber-bg:#412b14;--green-bg:#15301f;--red-bg:#3a1513;--info-bg:#1d1a17;
+  --display:Georgia,"Times New Roman",serif;--body:system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:ui-monospace,"Cascadia Mono",Consolas,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(circle at 50% -20%,#4a2518 0,#17100c 36%,#0e0b09 100%) var(--bg);background-attachment:fixed;color:var(--cream);font:15px/1.5 var(--body)}
+.page{max-width:1240px;margin:auto;padding-inline:18px;padding-block:28px 60px}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;color:var(--title)}
+a{color:var(--gold)}
+.intro{display:grid;gap:10px;max-width:760px}
+.eyebrow{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--gold);font-weight:700}
+.intro h1{font-size:clamp(28px,4vw,42px);margin:0;color:#fff5df}
+.intro p{margin:0;color:var(--muted);max-width:68ch}
+.toc{display:flex;flex-wrap:wrap;gap:8px;margin:22px 0 8px}
+.toc a{border:1px solid var(--line);background:#1a1512;color:var(--muted);border-radius:12px;padding:8px 13px;text-decoration:none;font-size:14px}
+.toc a:hover,.toc a:focus-visible{border-color:var(--gold);color:var(--cream);outline:none}
+section.block{margin-top:46px;display:grid;gap:16px}
+.block-head{display:grid;gap:6px;max-width:820px}
+.block-head h2{margin:0;font-size:clamp(22px,3vw,30px)}
+.block-head p{margin:0;color:var(--muted)}
+.why{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+.why div{background:var(--well);border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-size:14px;color:#e6d6c0;min-width:0}
+.why b{display:block;color:var(--title);font-size:12px;letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px}
+.why .before b{color:#ff9d97}.why .after b{color:#7fd9ab}
+
+/* --- Tabella proposte --- */
+.proposals{overflow-x:auto;border:1px solid var(--line);border-radius:16px;background:linear-gradient(145deg,#241c17,#191411)}
+.proposals table{width:100%;border-collapse:collapse;min-width:720px;font-size:14px}
+.proposals th{text-align:left;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);padding:12px 14px;border-bottom:1px solid var(--line)}
+.proposals td{padding:12px 14px;border-bottom:1px solid #2c231d;vertical-align:top}
+.proposals tr:last-child td{border-bottom:0}
+.proposals td:first-child{font-variant-numeric:tabular-nums;color:var(--gold);font-weight:700;width:36px}
+.proposals strong{color:var(--cream)}
+.proposals small{display:block;color:var(--muted);margin-top:2px}
+.prio{display:inline-block;font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;border-radius:99px;padding:3px 9px;white-space:nowrap}
+.prio.p1{background:var(--red-bg);color:#ff9d97;border:1px solid #6e2a25}
+.prio.p2{background:var(--amber-bg);color:#f5c66e;border:1px solid #6b4a20}
+.prio.p3{background:#1e2420;color:#9fcfb3;border:1px solid #2f4a3a}
+.effort{color:var(--muted);white-space:nowrap}
+
+/* --- Cornice mockup --- */
+.frame{border:1px solid #7d4f27;border-radius:20px;background:var(--bg);box-shadow:0 18px 50px #0007;overflow:hidden}
+.frame-bar{display:flex;align-items:center;gap:8px;padding:9px 14px;background:#0b0907;border-bottom:1px solid var(--line);font:12px var(--mono);color:var(--muted)}
+.frame-bar i{width:9px;height:9px;border-radius:50%;background:#3a2c22;display:inline-block}
+.frame-bar span{margin-left:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.app{padding:18px;background:radial-gradient(circle at 50% -30%,#3a1d13 0,#17100c 40%,#0e0b09 100%)}
+
+/* --- Componenti nello stile Carellas --- */
+.hero{background:linear-gradient(120deg,#6f1d1b,#2a1710 62%,#17100c);border:1px solid #7d4f27;border-radius:22px;padding:16px 20px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:14px;min-width:0}
+.seal{width:50px;height:50px;border:2px solid var(--gold);border-radius:50%;display:grid;place-items:center;color:var(--gold);font:700 22px var(--display);flex:none}
+.brand h3{margin:0;font-size:26px;color:#fff5df}
+.brand p{margin:1px 0 0;color:#e6cfae;font-size:13px}
+.hero-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.seg{display:inline-flex;background:#111a;border:1px solid #64462f;border-radius:11px;padding:3px;gap:3px}
+.seg button{border:0;background:transparent;color:var(--muted);border-radius:8px;padding:6px 11px;font:700 13px var(--body);cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--gold);color:var(--gold-ink)}
+.live{display:flex;align-items:center;gap:8px;background:#111a;padding:7px 12px;border-radius:99px;font-size:13px}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--green);box-shadow:0 0 10px var(--green);flex:none}
+.dot.off{background:#6b5d50;box-shadow:none}.dot.warn{background:var(--gold);box-shadow:0 0 10px var(--gold)}.dot.err{background:#df534c;box-shadow:0 0 10px #df534c}
+nav.tabs{display:flex;gap:8px;overflow:auto;padding:14px 0 12px}
+nav.tabs button{white-space:nowrap;border:1px solid var(--line);background:#1a1512;color:var(--muted);border-radius:12px;padding:9px 13px;cursor:pointer;font:14px var(--body);display:flex;align-items:center;gap:7px}
+nav.tabs button.active{background:var(--gold);color:var(--gold-ink);border-color:var(--gold);font-weight:700}
+nav.tabs .badge{width:7px;height:7px;border-radius:50%;background:var(--green)}
+nav.tabs button.active .badge{background:#1d5e3c}
+.grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:14px}
+.card{grid-column:span 6;background:linear-gradient(145deg,#241c17,#191411);border:1px solid var(--line);border-radius:18px;padding:18px;min-width:0}
+.card.wide{grid-column:1/-1}.card.s4{grid-column:span 4}.card.s8{grid-column:span 8}
+.card h4{font:700 20px var(--display);margin:0;color:var(--title)}
+.card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+.sub{color:var(--muted);font-size:13px;margin:2px 0 0}
+.btn{border:0;border-radius:11px;background:var(--gold);color:var(--gold-ink);padding:9px 14px;font:700 14px var(--body);cursor:pointer;display:inline-flex;align-items:center;gap:7px}
+.btn.secondary{background:#382b23;color:var(--cream);border:1px solid #574234}
+.btn.ghost{background:transparent;color:var(--muted);border:1px solid var(--line)}
+.btn.danger{background:var(--red-deep);color:#fff}
+.btn.big{padding:13px 18px;font-size:15px}
+.btn:focus-visible,.seg button:focus-visible,nav.tabs button:focus-visible,.tile:focus-within,.day:focus-within{outline:2px solid var(--gold);outline-offset:2px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.field{display:grid;gap:5px;min-width:0;flex:1}
+.field label{color:#d7c3ad;font-size:13px}
+.field input,.field select{width:100%;background:#100d0b;color:var(--cream);border:1px solid var(--line2);border-radius:10px;padding:9px 11px;font:inherit}
+.hint{font-size:12px;color:var(--muted)}
+
+/* Master switch */
+.master{display:flex;align-items:center;gap:12px;background:var(--well);border:1px solid var(--line);border-radius:14px;padding:10px 12px}
+.master.on{border-color:#2f6b4b;background:#122219}
+.toggle{position:relative;width:46px;height:26px;flex:none}
+.toggle input{position:absolute;inset:0;opacity:0;margin:0;cursor:pointer}
+.toggle span{position:absolute;inset:0;border-radius:99px;background:#3a2c22;border:1px solid #574234;transition:.2s}
+.toggle span::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:var(--cream);transition:.2s}
+.toggle input:checked+span{background:var(--green);border-color:var(--green)}
+.toggle input:checked+span::after{transform:translateX(20px)}
+.toggle input:focus-visible+span{outline:2px solid var(--gold);outline-offset:2px}
+.master b{display:block;font-size:14px}.master small{color:var(--muted);font-size:12px}
+
+/* Notice semantiche */
+.notice{display:flex;gap:10px;padding:10px 12px;border-radius:11px;font-size:13px;line-height:1.45;border-left:4px solid}
+.notice.info{background:var(--info-bg);border-color:#6b5d50;color:#e6d6c0}
+.notice.warn{background:var(--amber-bg);border-color:var(--gold);color:#f8dfb5}
+.notice.ok{background:var(--green-bg);border-color:var(--green);color:#c7f0d9}
+.notice.err{background:var(--red-bg);border-color:#df534c;color:#ffd3cf}
+.notice .ic{flex:none;font-weight:800}
+
+/* Dashboard */
+.now{display:grid;grid-template-columns:auto 1fr;gap:16px;align-items:center}
+.countdown{width:118px;height:118px;border-radius:50%;display:grid;place-items:center;text-align:center;background:conic-gradient(var(--gold) 0 72%,#2b211a 72% 100%);position:relative}
+.countdown::before{content:"";position:absolute;inset:9px;border-radius:50%;background:#18130f}
+.countdown div{position:relative}
+.countdown b{display:block;font:700 26px var(--display);color:#fff5df;font-variant-numeric:tabular-nums}
+.countdown small{color:var(--muted);font-size:11px;letter-spacing:.06em;text-transform:uppercase}
+.now h5{margin:0 0 4px;font:700 18px var(--display);color:var(--title)}
+.now p{margin:0;color:var(--muted);font-size:14px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.chip{display:inline-flex;align-items:center;gap:6px;background:#19130f;border:1px solid #5b4433;border-radius:99px;padding:4px 10px;font-size:12px;color:#e6d6c0;max-width:100%}
+.stat{display:grid;gap:4px}
+.stat .k{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.stat .v{font:700 30px var(--display);color:var(--gold);font-variant-numeric:tabular-nums}
+.stat .v small{font:14px var(--body);color:var(--muted)}
+.bar{height:6px;border-radius:99px;background:#2b211a;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--gold);border-radius:99px}
+.state-pill{display:inline-flex;align-items:center;gap:7px;border-radius:99px;padding:4px 11px;font-size:12px;font-weight:800;letter-spacing:.05em;text-transform:uppercase}
+.state-pill.on{background:var(--green-bg);color:#7fd9ab;border:1px solid #2f6b4b}
+.state-pill.off{background:#221b16;color:var(--muted);border:1px solid var(--line)}
+.devices{display:grid;gap:8px}
+.device{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;background:var(--well);border:1px solid #382d26;border-radius:12px;padding:9px 11px}
+.device strong{display:block;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.device small{color:var(--muted);font-size:12px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vol{font:12px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums}
+.quick{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
+.quick .btn{justify-content:center}
+
+/* Altoparlanti a tessere */
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.tile{position:relative;display:grid;gap:3px;background:#19130f;border:1px solid #3d3027;border-radius:12px;padding:10px 11px;cursor:pointer;min-width:0}
+.tile input{position:absolute;opacity:0;inset:0;margin:0;cursor:pointer}
+.tile strong{font-size:14px;display:flex;align-items:center;gap:7px}
+.tile small{color:var(--muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tile:has(input:checked){border-color:var(--gold);background:#2a1f14;box-shadow:inset 0 0 0 1px var(--gold)}
+.tile .check{position:absolute;top:8px;right:9px;width:18px;height:18px;border-radius:6px;border:1px solid #6b5544;display:grid;place-items:center;font-size:12px;color:transparent}
+.tile:has(input:checked) .check{background:var(--gold);border-color:var(--gold);color:var(--gold-ink)}
+.days{display:flex;flex-wrap:wrap;gap:6px}
+.day{position:relative}
+.day input{position:absolute;opacity:0;inset:0;margin:0;cursor:pointer}
+.day span{display:block;min-width:42px;text-align:center;border:1px solid #4a392e;background:#15110e;color:var(--muted);border-radius:9px;padding:6px 8px;font-size:13px;font-weight:700}
+.day input:checked+span{background:var(--gold);border-color:var(--gold);color:var(--gold-ink)}
+.rotation{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.rotation .chip b{color:var(--gold)}
+.arrow{color:#7d6450}
+.summary-line{font-size:13px;color:#e6d6c0;background:var(--well);border:1px dashed #5b4433;border-radius:11px;padding:10px 12px}
+.summary-line b{color:var(--gold)}
+
+/* Timeline musica */
+.timeline{display:grid;gap:8px;overflow-x:auto}
+.tl-inner{min-width:640px;display:grid;gap:7px}
+.tl-row{display:grid;grid-template-columns:44px 1fr;gap:10px;align-items:center}
+.tl-row>b{font-size:12px;color:var(--muted);font-weight:700}
+.tl-track{position:relative;height:30px;background:#16110e;border:1px solid #2f251e;border-radius:8px}
+.tl-hours{position:absolute;inset:0;border-radius:8px;background:repeating-linear-gradient(90deg,transparent 0 calc(100%/24 - 1px),#2a211b calc(100%/24 - 1px) calc(100%/24))}
+.tl-open{position:absolute;top:0;bottom:0;border-radius:7px;background:#2c2218;border:1px dashed #7a5a35}
+.tl-src{position:absolute;top:4px;bottom:4px;border-radius:6px;padding:0 8px;font-size:11px;font-weight:700;display:flex;align-items:center;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.tl-src.a{background:var(--gold);color:var(--gold-ink)}
+.tl-src.b{background:#c97a3a;color:#1d1007}
+.tl-src.c{background:#8a5a9c;color:#fff}
+.tl-src.conflict{background:repeating-linear-gradient(135deg,#a52e28 0 6px,#762520 6px 12px);color:#fff}
+.tl-axis{display:grid;grid-template-columns:44px 1fr;gap:10px}
+.tl-axis div{display:flex;justify-content:space-between;font:11px var(--mono);color:#8c7c6c}
+.tl-now{position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--green);box-shadow:0 0 8px var(--green)}
+.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:14px;height:10px;border-radius:3px;display:inline-block}
+.slots{display:grid;gap:8px}
+.slot{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;align-items:center;background:var(--well);border:1px solid #5b4433;border-radius:12px;padding:10px 12px}
+.slot .sw{width:12px;height:36px;border-radius:4px}
+.slot strong{display:block;font-size:14px}
+.slot small{color:var(--muted);font-size:12px}
+.slot.bad{border-color:#8a3a33}
+
+/* Libreria */
+.dropzone{border:2px dashed #604b3c;border-radius:16px;padding:22px;text-align:center;background:#130f0c;display:grid;gap:8px;justify-items:center}
+.dropzone .big{font:700 18px var(--display);color:var(--title)}
+.filters{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.filters .f{border:1px solid var(--line);background:#1a1512;color:var(--muted);border-radius:99px;padding:6px 12px;font:13px var(--body);cursor:pointer}
+.filters .f[aria-pressed="true"]{background:#3b2a1c;color:#f5c66e;border-color:#6b4a20}
+.filters input{flex:1;min-width:180px;background:#100d0b;color:var(--cream);border:1px solid var(--line2);border-radius:99px;padding:7px 14px;font:inherit}
+.media-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}
+.media{background:var(--well);border:1px solid #382d26;border-radius:14px;overflow:hidden;display:grid;min-width:0}
+.thumb{aspect-ratio:16/9;max-width:100%;display:grid;place-items:center;position:relative;font:700 13px var(--display);color:#fff5df;text-align:center;padding:10px}
+.thumb.v{background:linear-gradient(135deg,#6f1d1b,#2a1710)}
+.thumb.i1{background:linear-gradient(160deg,#5a3a20,#1c120b)}
+.thumb.i2{background:linear-gradient(200deg,#3f2a1d,#120c08)}
+.thumb.a{background:#1a1411}
+.wave{display:flex;align-items:center;gap:2px;height:40px}
+.wave i{width:3px;border-radius:2px;background:var(--gold);opacity:.8}
+.thumb .dur{position:absolute;right:8px;bottom:8px;font:11px var(--mono);background:#000a;padding:2px 6px;border-radius:6px}
+.thumb .play{position:absolute;left:8px;bottom:8px;width:28px;height:28px;border-radius:50%;background:#000a;display:grid;place-items:center;font-size:11px}
+.media-body{padding:10px 11px;display:grid;gap:6px}
+.media-body strong{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.media-body .meta{display:flex;gap:6px;flex-wrap:wrap;align-items:center;font-size:11px;color:var(--muted)}
+.pill{font-size:10px;text-transform:uppercase;background:#3b2a1c;color:#f5c66e;padding:2px 7px;border-radius:99px;font-weight:700}
+.used{font-size:11px;color:#9fcfb3}
+.unused{font-size:11px;color:#8c7c6c}
+.media-actions{display:flex;gap:6px}
+.media-actions .btn{padding:6px 10px;font-size:12px}
+.icon-btn{margin-left:auto;background:transparent;border:1px solid var(--line);color:#c98a84;border-radius:9px;padding:5px 9px;cursor:pointer;font-size:12px}
+
+/* Registro */
+.log-tools{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.logs{display:grid;gap:0;border:1px solid #382d26;border-radius:12px;overflow:hidden}
+.log{display:grid;grid-template-columns:72px 92px minmax(0,1fr);gap:10px;align-items:baseline;padding:9px 12px;background:var(--well);border-bottom:1px solid #261e18;font-size:13px}
+.log:last-child{border-bottom:0}
+.log time{font:12px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums}
+.lvl{font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;border-radius:99px;padding:2px 8px;justify-self:start}
+.lvl.s{background:var(--green-bg);color:#7fd9ab}.lvl.i{background:#221b16;color:var(--muted)}.lvl.w{background:var(--amber-bg);color:#f5c66e}.lvl.e{background:var(--red-bg);color:#ff9d97}
+.day-sep{padding:6px 12px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--gold);background:#17110d;border-bottom:1px solid #261e18}
+
+/* Telefono */
+.phones{display:flex;gap:26px;flex-wrap:wrap;justify-content:center}
+.phone{width:320px;max-width:100%;border:10px solid #050403;border-radius:38px;background:var(--bg);box-shadow:0 18px 50px #0009;overflow:hidden;position:relative;display:flex;flex-direction:column;height:640px}
+.phone .app{padding:10px;flex:1;overflow:hidden;display:grid;gap:10px;align-content:start}
+.phone .hero{padding:10px 12px;border-radius:16px}
+.phone .seal{width:36px;height:36px;font-size:17px}
+.phone .brand h3{font-size:19px}
+.phone-cap{text-align:center;color:var(--muted);font-size:13px;margin-top:10px;max-width:320px}
+.dirty{margin:0 10px 8px;background:#2a1f14;border:1px solid var(--gold);border-radius:14px;padding:9px 10px;display:flex;align-items:center;gap:8px;font-size:12px;box-shadow:0 -8px 22px #0009}
+.dirty b{flex:1;color:#f8dfb5}
+.dirty .btn{padding:7px 10px;font-size:12px}
+.bottom-nav{display:grid;grid-template-columns:repeat(5,1fr);background:#0b0907;border-top:1px solid var(--line);padding:6px 4px 10px}
+.bottom-nav button{background:none;border:0;color:var(--muted);display:grid;justify-items:center;gap:3px;font:600 10px var(--body);padding:4px 0;cursor:pointer}
+.bottom-nav svg{width:21px;height:21px;stroke:currentColor;fill:none;stroke-width:1.8}
+.bottom-nav button.active{color:var(--gold)}
+.mini-card{background:linear-gradient(145deg,#241c17,#191411);border:1px solid var(--line);border-radius:15px;padding:12px;display:grid;gap:9px}
+.mini-card h4{margin:0;font:700 17px var(--display);color:var(--title)}
+
+.foot{margin-top:50px;color:var(--muted);font-size:13px;border-top:1px solid var(--line);padding-top:16px}
+
+@media(max-width:900px){.card,.card.s4,.card.s8{grid-column:1/-1}}
+@media(max-width:560px){
+  .page{padding-inline:16px}
+  .app{padding:10px}
+  .now{grid-template-columns:1fr;justify-items:start}
+  .log{grid-template-columns:62px minmax(0,1fr)}.log .lvl{grid-column:2}.log span:last-child{grid-column:1/-1}
+  .slot{grid-template-columns:auto minmax(0,1fr)}.slot .btn{grid-column:1/-1}
+}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="page">
+  <header class="intro">
+    <div class="eyebrow">Carellas Media Ads · versione stabile 0.4.47</div>
+    <h1>Proposte di miglioramento dell'interfaccia</h1>
+    <p>Ho fatto girare il pannello in locale con un Home Assistant di prova e ho esaminato tutte le schede, da computer e da telefono. Qui trovi i problemi principali, ordinati per importanza, e i mockup delle schermate riprogettate. Colori, caratteri e componenti sono quelli del pannello attuale.</p>
+  </header>
+
+  <nav class="toc" aria-label="Sezioni">
+    <a href="#proposte">Proposte</a><a href="#dashboard">Dashboard</a><a href="#audio">Audio Sonos</a><a href="#musica">Musica</a><a href="#libreria">Libreria</a><a href="#registro">Registro</a><a href="#mobile">Telefono</a>
+  </nav>
+
+  <!-- ===================== PROPOSTE ===================== -->
+  <section class="block" id="proposte">
+    <div class="block-head">
+      <h2>Le 12 proposte</h2>
+      <p>Priorità alta: problemi che oggi fanno sbagliare o perdere modifiche. Media: chiarezza e velocità d'uso. Bassa: rifinitura.</p>
+    </div>
+    <div class="proposals">
+      <table>
+        <thead><tr><th>#</th><th>Proposta</th><th>Dove</th><th>Priorità</th><th>Sforzo</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td><strong>Barra "Modifiche non salvate"</strong><small>Oggi "Salva configurazione" è sempre visibile e non dice se c'è qualcosa da salvare. Cambiando scheda o chiudendo la pagina le modifiche si perdono senza avviso. La barra compare solo quando serve, con Annulla e Salva.</small></td><td>Tutte</td><td><span class="prio p1">Alta</span></td><td class="effort">Medio</td></tr>
+          <tr><td>2</td><td><strong>Dashboard "In onda ora"</strong><small>Ora ci sono "0" e due "FERMA" senza contesto. Mostrare il prossimo spot con conto alla rovescia, la sorgente musicale attiva, lo stato di ogni Sonos e TV e gli spot fatti rispetto al massimo giornaliero.</small></td><td>Dashboard</td><td><span class="prio p1">Alta</span></td><td class="effort">Medio</td></tr>
+          <tr><td>3</td><td><strong>Interruttore principale ben visibile</strong><small>"Attiva pubblicità automatica" e "Attiva programmazione" sono caselline perse in cima alla scheda. Diventano un interruttore nell'intestazione della scheda, con lo stato ATTIVA o SPENTA, e un pallino sulla linguetta della scheda.</small></td><td>Audio, Musica, TV</td><td><span class="prio p1">Alta</span></td><td class="effort">Basso</td></tr>
+          <tr><td>4</td><td><strong>Avvisi con colori diversi per tipo</strong><small>Oggi conferme ("✓ Indirizzo corretto"), consigli e problemi sono tutti nello stesso riquadro ambra, quindi un errore non salta all'occhio. Servono quattro tipi: informazione (neutro), ok (verde), attenzione (ambra), errore (rosso).</small></td><td>Tutte</td><td><span class="prio p1">Alta</span></td><td class="effort">Basso</td></tr>
+          <tr><td>5</td><td><strong>Linea del tempo della musica</strong><small>Nella scheda Musica ci sono tre blocchi separati ("Orari di accensione", "Sorgente per prova", "Playlist programmate") e non si vede come si combinano. Una linea delle 24 ore per giorno mostra fasce aperte, sorgenti e sovrapposizioni.</small></td><td>Musica</td><td><span class="prio p2">Media</span></td><td class="effort">Alto</td></tr>
+          <tr><td>6</td><td><strong>Altoparlanti come tessere selezionabili</strong><small>Oggi la casella è su una riga sopra il nome e si vede l'ID tecnico. Le tessere mostrano nome, stato e volume, si selezionano con un tocco e hanno i pulsanti "Tutti" e "Nessuno".</small></td><td>Audio, Musica</td><td><span class="prio p2">Media</span></td><td class="effort">Basso</td></tr>
+          <tr><td>7</td><td><strong>Giorni come pulsanti a pillola</strong><small>Le caselline Lu–Do diventano pillole che si riempiono d'oro, più facili da toccare sul telefono. Scorciatoie: "Lun–Ven" e "Tutti".</small></td><td>Audio, Musica, TV</td><td><span class="prio p2">Media</span></td><td class="effort">Basso</td></tr>
+          <tr><td>8</td><td><strong>Navigazione in basso sul telefono</strong><small>Oggi le 7 linguette su due colonne occupano circa 200 px prima dei contenuti. Meglio una barra in basso con 4 voci principali più "Altro", raggiungibile con il pollice.</small></td><td>Telefono</td><td><span class="prio p2">Media</span></td><td class="effort">Medio</td></tr>
+          <tr><td>9</td><td><strong>Libreria a griglia con anteprime</strong><small>Il caricamento usa il pulsante grezzo del browser ("Scegli file"), poi bisogna scegliere il tipo a mano e premere "Carica". Meglio un'area di trascinamento con tipo riconosciuto, filtri Audio/Video/Foto, ricerca e l'indicazione "Usato in…" prima di eliminare.</small></td><td>Libreria</td><td><span class="prio p2">Media</span></td><td class="effort">Medio</td></tr>
+          <tr><td>10</td><td><strong>Conferma prima di eliminare</strong><small>"Elimina" è un pulsante rosso pieno accanto ad "Apri" su ogni file. Va reso meno vistoso, e prima di eliminare deve chiedere conferma dicendo dove il file è usato.</small></td><td>Libreria, IPTV</td><td><span class="prio p2">Media</span></td><td class="effort">Basso</td></tr>
+          <tr><td>11</td><td><strong>Registro leggibile</strong><small>L'orario appare in formato tecnico ("2026-10-14T21:13:26+02:00"). Mostrare solo l'ora raggruppata per giorno, l'etichetta del livello e i filtri Errori/Spot/Musica/TV.</small></td><td>Registro</td><td><span class="prio p3">Bassa</span></td><td class="effort">Basso</td></tr>
+          <tr><td>12</td><td><strong>Testi tecnici e lingua</strong><small>Codici interni visibili all'utente ("Stato: not_built"). Su Windows le bandierine diventano le lettere "IT" e il menu mostra "IT Italiano": meglio il selettore IT | DE a due pulsanti, come già nella pagina di accesso del Player TV.</small></td><td>IPTV, intestazione</td><td><span class="prio p3">Bassa</span></td><td class="effort">Basso</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ===================== DASHBOARD ===================== -->
+  <section class="block" id="dashboard">
+    <div class="block-head">
+      <h2>Dashboard: in onda ora</h2>
+      <p>Proposte 2, 3 e 12. Chi apre il pannello capisce in tre secondi se tutto funziona e quando parte il prossimo spot.</p>
+    </div>
+    <div class="why">
+      <div class="before"><b>Oggi</b>Tre riquadri: "0 spot oggi", "FERMA", "FERMA". Non dicono perché è ferma né cosa succederà.</div>
+      <div class="after"><b>Proposta</b>Prossimo spot con conto alla rovescia, musica in corso, dispositivi raggiungibili e avvisi su ciò che richiede attenzione.</div>
+    </div>
+    <div class="frame">
+      <div class="frame-bar"><i></i><i></i><i></i><span>Home Assistant › Carellas Media Ads › Dashboard</span></div>
+      <div class="app">
+        <div class="hero">
+          <div class="brand"><div class="seal">C</div><div><h3>Carellas Media Ads</h3><p>Pubblicità audio Sonos e contenuti TV</p></div></div>
+          <div class="hero-tools">
+            <div class="seg" role="group" aria-label="Lingua"><button aria-pressed="true">IT</button><button aria-pressed="false">DE</button></div>
+            <div class="live"><span class="dot"></span>Motore attivo</div>
+          </div>
+        </div>
+        <nav class="tabs" aria-label="Schede">
+          <button class="active">Dashboard</button><button>Audio Sonos <span class="badge"></span></button><button>Musica <span class="badge"></span></button><button>TV LAN / DLNA</button><button>IPTV multi-TV</button><button>Libreria</button><button>Registro</button>
+        </nav>
+        <div class="grid">
+          <div class="card s8">
+            <div class="card-head"><h4>In onda ora</h4><span class="state-pill on"><span class="dot"></span>Pubblicità attiva</span></div>
+            <div class="now">
+              <div class="countdown" role="img" aria-label="Prossimo spot tra 8 minuti e 24 secondi"><div><b>08:24</b><small>prossimo spot</small></div></div>
+              <div>
+                <h5>Spot 2 di 3 · Carellas_Spot_DE_Femminile</h5>
+                <p>Alle 20:30 su Sonos Sala e Sonos Bar, volume 35. Poi la musica riprende da dove era.</p>
+                <div class="chips">
+                  <span class="chip">♫ Dinner Jazz · fino alle 22:00</span>
+                  <span class="chip">Fascia 17:00–23:00</span>
+                  <span class="chip">Ogni 30 min</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="card s4">
+            <div class="stat"><span class="k">Spot riprodotti oggi</span><span class="v">14 <small>/ 20 max</small></span><div class="bar"><i style="width:70%"></i></div><span class="hint">Ultimo alle 20:00 · nessun errore</span></div>
+          </div>
+          <div class="card s4">
+            <div class="card-head"><h4>Sonos</h4><span class="hint">3 di 4 pronti</span></div>
+            <div class="devices">
+              <div class="device"><span class="dot"></span><div><strong>Sonos Sala</strong><small>In riproduzione · gruppo con Bar</small></div><span class="vol">30%</span></div>
+              <div class="device"><span class="dot"></span><div><strong>Sonos Bar</strong><small>In riproduzione</small></div><span class="vol">25%</span></div>
+              <div class="device"><span class="dot off"></span><div><strong>Sonos Terrazza</strong><small>In pausa · non selezionato</small></div><span class="vol">20%</span></div>
+              <div class="device"><span class="dot err"></span><div><strong>Sonos Bagni</strong><small>Non raggiungibile dalle 19:42</small></div><span class="vol">—</span></div>
+            </div>
+          </div>
+          <div class="card s4">
+            <div class="card-head"><h4>Schermi TV</h4><span class="hint">2 canali</span></div>
+            <div class="devices">
+              <div class="device"><span class="dot"></span><div><strong>TV Sala Samsung</strong><small>Canale "Menu sera" · in onda</small></div><span class="vol">ON</span></div>
+              <div class="device"><span class="dot off"></span><div><strong>TV Bar LG</strong><small>Si accende alle 17:00</small></div><span class="vol">OFF</span></div>
+            </div>
+          </div>
+          <div class="card s4">
+            <div class="card-head"><h4>Da controllare</h4></div>
+            <div style="display:grid;gap:8px">
+              <div class="notice err"><span class="ic">!</span><span>Sonos Bagni non risponde. Gli spot continuano sugli altri altoparlanti.</span></div>
+              <div class="notice warn"><span class="ic">!</span><span>Il canale IPTV "Pranzo" va rigenerato: hai cambiato la sequenza.</span></div>
+            </div>
+          </div>
+          <div class="card wide">
+            <div class="card-head"><h4>Comandi rapidi</h4><span class="hint">Agiscono subito, senza salvare</span></div>
+            <div class="quick">
+              <button class="btn">▶ Prova spot adesso</button>
+              <button class="btn secondary">▶ Avvia musica</button>
+              <button class="btn secondary">📺 Prova TV</button>
+              <button class="btn ghost">■ Ferma spot</button>
+              <button class="btn ghost">■ Ferma musica</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== AUDIO ===================== -->
+  <section class="block" id="audio">
+    <div class="block-head">
+      <h2>Audio Sonos: stato, altoparlanti e giorni</h2>
+      <p>Proposte 3, 4, 6 e 7. Gli elementi qui sotto si possono cliccare: prova a selezionare altoparlanti e giorni.</p>
+    </div>
+    <div class="frame">
+      <div class="frame-bar"><i></i><i></i><i></i><span>Audio Sonos</span></div>
+      <div class="app">
+        <div class="grid">
+          <div class="card">
+            <div class="card-head"><div><h4>Pubblicità audio Sonos</h4><p class="sub">Uno spot alla volta, a rotazione</p></div></div>
+            <div style="display:grid;gap:14px">
+              <label class="master on" id="masterAudio">
+                <span class="toggle"><input type="checkbox" id="audioOn" checked><span></span></span>
+                <span><b id="audioOnLabel">Pubblicità automatica ATTIVA</b><small>Si ferma da sola fuori dagli orari impostati</small></span>
+              </label>
+              <div style="display:grid;gap:8px">
+                <div class="row" style="justify-content:space-between"><span class="field" style="flex:none"><label>Altoparlanti per gli spot</label></span><span class="row" style="gap:6px"><button class="btn ghost" style="padding:4px 10px;font-size:12px" id="allSp">Tutti</button><button class="btn ghost" style="padding:4px 10px;font-size:12px" id="noSp">Nessuno</button></span></div>
+                <div class="tiles" id="speakers">
+                  <label class="tile"><input type="checkbox" checked><span class="check">✓</span><strong><span class="dot"></span>Sala</strong><small>In riproduzione · 30%</small></label>
+                  <label class="tile"><input type="checkbox" checked><span class="check">✓</span><strong><span class="dot"></span>Bar</strong><small>In riproduzione · 25%</small></label>
+                  <label class="tile"><input type="checkbox"><span class="check">✓</span><strong><span class="dot off"></span>Terrazza</strong><small>In pausa · 20%</small></label>
+                  <label class="tile"><input type="checkbox"><span class="check">✓</span><strong><span class="dot err"></span>Bagni</strong><small>Non raggiungibile</small></label>
+                </div>
+              </div>
+              <div class="notice info"><span class="ic">i</span><span>Durante lo spot gli altoparlanti scelti vengono raggruppati. Alla fine tornano musica, volumi e gruppi di prima.</span></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head"><div><h4>Quando e quanto</h4><p class="sub">Frequenza, volume e giorni</p></div></div>
+            <div style="display:grid;gap:14px">
+              <div class="row">
+                <div class="field"><label for="ev">Uno spot ogni</label><select id="ev"><option>15 minuti</option><option selected>30 minuti</option><option>45 minuti</option><option>60 minuti</option></select></div>
+                <div class="field"><label for="mx">Massimo al giorno</label><input id="mx" value="20" inputmode="numeric"></div>
+              </div>
+              <div class="row">
+                <div class="field"><label for="vl">Volume spot <span id="vlv" style="color:var(--gold);font-weight:700">35</span></label><input id="vl" type="range" min="1" max="100" value="35" style="padding:0;accent-color:var(--gold)"></div>
+                <div class="field"><label for="fd">Dissolvenza musica</label><select id="fd"><option>Nessuna</option><option>1 secondo</option><option selected>3 secondi</option><option>5 secondi</option></select></div>
+              </div>
+              <div class="field"><label>Giorni</label>
+                <div class="row" style="gap:10px">
+                  <div class="days" id="days">
+                    <label class="day"><input type="checkbox" checked><span>Lu</span></label><label class="day"><input type="checkbox" checked><span>Ma</span></label><label class="day"><input type="checkbox" checked><span>Me</span></label><label class="day"><input type="checkbox" checked><span>Gi</span></label><label class="day"><input type="checkbox" checked><span>Ve</span></label><label class="day"><input type="checkbox"><span>Sa</span></label><label class="day"><input type="checkbox"><span>Do</span></label>
+                  </div>
+                  <button class="btn ghost" style="padding:5px 10px;font-size:12px" id="wk">Lun–Ven</button><button class="btn ghost" style="padding:5px 10px;font-size:12px" id="alld">Tutti</button>
+                </div>
+              </div>
+              <div class="summary-line" id="audioSummary">In pratica: <b>uno spot ogni 30 minuti</b>, dalle 10:00 alle 23:00, <b>Lu–Ve</b>, su <b>2 altoparlanti</b>. Al massimo 20 al giorno.</div>
+            </div>
+          </div>
+          <div class="card wide">
+            <div class="card-head"><div><h4>Spot in rotazione</h4><p class="sub">Trascina per cambiare l'ordine</p></div><button class="btn secondary">+ Aggiungi spot</button></div>
+            <div class="rotation">
+              <span class="chip"><b>1</b> 🎙 Spot_DE_Maschile <span class="hint">0:24</span></span><span class="arrow">→</span>
+              <span class="chip"><b>2</b> 🎙 Spot_DE_Femminile <span class="hint">0:22</span></span><span class="arrow">→</span>
+              <span class="chip"><b>3</b> 🎙 Aperitivo_IT <span class="hint">0:18</span></span><span class="arrow">↺</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== MUSICA ===================== -->
+  <section class="block" id="musica">
+    <div class="block-head">
+      <h2>Musica: una linea del tempo al posto di tre blocchi</h2>
+      <p>Proposta 5. Le fasce di accensione sono lo sfondo tratteggiato, le sorgenti i blocchi colorati. Un blocco che esce dalla fascia viene segnalato subito, mentre oggi l'errore compare solo al salvataggio.</p>
+    </div>
+    <div class="frame">
+      <div class="frame-bar"><i></i><i></i><i></i><span>Musica</span></div>
+      <div class="app">
+        <div class="grid">
+          <div class="card wide">
+            <div class="card-head">
+              <div><h4>Programma della settimana</h4><p class="sub">Clicca un blocco per modificarlo</p></div>
+              <div class="row"><span class="state-pill on"><span class="dot"></span>Programmazione attiva</span><button class="btn">+ Aggiungi playlist o radio</button></div>
+            </div>
+            <div class="timeline" tabindex="0" aria-label="Linea del tempo settimanale, scorrevole">
+              <div class="tl-inner">
+                <div class="tl-axis"><span></span><div><span>00</span><span>03</span><span>06</span><span>09</span><span>12</span><span>15</span><span>18</span><span>21</span><span>24</span></div></div>
+                <!-- 1h = 4.1667% -->
+                <div class="tl-row"><b>Lu</b><div class="tl-track"><div class="tl-hours"></div><div class="tl-open" style="left:41.67%;width:16.67%"></div><div class="tl-open" style="left:70.83%;width:20.83%"></div><div class="tl-src a" style="left:41.67%;width:16.67%">Pranzo italiano</div><div class="tl-src b" style="left:70.83%;width:20.83%">Dinner Jazz</div></div></div>
+                <div class="tl-row"><b>Ma</b><div class="tl-track"><div class="tl-hours"></div><div class="tl-open" style="left:41.67%;width:16.67%"></div><div class="tl-open" style="left:70.83%;width:20.83%"></div><div class="tl-src a" style="left:41.67%;width:16.67%">Pranzo italiano</div><div class="tl-src b" style="left:70.83%;width:20.83%">Dinner Jazz</div></div></div>
+                <div class="tl-row"><b>Me</b><div class="tl-track"><div class="tl-hours"></div><div class="tl-open" style="left:41.67%;width:16.67%"></div><div class="tl-open" style="left:70.83%;width:20.83%"></div><div class="tl-src a" style="left:41.67%;width:16.67%">Pranzo italiano</div><div class="tl-src b" style="left:70.83%;width:20.83%">Dinner Jazz</div><div class="tl-now" style="left:84.7%"></div></div></div>
+                <div class="tl-row"><b>Gi</b><div class="tl-track"><div class="tl-hours"></div><div class="tl-open" style="left:41.67%;width:16.67%"></div><div class="tl-open" style="left:70.83%;width:20.83%"></div><div class="tl-src a" style="left:41.67%;width:16.67%">Pranzo italiano</div><div class="tl-src b" style="left:70.83%;width:20.83%">Dinner Jazz</div></div></div>
+                <div class="tl-row"><b>Ve</b><div class="tl-track"><div class="tl-hours"></div><div class="tl-open" style="left:41.67%;width:16.67%"></div><div class="tl-open" style="left:70.83%;width:25%"></div><div class="tl-src a" style="left:41.67%;width:16.67%">Pranzo italiano</div><div class="tl-src b" style="left:70.83%;width:8.33%">Dinner Jazz</div><div class="tl-src c" style="left:79.16%;width:16.67%">Radio Italia Live</div></div></div>
+                <div class="tl-row"><b>Sa</b><div class="tl-track"><div class="tl-hours"></div><div class="tl-open" style="left:70.83%;width:25%"></div><div class="tl-src c" style="left:70.83%;width:16.67%">Radio Italia Live</div><div class="tl-src conflict" style="left:87.5%;width:12.5%" title="Esce dalla fascia aperta">Aperitivo · fuori orario</div></div></div>
+                <div class="tl-row"><b>Do</b><div class="tl-track"><div class="tl-hours"></div></div></div>
+              </div>
+            </div>
+            <div class="legend" style="margin-top:12px">
+              <span><i style="background:#2c2218;border:1px dashed #7a5a35"></i>Musica accesa (orari generali)</span>
+              <span><i style="background:var(--gold)"></i>Playlist</span>
+              <span><i style="background:#8a5a9c"></i>Radio</span>
+              <span><i style="background:repeating-linear-gradient(135deg,#a52e28 0 4px,#762520 4px 8px)"></i>Fuori orario: non suonerà</span>
+              <span><i style="background:var(--green)"></i>Adesso</span>
+            </div>
+          </div>
+          <div class="card wide">
+            <div class="card-head"><h4>Sorgenti programmate</h4><span class="hint">4 sorgenti · 1 da correggere</span></div>
+            <div class="slots">
+              <div class="slot"><span class="sw" style="background:var(--gold)"></span><div><strong>Pranzo italiano</strong><small>Playlist · Lu–Ve 10:00–14:00 · Sala, Bar · volume 25</small></div><button class="btn secondary">Modifica</button></div>
+              <div class="slot"><span class="sw" style="background:#c97a3a"></span><div><strong>Dinner Jazz</strong><small>Playlist · Lu–Ve 17:00–22:00 (Ve fino alle 19:00) · Sala, Bar, Terrazza</small></div><button class="btn secondary">Modifica</button></div>
+              <div class="slot"><span class="sw" style="background:#8a5a9c"></span><div><strong>Radio Italia Live</strong><small>Radio · Ve–Sa 19:00–23:00 · tutti gli altoparlanti</small></div><button class="btn secondary">Modifica</button></div>
+              <div class="slot bad"><span class="sw" style="background:#a52e28"></span><div><strong>Aperitivo</strong><small style="color:#ff9d97">Sabato 21:00–24:00: esce di un'ora dagli orari di accensione (fino alle 23:00)</small></div><button class="btn">Correggi</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== LIBRERIA ===================== -->
+  <section class="block" id="libreria">
+    <div class="block-head">
+      <h2>Libreria: anteprime, filtri e uso</h2>
+      <p>Proposte 9 e 10. Il tipo di file si riconosce da solo e ogni elemento dice dove è usato, così si elimina senza paura.</p>
+    </div>
+    <div class="frame">
+      <div class="frame-bar"><i></i><i></i><i></i><span>Libreria</span></div>
+      <div class="app">
+        <div class="grid">
+          <div class="card wide">
+            <div class="dropzone">
+              <span class="big">Trascina qui spot audio, video o foto</span>
+              <span class="hint">MP3, WAV, M4A · MP4, MOV · JPG, PNG · fino a 4 GB per file. Il tipo viene riconosciuto in automatico.</span>
+              <button class="btn">Scegli file dal computer</button>
+            </div>
+          </div>
+          <div class="card wide">
+            <div class="card-head"><h4>Libreria</h4><span class="hint">7 file · 1,4 GB liberi</span></div>
+            <div class="filters" style="margin-bottom:14px">
+              <button class="f" aria-pressed="true">Tutti 7</button><button class="f" aria-pressed="false">Audio 3</button><button class="f" aria-pressed="false">Video 1</button><button class="f" aria-pressed="false">Foto 3</button><button class="f" aria-pressed="false">Non usati 2</button>
+              <input placeholder="Cerca per nome" aria-label="Cerca nella libreria">
+            </div>
+            <div class="media-grid">
+              <div class="media"><div class="thumb v">Carellas Smart TV<span class="play">▶</span><span class="dur">0:18</span></div><div class="media-body"><strong>Demo_Carellas_SmartTV_DLNA.mp4</strong><div class="meta"><span class="pill">Video</span>477 KB</div><span class="used">● Usato in: TV Demo Carellas</span><div class="media-actions"><button class="btn secondary">Apri</button><button class="icon-btn" aria-label="Elimina">Elimina</button></div></div></div>
+              <div class="media"><div class="thumb a"><div class="wave" aria-hidden="true"></div><span class="play">▶</span><span class="dur">0:24</span></div><div class="media-body"><strong>Carellas_Spot_DE_Maschile.mp3</strong><div class="meta"><span class="pill">Audio</span>380 KB</div><span class="used">● Usato in: rotazione spot (n. 1)</span><div class="media-actions"><button class="btn secondary">Ascolta</button><button class="icon-btn" aria-label="Elimina">Elimina</button></div></div></div>
+              <div class="media"><div class="thumb i1">BENVENUTI</div><div class="media-body"><strong>Demo_Carellas_01_Benvenuti.jpg</strong><div class="meta"><span class="pill">Foto</span>236 KB · 1920×1080</div><span class="used">● Usato in: TV Demo Carellas</span><div class="media-actions"><button class="btn secondary">Apri</button><button class="icon-btn" aria-label="Elimina">Elimina</button></div></div></div>
+              <div class="media"><div class="thumb i2">ZEIT FÜR GENUSS</div><div class="media-body"><strong>Demo_Carellas_03_Genuss.jpg</strong><div class="meta"><span class="pill">Foto</span>116 KB · 1920×1080</div><span class="unused">○ Non usato</span><div class="media-actions"><button class="btn secondary">Apri</button><button class="icon-btn" aria-label="Elimina">Elimina</button></div></div></div>
+            </div>
+            <div class="notice warn" style="margin-top:14px"><span class="ic">?</span><span><b>Eliminare Carellas_Spot_DE_Maschile.mp3?</b> È il primo spot della rotazione: dopo l'eliminazione ne resteranno 2. &nbsp;<button class="btn danger" style="padding:5px 10px;font-size:12px">Elimina</button> <button class="btn ghost" style="padding:5px 10px;font-size:12px">Annulla</button></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== REGISTRO ===================== -->
+  <section class="block" id="registro">
+    <div class="block-head">
+      <h2>Registro: per giorno e per tipo</h2>
+      <p>Proposta 11. Ora breve, etichetta del livello e filtri per trovare subito un errore Sonos.</p>
+    </div>
+    <div class="frame">
+      <div class="frame-bar"><i></i><i></i><i></i><span>Registro</span></div>
+      <div class="app">
+        <div class="card wide">
+          <div class="card-head"><h4>Registro attività</h4>
+            <div class="log-tools filters"><button class="f" aria-pressed="true">Tutto</button><button class="f" aria-pressed="false">Errori 1</button><button class="f" aria-pressed="false">Spot</button><button class="f" aria-pressed="false">Musica</button><button class="f" aria-pressed="false">TV</button></div>
+          </div>
+          <div class="logs">
+            <div class="day-sep">Oggi · mercoledì 14 ottobre</div>
+            <div class="log"><time>20:00:02</time><span class="lvl s">Spot</span><span>Spot sincronizzato su 2 Sonos: Carellas_Spot_DE_Maschile.mp3 (1/3)</span></div>
+            <div class="log"><time>19:42:15</time><span class="lvl e">Errore</span><span>Sonos Bagni non raggiungibile. Riprovo ogni 15 secondi.</span></div>
+            <div class="log"><time>19:30:01</time><span class="lvl s">Spot</span><span>Spot sincronizzato su 2 Sonos: Carellas_Spot_DE_Femminile.mp3 (2/3)</span></div>
+            <div class="log"><time>17:00:00</time><span class="lvl i">Musica</span><span>Avviata "Dinner Jazz" su Sala, Bar, Terrazza con dissolvenza di 3 s</span></div>
+            <div class="day-sep">Ieri · martedì 13 ottobre</div>
+            <div class="log"><time>23:00:00</time><span class="lvl i">Musica</span><span>Fine fascia: musica fermata</span></div>
+            <div class="log"><time>22:41:09</time><span class="lvl w">Avviso</span><span>Gruppo Sonos riparato: Terrazza era uscita dal gruppo</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== MOBILE ===================== -->
+  <section class="block" id="mobile">
+    <div class="block-head">
+      <h2>Sul telefono</h2>
+      <p>Proposte 1 e 8. La navigazione va in basso, a portata di pollice. La barra "Modifiche non salvate" compare sopra la navigazione solo quando hai cambiato qualcosa.</p>
+    </div>
+    <div class="phones">
+      <div>
+        <div class="phone">
+          <div class="app">
+            <div class="hero"><div class="brand"><div class="seal">C</div><div><h3>Carellas</h3></div></div><div class="seg"><button aria-pressed="true">IT</button><button aria-pressed="false">DE</button></div></div>
+            <div class="mini-card">
+              <div class="row" style="justify-content:space-between"><h4>In onda ora</h4><span class="state-pill on"><span class="dot"></span>Attiva</span></div>
+              <div class="row" style="gap:12px;flex-wrap:nowrap"><div class="countdown" style="width:84px;height:84px;flex:none"><div><b style="font-size:19px">08:24</b><small style="font-size:9px">prossimo</small></div></div><div style="font-size:13px;color:var(--muted);min-width:0">Spot 2 di 3 alle 20:30 su Sala e Bar.<br>♫ Dinner Jazz fino alle 22:00</div></div>
+            </div>
+            <div class="mini-card">
+              <div class="row" style="justify-content:space-between"><h4>Sonos</h4><span class="hint">3 di 4 pronti</span></div>
+              <div class="devices">
+                <div class="device"><span class="dot"></span><div><strong>Sala</strong><small>In riproduzione</small></div><span class="vol">30%</span></div>
+                <div class="device"><span class="dot err"></span><div><strong>Bagni</strong><small>Non raggiungibile</small></div><span class="vol">—</span></div>
+              </div>
+            </div>
+            <div class="quick" style="grid-template-columns:1fr 1fr"><button class="btn">▶ Prova spot</button><button class="btn ghost">■ Ferma</button></div>
+          </div>
+          <nav class="bottom-nav" aria-label="Navigazione">
+            <button class="active"><svg viewBox="0 0 24 24"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Home</button>
+            <button><svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M17 8a5 5 0 0 1 0 8"/></svg>Spot</button>
+            <button><svg viewBox="0 0 24 24"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg>Musica</button>
+            <button><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8"/></svg>TV</button>
+            <button><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>Altro</button>
+          </nav>
+        </div>
+        <p class="phone-cap">Dashboard: tutto lo stato senza scorrere. "Altro" apre Libreria, IPTV e Registro.</p>
+      </div>
+      <div>
+        <div class="phone">
+          <div class="app">
+            <div class="hero"><div class="brand"><div class="seal">C</div><div><h3>Spot</h3></div></div><span class="state-pill on"><span class="dot"></span>Attiva</span></div>
+            <div class="mini-card">
+              <h4>Altoparlanti</h4>
+              <div class="tiles" style="grid-template-columns:1fr 1fr">
+                <label class="tile"><input type="checkbox" checked><span class="check">✓</span><strong>Sala</strong><small>30%</small></label>
+                <label class="tile"><input type="checkbox" checked><span class="check">✓</span><strong>Bar</strong><small>25%</small></label>
+                <label class="tile"><input type="checkbox" checked><span class="check">✓</span><strong>Terrazza</strong><small>20%</small></label>
+                <label class="tile"><input type="checkbox"><span class="check">✓</span><strong>Bagni</strong><small>Offline</small></label>
+              </div>
+            </div>
+            <div class="mini-card">
+              <h4>Giorni</h4>
+              <div class="days"><label class="day"><input type="checkbox" checked><span>Lu</span></label><label class="day"><input type="checkbox" checked><span>Ma</span></label><label class="day"><input type="checkbox" checked><span>Me</span></label><label class="day"><input type="checkbox" checked><span>Gi</span></label><label class="day"><input type="checkbox" checked><span>Ve</span></label><label class="day"><input type="checkbox" checked><span>Sa</span></label><label class="day"><input type="checkbox"><span>Do</span></label></div>
+            </div>
+          </div>
+          <div class="dirty"><b>2 modifiche non salvate</b><button class="btn ghost">Annulla</button><button class="btn">Salva</button></div>
+          <nav class="bottom-nav" aria-label="Navigazione">
+            <button><svg viewBox="0 0 24 24"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Home</button>
+            <button class="active"><svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M17 8a5 5 0 0 1 0 8"/></svg>Spot</button>
+            <button><svg viewBox="0 0 24 24"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg>Musica</button>
+            <button><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8"/></svg>TV</button>
+            <button><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>Altro</button>
+          </nav>
+        </div>
+        <p class="phone-cap">Dopo una modifica compare la barra di salvataggio. Se cambi scheda o chiudi senza salvare, la pagina te lo chiede.</p>
+      </div>
+    </div>
+  </section>
+
+  <p class="foot">Mockup statici: i dati (spot, playlist, orari) sono esempi. Tutti i colori e i caratteri vengono dal file <code>carellas_media_ads/app/index.html</code>. Le proposte 3, 4, 6, 7, 10 e 12 si possono applicare senza modificare il server.</p>
+</div>
+
+<script>
+(function(){
+  const wave=document.querySelector('.wave');
+  if(wave){[8,14,22,30,18,26,34,20,12,28,36,24,16,30,22,10,26,18,32,14,8,20].forEach(h=>{const i=document.createElement('i');i.style.height=h+'px';wave.appendChild(i)})}
+  const dayNames=['Lu','Ma','Me','Gi','Ve','Sa','Do'];
+  const sp=document.querySelectorAll('#speakers input'),dd=document.querySelectorAll('#days input');
+  const on=document.getElementById('audioOn'),master=document.getElementById('masterAudio'),lab=document.getElementById('audioOnLabel');
+  const ev=document.getElementById('ev'),mx=document.getElementById('mx'),vl=document.getElementById('vl'),vlv=document.getElementById('vlv');
+  function daysText(){const s=[...dd].map(x=>x.checked);const idx=s.map((v,i)=>v?i:-1).filter(i=>i>=0);if(!idx.length)return'nessun giorno';if(idx.length===7)return'tutti i giorni';const contiguous=idx.every((v,i)=>i===0||v===idx[i-1]+1);return contiguous&&idx.length>2?dayNames[idx[0]]+'–'+dayNames[idx[idx.length-1]]:idx.map(i=>dayNames[i]).join(', ')}
+  function update(){
+    const n=[...sp].filter(x=>x.checked).length;
+    master.classList.toggle('on',on.checked);
+    lab.textContent=on.checked?'Pubblicità automatica ATTIVA':'Pubblicità automatica SPENTA';
+    vlv.textContent=vl.value;
+    const s=document.getElementById('audioSummary');
+    if(!on.checked){s.innerHTML='La pubblicità automatica è <b>spenta</b>: nessuno spot partirà da solo.';return}
+    if(!n){s.innerHTML='<b>Nessun altoparlante scelto</b>: gli spot non verranno riprodotti.';return}
+    s.innerHTML='In pratica: <b>uno spot ogni '+ev.value.replace(' minuti',' minuti')+'</b>, dalle 10:00 alle 23:00, <b>'+daysText()+'</b>, su <b>'+n+' altoparlant'+(n===1?'e':'i')+'</b>. Al massimo '+(mx.value||'—')+' al giorno.';
+  }
+  [...sp,...dd,on,ev,mx,vl].forEach(el=>el.addEventListener('input',update));
+  document.getElementById('allSp').onclick=()=>{sp.forEach(x=>x.checked=true);update()};
+  document.getElementById('noSp').onclick=()=>{sp.forEach(x=>x.checked=false);update()};
+  document.getElementById('wk').onclick=()=>{dd.forEach((x,i)=>x.checked=i<5);update()};
+  document.getElementById('alld').onclick=()=>{dd.forEach(x=>x.checked=true);update()};
+  document.querySelectorAll('.seg').forEach(g=>g.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;g.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',x===b))}));
+  document.querySelectorAll('.filters').forEach(g=>g.addEventListener('click',e=>{const b=e.target.closest('button.f');if(!b)return;g.querySelectorAll('button.f').forEach(x=>x.setAttribute('aria-pressed',x===b))}));
+  update();
+})();
+</script>

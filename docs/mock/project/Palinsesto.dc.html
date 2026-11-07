@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<title>Palinsesto unico</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#F3F4F6}
+a{color:#8E2A24}a:hover{color:#6B1E19}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:0 16px;border-radius:8px;font:600 14px 'Instrument Sans',sans-serif;cursor:pointer;border:1px solid transparent}
+.btn:focus-visible,.chip:focus-visible{outline:2px solid #2F64B8;outline-offset:2px}
+.btn-primary{background:#8E2A24;color:#FFFFFF}
+.btn-ghost{background:#FFFFFF;color:#15181D;border-color:#CDD1D8}
+.chip{display:inline-flex;align-items:center;gap:6px;min-height:36px;padding:0 12px;border-radius:99px;border:1px solid #CDD1D8;background:#FFFFFF;color:#15181D;font:500 13px 'Instrument Sans',sans-serif;cursor:pointer}
+.chip[aria-pressed="true"]{background:#15181D;color:#FFFFFF;border-color:#15181D}
+.mono{font-family:'IBM Plex Mono',monospace}
+.lbl{display:block;font:600 12px 'Instrument Sans',sans-serif;color:#4A505C;margin-bottom:6px}
+.inp{width:100%;box-sizing:border-box;min-height:44px;padding:0 12px;border:1px solid #CDD1D8;border-radius:8px;background:#FFFFFF;color:#15181D;font:500 15px 'IBM Plex Mono',monospace}
+.nav a{display:inline-flex;align-items:center;min-height:40px;padding:0 12px;border-radius:6px;color:#4A505C;text-decoration:none;font-weight:500}
+.nav a:hover{background:#ECEEF1;color:#15181D}
+</style>
+</helmet>
+<div style="min-height: 100vh; background: #F3F4F6; color: #15181D; font: 400 15px/1.5 'Instrument Sans', sans-serif">
+  <header style="background: #FFFFFF; border-bottom: 1px solid #DDE0E6">
+    <div style="max-width: 1392px; margin: 0 auto; padding: 12px 24px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px">
+      <div style="display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 17px">
+        <div style="width: 32px; height: 32px; border-radius: 8px; background: #8E2A24; color: #FFFFFF; display: grid; place-items: center; font-weight: 700">C</div>
+        Carellas Media Ads
+      </div>
+      <nav class="nav" aria-label="Sezioni" style="display: flex; flex-wrap: wrap; gap: 2px; flex: 1 1 auto">
+        <a href="#">Oggi</a>
+        <a href="#" aria-current="page" style="background: #ECEEF1; color: #15181D">Palinsesto</a>
+        <a href="#">Zone e schermi</a>
+        <a href="#">Contenuti</a>
+        <a href="#">Registro</a>
+      </nav>
+      <div style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: #4A505C">
+        <span style="width: 8px; height: 8px; border-radius: 50%; background: #1E8A5A"></span> Motore attivo
+      </div>
+    </div>
+  </header>
+
+  <main style="max-width: 1392px; margin: 0 auto; padding: 24px; display: flex; flex-direction: column; gap: 16px">
+    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px">
+      <h1 style="margin: 0; font-size: 30px; font-weight: 700; letter-spacing: -0.01em">Palinsesto</h1>
+      <div style="display: flex; align-items: center; gap: 4px">
+        <button class="btn btn-ghost" type="button" aria-label="Settimana precedente" style="min-width: 44px; padding: 0">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m15 18-6-6 6-6"></path></svg>
+        </button>
+        <div style="padding: 0 10px; font-weight: 600">12 – 18 ottobre</div>
+        <button class="btn btn-ghost" type="button" aria-label="Settimana successiva" style="min-width: 44px; padding: 0">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg>
+        </button>
+      </div>
+      <div role="group" aria-label="Vista" style="display: inline-flex; background: #E4E7EB; border-radius: 8px; padding: 3px">
+        <button type="button" aria-pressed="false" style="min-height: 38px; padding: 0 14px; border: 0; border-radius: 6px; background: transparent; font: 600 13px 'Instrument Sans', sans-serif; color: #4A505C">Giorno</button>
+        <button type="button" aria-pressed="true" style="min-height: 38px; padding: 0 14px; border: 0; border-radius: 6px; background: #FFFFFF; font: 600 13px 'Instrument Sans', sans-serif; color: #15181D; box-shadow: 0 1px 2px rgba(0,0,0,.08)">Settimana</button>
+      </div>
+      <div style="flex: 1 1 auto"></div>
+      <div style="display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; color: #4A505C">
+        <span style="display: inline-flex; align-items: center; gap: 6px"><span style="width: 14px; height: 10px; border-radius: 3px; background: #2F64B8"></span>Musica</span>
+        <span style="display: inline-flex; align-items: center; gap: 6px"><span style="width: 14px; height: 10px; border-radius: 3px; background: repeating-linear-gradient(90deg, #C46A12 0 3px, transparent 3px 7px)"></span>Spot</span>
+        <span style="display: inline-flex; align-items: center; gap: 6px"><span style="width: 14px; height: 10px; border-radius: 3px; background: #1E7466"></span>Schermi</span>
+        <span style="display: inline-flex; align-items: center; gap: 6px"><span style="width: 14px; height: 10px; border-radius: 3px; background: repeating-linear-gradient(45deg, #D5D9DF 0 2px, #F3F4F6 2px 5px)"></span>Chiuso</span>
+      </div>
+      <button class="btn btn-primary" type="button">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+        Nuovo blocco
+      </button>
+    </div>
+
+    <div style="display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start">
+      <section aria-label="Settimana" style="flex: 999 1 680px; min-width: 0; background: #FFFFFF; border: 1px solid #DDE0E6; border-radius: 12px; padding: 16px 16px 8px">
+        <div style="overflow-x: auto">
+          <div style="min-width: 720px">
+            <div style="display: grid; grid-template-columns: 72px 1fr; column-gap: 12px; margin-bottom: 6px">
+              <div></div>
+              <div class="mono" style="position: relative; height: 18px; font-size: 11px; color: #5B6270">
+                <sc-for list="{{hours}}" as="h" hint-placeholder-count="9">
+                  <span style="position: absolute; transform: translateX(-50%); left: {{h.left}}">{{h.label}}</span>
+                </sc-for>
+              </div>
+            </div>
+            <sc-for list="{{days}}" as="d" hint-placeholder-count="7">
+              <div style="display: grid; grid-template-columns: 72px 1fr; column-gap: 12px; align-items: center; padding: 8px 0; border-top: 1px solid #ECEEF1">
+                <div>
+                  <div style="font-weight: 600; font-size: 14px; color: {{d.nameColor}}">{{d.name}}</div>
+                  <div class="mono" style="font-size: 11px; color: #5B6270">{{d.date}}</div>
+                </div>
+                <div style="position: relative; height: 70px; background: repeating-linear-gradient(45deg, #E4E7EB 0 2px, #F7F8FA 2px 6px); border-radius: 6px; overflow: hidden">
+                  <sc-if value="{{d.open}}" hint-placeholder-val="{{true}}">
+                    <div style="position: absolute; left: 12.5%; width: 81.25%; top: 0; bottom: 0; background: #FFFFFF; border-left: 1px dashed #B9BEC7; border-right: 1px dashed #B9BEC7"></div>
+                    <sc-for list="{{d.music}}" as="m" hint-placeholder-count="3">
+                      <div style="position: absolute; top: 4px; height: 28px; box-sizing: border-box; border-radius: 5px; padding: 0 8px; display: flex; align-items: center; font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; left: {{m.left}}; width: {{m.width}}; background: {{m.bg}}; color: {{m.fg}}; box-shadow: {{m.ring}}">{{m.label}}</div>
+                    </sc-for>
+                    <div title="1 spot ogni 30 minuti" style="position: absolute; left: 12.5%; width: 81.25%; top: 36px; height: 10px; background: repeating-linear-gradient(90deg, #C46A12 0 3px, transparent 3px 3.846%)"></div>
+                    <div style="position: absolute; left: 12.5%; width: 81.25%; top: 50px; height: 16px; box-sizing: border-box; border-radius: 4px; background: #D5EEE8; color: #134D43; font-size: 11px; font-weight: 600; padding: 0 8px; display: flex; align-items: center">TV Demo Carellas</div>
+                  </sc-if>
+                  <sc-if value="{{d.closed}}" hint-placeholder-val="{{false}}">
+                    <div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 13px; color: #4A505C; font-weight: 500">Chiuso · <a href="#" style="margin-left: 4px">Aggiungi orario di apertura</a></div>
+                  </sc-if>
+                  <sc-if value="{{d.today}}" hint-placeholder-val="{{false}}">
+                    <div style="position: absolute; left: 30%; top: 0; bottom: 0; width: 2px; background: #D1342B"></div>
+                  </sc-if>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+        <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 14px 4px 8px; border-top: 1px solid #ECEEF1; margin-top: 6px; font-size: 14px">
+          <span style="display: inline-flex; align-items: center; gap: 6px; font-weight: 600"><span style="width: 10px; height: 10px; border-radius: 2px; background: #C46A12"></span>Regola spot</span>
+          <span style="color: #4A505C">1 spot ogni <strong style="color: #15181D">30 min</strong> · max <strong style="color: #15181D">20</strong> al giorno · volume <strong style="color: #15181D">35</strong> · rotazione: Femminile → Maschile</span>
+          <a href="#" style="font-weight: 600">Modifica</a>
+        </div>
+      </section>
+
+      <aside aria-labelledby="ed-h" style="flex: 1 1 360px; min-width: 0; background: #FFFFFF; border: 1px solid #DDE0E6; border-radius: 12px; box-shadow: 0 8px 24px rgba(21,24,29,.08)">
+        <div style="padding: 18px 20px; border-bottom: 1px solid #ECEEF1; display: flex; justify-content: space-between; align-items: flex-start; gap: 12px">
+          <div>
+            <div style="font-size: 12px; font-weight: 600; color: #2F64B8; letter-spacing: .04em; text-transform: uppercase">Blocco musica</div>
+            <h2 id="ed-h" style="margin: 2px 0 0; font-size: 20px; font-weight: 700">[Playlist pranzo]</h2>
+          </div>
+          <button class="btn btn-ghost" type="button" aria-label="Chiudi" style="min-width: 44px; padding: 0; border-color: transparent">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"></path></svg>
+          </button>
+        </div>
+        <div style="padding: 18px 20px; display: flex; flex-direction: column; gap: 18px">
+          <div>
+            <label class="lbl" for="src">Sorgente Sonos</label>
+            <div style="position: relative">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5B6270" stroke-width="2" stroke-linecap="round" aria-hidden="true" style="position: absolute; left: 12px; top: 14px"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg>
+              <input id="src" class="inp" type="search" value="[Playlist pranzo]" style="padding-left: 36px; font-family: 'Instrument Sans', sans-serif">
+            </div>
+            <div style="font-size: 12px; color: #5B6270; margin-top: 6px">Playlist, radio e preferiti in un unico elenco · <a href="#">Aggiorna da Sonos</a></div>
+          </div>
+          <div>
+            <span class="lbl">Altoparlanti</span>
+            <div role="group" aria-label="Altoparlanti" style="display: flex; flex-wrap: wrap; gap: 8px">
+              <button class="chip" type="button" aria-pressed="true">Sala</button>
+              <button class="chip" type="button" aria-pressed="true">Terrazza</button>
+              <button class="chip" type="button" aria-pressed="false" style="color: #5B6270">Bar · offline</button>
+            </div>
+          </div>
+          <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px">
+            <div><label class="lbl" for="t1">Dalle</label><input id="t1" class="inp" type="text" value="10:00"></div>
+            <div><label class="lbl" for="t2">Alle</label><input id="t2" class="inp" type="text" value="14:00"></div>
+          </div>
+          <div style="margin-top: -8px; font-size: 13px; color: #1E6B47; display: flex; gap: 6px; align-items: center">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"></path></svg>
+            4 ore · dentro l'orario di apertura 10:00–23:00
+          </div>
+          <div>
+            <span class="lbl">Giorni</span>
+            <div role="group" aria-label="Giorni" style="display: flex; flex-wrap: wrap; gap: 6px">
+              <button class="chip" type="button" aria-pressed="true">Lu</button>
+              <button class="chip" type="button" aria-pressed="true">Ma</button>
+              <button class="chip" type="button" aria-pressed="true">Me</button>
+              <button class="chip" type="button" aria-pressed="true">Gi</button>
+              <button class="chip" type="button" aria-pressed="true">Ve</button>
+              <button class="chip" type="button" aria-pressed="false">Sa</button>
+              <button class="chip" type="button" aria-pressed="false">Do</button>
+            </div>
+          </div>
+          <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px">
+            <div>
+              <label class="lbl" for="vol">Volume <span class="mono" style="color: #15181D">25</span></label>
+              <input id="vol" type="range" min="0" max="100" value="25" style="width: 100%; accent-color: #2F64B8">
+            </div>
+            <div>
+              <label class="lbl" for="fade">Dissolvenza <span class="mono" style="color: #15181D">3 s</span></label>
+              <input id="fade" type="range" min="0" max="10" step="0.5" value="3" style="width: 100%; accent-color: #2F64B8">
+            </div>
+          </div>
+        </div>
+        <div style="padding: 14px 20px; border-top: 1px solid #ECEEF1; display: flex; flex-wrap: wrap; gap: 10px; align-items: center">
+          <button type="button" style="min-height: 44px; padding: 0 8px; border: 0; background: transparent; color: #B42318; font: 600 14px 'Instrument Sans', sans-serif; cursor: pointer">Elimina</button>
+          <div style="flex: 1 1 auto"></div>
+          <button class="btn btn-ghost" type="button">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l13-7.5z"></path></svg>
+            Prova ora
+          </button>
+          <button class="btn btn-primary" type="button">Salva blocco</button>
+        </div>
+      </aside>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1140}}'>
+class Component extends DCLogic {
+  renderVals() {
+    var pct = function (h) { return (((h - 8) / 16) * 100).toFixed(2) + '%'; };
+    var span = function (a, b) { return (((b - a) / 16) * 100).toFixed(2) + '%'; };
+    var block = function (a, b, label, selected) {
+      return {
+        left: pct(a), width: 'calc(' + span(a, b) + ' - 3px)', label: label,
+        bg: selected ? '#2F64B8' : '#DCE7F8', fg: selected ? '#FFFFFF' : '#1B3F7A',
+        ring: selected ? '0 0 0 2px #FFFFFF, 0 0 0 4px #2F64B8' : 'none'
+      };
+    };
+    var weekday = function (sel, eveningLabel) {
+      return [block(10, 14, '[Playlist pranzo]', sel), block(14, 17, '[Radio pomeriggio]', false), block(17, 23, eveningLabel, false)];
+    };
+    var names = ['Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato', 'Domenica'];
+    var days = names.map(function (n, i) {
+      var open = i < 5;
+      return {
+        name: n, date: (12 + i) + ' ott', open: open, closed: !open, today: i === 0,
+        nameColor: i === 0 ? '#D1342B' : '#15181D',
+        music: open ? weekday(i === 0, i === 4 ? '[Playlist weekend]' : '[Playlist sera]') : []
+      };
+    });
+    var hours = [];
+    for (var h = 8; h <= 24; h += 2) hours.push({ label: String(h).padStart(2, '0') + ':00', left: pct(h) });
+    return { days: days, hours: hours };
+  }
+}
+</script>
+</body>
+</html>
