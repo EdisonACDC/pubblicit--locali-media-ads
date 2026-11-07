@@ -52,6 +52,8 @@ class CarellasServerTest(unittest.TestCase):
         self.app.SONOS_CATALOG_FILE.unlink(missing_ok=True)
         # Ogni test parte senza una fascia «già in onda» lasciata da un test precedente.
         self.app.MUSIC_STATE_FILE.unlink(missing_ok=True)
+        # Né con una cassa appena segnata come guasta da un altro test.
+        self.app.SONOS_LAST_MARK["at"] = None
 
     def request(self, path, method="GET", body=None, content_type="application/json"):
         data = None if body is None else (body if isinstance(body, bytes) else json.dumps(body).encode())
@@ -1839,8 +1841,9 @@ class CarellasServerTest(unittest.TestCase):
             with mock.patch.object(app.ha, "states", side_effect=lambda: next(states)):
                 clock[0] += 15
                 engine.music_watchdog(slot)
-            self.assertEqual(calls, ["media_play"])
-            self.assertTrue(any("si era fermata da sola" in item["message"] for item in app.store.logs[:3]))
+            # Play e poi la ripetizione della playlist, così alla fine non si ferma più.
+            self.assertEqual(calls, ["media_play", "repeat_set"])
+            self.assertTrue(any("si era fermata da sola" in item["message"] for item in app.store.logs[:5]))
             # Se Play non basta (es. playlist finita), la fascia riparte dall'inizio.
             calls.clear()
             with mock.patch.object(app.ha, "states", return_value=paused), \
@@ -3856,7 +3859,7 @@ class CarellasServerTest(unittest.TestCase):
         self.addCleanup(app.SONOS_UNRESPONSIVE_STRIKES.clear)
         now = [1000.0]
         with mock.patch.object(app.time, "monotonic", side_effect=lambda: now[0]):
-            for minutes in (3, 10, 30, 30):
+            for minutes in (3, 10, 30, 120, 120):
                 app.mark_sonos_unresponsive("media_player.bar", "timed out")
                 self.assertEqual(app.SONOS_UNRESPONSIVE["media_player.bar"], now[0] + minutes * 60)
                 self.assertIn(f"lo salto per {minutes} minuti", app.store.logs[0]["message"])
@@ -3946,6 +3949,72 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(result[0], "media_player.sala")
         self.assertIn("play_media", [name for name, _ in calls])
         self.assertTrue(app.sonos_unresponsive("media_player.bar"))
+
+    def test_healthy_speakers_not_blamed_while_home_assistant_waits_for_a_broken_one(self):
+        # Registro reale: dopo la cassa dei bagni, altre due sane «non rispondono (timed out)» e vengono
+        # saltate; quella che guidava il gruppo perdeva la musica.
+        app = self.app
+        app.SONOS_UNRESPONSIVE.clear()
+        app.SONOS_UNRESPONSIVE_STRIKES.clear()
+        self.addCleanup(app.SONOS_UNRESPONSIVE.clear)
+        self.addCleanup(app.SONOS_UNRESPONSIVE_STRIKES.clear)
+        players = ["media_player.sala", "media_player.terrazza", "media_player.bagni"]
+        states = [{"entity_id": p, "state": "playing",
+                   "attributes": {"group_members": players, "volume_level": 0.3, "friendly_name": p}} for p in players]
+        clock = [5000.0]
+        with mock.patch.object(app.time, "monotonic", side_effect=lambda: clock[0]), \
+                mock.patch.object(app.ha, "states", return_value=states), \
+                mock.patch.object(app.ha, "service", side_effect=TimeoutError("timed out")):
+            app.mark_sonos_unresponsive("media_player.bagni",
+                                        "Error on Bagni: HTTPConnectionPool(host='192.168.178.18'): Read timed out.")
+            clock[0] += 40
+            # Comando di gruppo scaduto e prove che scadono anche loro: Home Assistant è ancora fermo sui bagni.
+            self.assertEqual(app.find_unresponsive_sonos("timed out", players), [])
+            self.assertFalse(app.sonos_unresponsive("media_player.sala"))
+            self.assertFalse(app.sonos_unresponsive("media_player.terrazza"))
+            # Se invece Home Assistant nomina la cassa, la colpa è sua anche subito dopo.
+            app.find_unresponsive_sonos(
+                "Error on media_player.terrazza: HTTPConnectionPool(host='192.168.178.20'): Max retries exceeded",
+                players)
+            self.assertTrue(app.sonos_unresponsive("media_player.terrazza"))
+            # Passati due minuti un «timed out» torna a contare: la cassa che non risponde viene trovata.
+            app.SONOS_UNRESPONSIVE.pop("media_player.terrazza")
+            clock[0] += 200
+            self.assertEqual(app.find_unresponsive_sonos("timed out", players), ["media_player.sala"])
+        # Una sola cassa per errore: le prove dopo la prima aspetterebbero Home Assistant per niente.
+        self.assertFalse(app.sonos_unresponsive("media_player.terrazza"))
+
+    def test_spot_snapshot_skips_group_with_a_speaker_already_skipped(self):
+        app = self.app
+        app.SONOS_UNRESPONSIVE.clear()
+        self.addCleanup(app.SONOS_UNRESPONSIVE.clear)
+        self.addCleanup(app.SONOS_UNRESPONSIVE_STRIKES.clear)
+        players = ["media_player.sala", "media_player.bagni"]
+        states = [{"entity_id": p, "state": "playing", "attributes": {"group_members": players}} for p in players]
+        app.mark_sonos_unresponsive("media_player.bagni", "Error on Bagni: HTTPConnectionPool: Read timed out.")
+        calls = []
+        with mock.patch.object(app.ha, "states", return_value=states), \
+                mock.patch.object(app.ha, "service", side_effect=lambda d, n, payload: calls.append((n, payload))):
+            targets, with_group = app.take_sonos_snapshot(["media_player.sala"], players)
+        # Niente tentativo con il gruppo (falliva dopo 20 secondi a ogni spot) e niente avviso.
+        self.assertEqual((targets, with_group), (["media_player.sala"], False))
+        self.assertEqual(calls, [("snapshot", {"entity_id": ["media_player.sala"], "with_group": False})])
+        line = next(item for item in app.store.logs if "senza il gruppo" in item["message"])
+        self.assertEqual(line["level"], "info")
+
+    def test_playlist_repeats_and_radio_is_left_alone(self):
+        # Registro reale: «La musica si era fermata da sola» ogni 16 minuti, alla fine della playlist.
+        app = self.app
+        calls = []
+        with mock.patch.object(app.ha, "service", side_effect=lambda d, n, payload: calls.append((n, payload))):
+            app.keep_playlist_repeating("media_player.sala", "sonos_playlist_source")
+            app.keep_playlist_repeating("media_player.sala", "favorite_item_id")
+            app.keep_playlist_repeating("media_player.sala", "radio_url")
+            app.keep_playlist_repeating("media_player.sala", "sonos_radio_source")
+        self.assertEqual(calls, [("repeat_set", {"entity_id": "media_player.sala", "repeat": "all"})] * 2)
+        # Se Sonos rifiuta la ripetizione la musica parte lo stesso.
+        with mock.patch.object(app.ha, "service", side_effect=RuntimeError("UPnP Error 712")):
+            app.keep_playlist_repeating("media_player.sala", "favorite_item_id")
 
     def test_two_speakers_group_without_the_one_not_answering(self):
         app = self.app
