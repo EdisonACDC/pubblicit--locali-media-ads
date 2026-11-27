@@ -55,9 +55,9 @@ DEFAULT_FILE = APP_DIR / "default_config.json"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 HA_API = os.environ.get("CARELLAS_HA_API", "http://supervisor/core/api")
 HA_WS = os.environ.get("CARELLAS_HA_WS", "ws://supervisor/core/websocket")
-PORT = 8100
-PLAYER_PORT = 8102
-REMOTE_PORT = 8104
+PORT = int(os.environ.get("CARELLAS_PORT", "8100"))
+PLAYER_PORT = int(os.environ.get("CARELLAS_PLAYER_PORT", "8102"))
+REMOTE_PORT = int(os.environ.get("CARELLAS_REMOTE_PORT", "8104"))
 # Accesso da Internet: uscita automatica dopo un periodo senza attività e comunque dopo 12 ore.
 REMOTE_SESSION_IDLE_SECONDS = max(300, int(os.environ.get("CARELLAS_REMOTE_IDLE_MINUTES", "120")) * 60)
 REMOTE_SESSION_MAX_SECONDS = 12 * 60 * 60
@@ -4962,6 +4962,23 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def send_backup(self):
+        data = json.dumps(build_backup(), ensure_ascii=False).encode("utf-8")
+        name = f"carellas-impostazioni_{datetime.now().strftime('%Y-%m-%d_%H%M')}.json"
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Disposition", f'attachment; filename="{name}"')
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def large_json_body(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        if length > BACKUP_MAX_BYTES:
+            raise ValueError("File delle impostazioni troppo grande")
+        return json.loads(self.rfile.read(length) or b"{}")
+
     def send_spot_csv(self, entries, start, end):
         """Storico spot per Excel: separatore ';' e BOM UTF-8, come si aspetta Excel in IT/DE."""
         zone_of = {}
@@ -5194,6 +5211,9 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/music/queue":
                 # Brani della playlist in onda, con quello in corso.
                 self.send_json(music_queue())
+                return
+            if path == "/api/backup":
+                self.send_backup()
                 return
             if path in ("/api/spots/history", "/api/spots/history.csv"):
                 query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
@@ -5509,6 +5529,10 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self.staff_request = True
         try:
+            if path == "/api/backup/import":
+                result = import_backup(self.large_json_body())
+                self.send_json({"ok": True, **result})
+                return
             if path == "/api/config":
                 old_channels = {
                     safe_channel_id(channel.get("id", "")): json.dumps(
@@ -6142,6 +6166,114 @@ REMOTE_SESSIONS = {}
 REMOTE_FAILURES = {}
 REMOTE_COOKIE = "carellas_admin"
 # Le sole operazioni permesse agli operatori (pagina per tablet).
+BACKUP_FORMAT = "carellas-media-ads-backup"
+BACKUP_MAX_BYTES = 64 * 1024 * 1024
+
+
+def backup_files():
+    """File dei dati copiati insieme alla configurazione (la configurazione viene dalla memoria)."""
+    return {
+        "spot_history": SPOT_HISTORY_FILE,
+        "sonos_catalog": SONOS_CATALOG_FILE,
+        "sonos_volumes": SONOS_MANUAL_FILE,
+        "playlist_positions": PLAYLIST_POSITIONS_FILE,
+        "instagram_token": INSTAGRAM_TOKEN_FILE,
+    }
+
+
+def build_backup():
+    """Tutte le impostazioni in un unico file: serve a passare dalla beta alla stabile (e viceversa)."""
+    files = {}
+    for key, path in backup_files().items():
+        try:
+            files[key] = json.loads(path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, ValueError):
+            files[key] = None
+    with store.lock:
+        config = copy.deepcopy(store.config)
+    return {
+        "format": BACKUP_FORMAT,
+        "version": 1,
+        "created": now_iso(),
+        "ports": {"panel": PORT, "player": PLAYER_PORT, "remote": REMOTE_PORT},
+        "config": config,
+        "files": files,
+    }
+
+
+def _rewrite_ports(value, mapping):
+    """Indirizzi locali salvati con le porte dell'add-on di origine: li porta sulle porte di questo add-on."""
+    if isinstance(value, dict):
+        return {key: _rewrite_ports(item, mapping) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_rewrite_ports(item, mapping) for item in value]
+    if isinstance(value, str) and mapping:
+        match = re.fullmatch(r"(https?://[^/:\s]+|https?://\[[^\]]+\]):(\d+)(/.*)?", value.strip())
+        if match and int(match.group(2)) in mapping:
+            return f"{match.group(1)}:{mapping[int(match.group(2))]}{match.group(3) or ''}"
+    return value
+
+
+def import_backup(backup):
+    """Sostituisce le impostazioni con quelle di un file esportato, senza riavviare l'add-on."""
+    if not isinstance(backup, dict) or backup.get("format") != BACKUP_FORMAT:
+        raise ValueError("Il file non è un'esportazione delle impostazioni di Carellas Media Ads")
+    if not isinstance(backup.get("config"), dict):
+        raise ValueError("Il file non contiene la configurazione")
+    source = backup.get("ports") or {}
+    mapping = {}
+    for key, mine in (("panel", PORT), ("player", PLAYER_PORT), ("remote", REMOTE_PORT)):
+        try:
+            theirs = int(source.get(key))
+        except (TypeError, ValueError):
+            continue
+        if theirs != mine:
+            mapping[theirs] = mine
+    config = _rewrite_ports(backup["config"], mapping)
+    defaults = json.loads(DEFAULT_FILE.read_text(encoding="utf-8"))
+    candidate = deep_merge(defaults, config)
+    validate_music_slots(candidate.get("music", {}))
+    with store.lock:
+        previous = store.config
+        store.config = candidate
+        try:
+            store.normalize()
+        except Exception:
+            store.config = previous
+            raise
+        store.save()
+    imported = ["config"]
+    for key, path in backup_files().items():
+        data = (backup.get("files") or {}).get(key)
+        if data is None:
+            continue
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        os.replace(temporary, path)
+        imported.append(key)
+    # I dati già in memoria vengono riletti dai file appena scritti.
+    with spot_history.lock:
+        try:
+            data = json.loads(SPOT_HISTORY_FILE.read_text(encoding="utf-8"))
+            spot_history.entries = [item for item in data.get("entries", []) if isinstance(item, dict)]
+        except (FileNotFoundError, OSError, ValueError, AttributeError):
+            spot_history.entries = []
+    SONOS_MANUAL_VOLUMES.clear()
+    SONOS_MANUAL_VOLUMES.update(_load_manual_volumes())
+    with PLAYLIST_POSITIONS_LOCK:
+        PLAYLIST_POSITIONS.clear()
+        PLAYLIST_POSITIONS.update(_load_playlist_positions())
+    # I canali TV vanno rigenerati qui: i video pronti della beta stanno nei suoi dati.
+    rebuilt = []
+    for channel in store.config.get("iptv", {}).get("channels", []):
+        channel_id = safe_channel_id(channel.get("id", ""))
+        if channel.get("playlist") and iptv.build_async(channel_id):
+            rebuilt.append(channel_id)
+    store.log("success", "Impostazioni importate: " + ", ".join(imported)
+              + (f"; canali TV in preparazione: {', '.join(rebuilt)}" if rebuilt else ""))
+    return {"imported": imported, "rebuilt_channels": rebuilt, "ports_rewritten": sorted(mapping)}
+
+
 STAFF_POST_PATHS = {"/api/sonos/volume", "/api/music/manual", "/api/audio/pause", "/api/audio/skip",
                     "/api/audio/stop", "/api/test/audio", "/api/zone/music", "/api/zone/spots", "/api/music/control",
                     "/api/spot/today", "/api/music/queue/play"}

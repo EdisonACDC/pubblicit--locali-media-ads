@@ -1,5 +1,27 @@
 # Carellas Media Ads
 
+## Novità stabile 0.6.0
+
+La stabile passa al nuovo pannello provato nella beta (0.6.0-beta.58).
+
+- **Pannello per zone:** pagine Oggi, Zone, Palinsesto, Configurazione guidata, Contenuti, Storico spot, Registro e Impostazioni, anche da telefono, in italiano e tedesco. Il pannello precedente resta su `/classic`.
+- **Musica più affidabile:** Mix automatico e cassa principale, playlist che riprendono dal brano in cui erano rimaste, elenco dei brani in onda, volumi scelti a mano mantenuti, musica che continua dopo un riavvio e una cassa che non risponde non blocca più spot e musica.
+- **Spot:** ogni Sonos torna al suo volume dopo lo spot, meno pausa tra musica e spot, storico degli spot con esportazione per Excel.
+- **Pagina Operatori** per tablet e per gli utenti di Home Assistant non amministratori: musica e spot per zona, volumi, spot sì/no solo per oggi.
+- **TV:** pagina di ogni canale, foto e video caricati direttamente nel canale, menu del ristorante (anche da PDF), eventi dal sito, foto e video da Instagram.
+- **Accesso da Internet** con nome utente e password sulla porta **8103**.
+- **Copia delle impostazioni:** Impostazioni → Copia delle impostazioni → Esporta / Importa.
+
+### Passare dalla beta alla stabile mantenendo le impostazioni della beta
+
+1. Aggiornare la **beta** alla 0.6.0-beta.58, aprirla e scegliere **Impostazioni → Copia delle impostazioni → Esporta impostazioni**: si scarica un file `.json`.
+2. **Fermare la beta**: se restano accese tutte e due, gli spot e la musica partono due volte.
+3. Aggiornare la **stabile** alla 0.6.0, aprirla e scegliere **Impostazioni → Copia delle impostazioni → Importa impostazioni**, poi il file scaricato e **Importa e sostituisci**.
+4. Gli indirizzi locali passano da soli alle porte della stabile e i canali TV vengono rigenerati (qualche minuto).
+5. Sulle TV che usavano il Player della beta (porta 8102) aprire il Player della stabile sulla porta **8101** e accedere di nuovo. Se l'accesso da Internet passava dalla porta 8104 (per esempio con Cloudflare), puntarlo sulla **8103**.
+
+Il file esportato contiene password protette e chiavi di accesso: conservarlo con cura.
+
 ## Novità stabile 0.4.37
 
 - La libreria Sonos completa viene ora letta tramite il Media Browser WebSocket ufficiale di Home Assistant, lo stesso percorso utilizzato dal player multimediale.

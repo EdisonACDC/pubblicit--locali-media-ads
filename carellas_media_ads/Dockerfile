@@ -1,10 +1,16 @@
 ARG BUILD_FROM
 FROM ${BUILD_FROM}
 
+# Stesso codice della beta: cambiano solo le porte (la beta usa 8100/8102/8104).
+ENV CARELLAS_PORT=8099 \
+    CARELLAS_PLAYER_PORT=8101 \
+    CARELLAS_REMOTE_PORT=8103
+
 WORKDIR /app
 COPY app /app
 COPY run.sh /run.sh
-RUN apk add --no-cache ffmpeg \
+# font-dejavu: testi delle pagine del menu; poppler-utils (pdftoppm): menu caricati in PDF.
+RUN apk add --no-cache ffmpeg font-dejavu poppler-utils \
     && python3 -m pip install --no-cache-dir websocket-client==1.8.0 \
     && python3 -c "import websocket; print('websocket-client', websocket.__version__)" \
     && cat /app/bundled_media/Carellas_Ristorante_Spot_DE_Femminile.mp3.part.* > /app/bundled_media/Carellas_Ristorante_Spot_DE_Femminile.mp3 \
@@ -13,5 +19,5 @@ RUN apk add --no-cache ffmpeg \
     && chmod a+x /run.sh \
     && mkdir -p /media/carellas_media_ads
 
-EXPOSE 8099 8101
+EXPOSE 8099 8101 8103
 CMD ["/run.sh"]

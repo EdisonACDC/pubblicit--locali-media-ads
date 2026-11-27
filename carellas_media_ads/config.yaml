@@ -1,7 +1,7 @@
 name: Carellas Media Ads
-version: "0.4.47"
+version: "0.6.0"
 slug: carellas_media_ads
-description: Pubblicità Sonos e multi-TV IPTV/LAN/DLNA con playlist e orari indipendenti.
+description: Pannello per zone con spot Sonos, musica, operatori e multi-TV IPTV/LAN/DLNA.
 url: https://github.com/EdisonACDC/pubblicit--locali-media-ads
 arch:
   - amd64
@@ -23,9 +23,11 @@ map:
 ports:
   8099/tcp: 8099
   8101/tcp: 8101
+  8103/tcp: 8103
 ports_description:
-  8099/tcp: Pannello amministrativo e contenuti locali
+  8099/tcp: Pannello amministrativo, API e contenuti locali (solo LAN)
   8101/tcp: Player TV protetto per browser
+  8103/tcp: Pannello con login per l'accesso da Internet
 webui: http://[HOST]:[PORT:8099]
 watchdog: http://[HOST]:[PORT:8099]/api/state
 options: {}

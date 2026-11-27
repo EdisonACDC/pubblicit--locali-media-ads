@@ -16,21 +16,28 @@ La repository è essa stessa un repository di add-on Home Assistant (`repository
 
 | Percorso | Contenuto |
 |---|---|
-| `carellas_media_ads/` | Add-on **stabile** (`stage: stable`). È quello in produzione. |
+| `carellas_media_ads/` | Add-on **stabile** (`stage: stable`). È quello in produzione. Dalla 0.6.0 usa lo stesso codice della beta, con porte proprie. |
 | `carellas_media_ads/app/server.py` | Tutto il backend: server HTTP, Scheduler, integrazione HA/Sonos, `IPTVEngine` (FFmpeg). Un solo file Python. |
-| `carellas_media_ads/app/index.html` | Pannello amministrativo: HTML, CSS e JavaScript inline in un unico file. |
+| `carellas_media_ads/app/index.html` | Pannello amministrativo per zone: HTML, CSS e JavaScript inline in un unico file. |
+| `carellas_media_ads/app/operatori.html`, `index_classic.html` | Pagina degli operatori e pannello precedente (`/classic`). |
 | `carellas_media_ads/app/player.html`, `screen.html` | Player TV nel browser e schermata Smart TV. |
 | `carellas_media_ads/app/default_config.json` | Configurazione iniziale per le nuove installazioni. |
 | `carellas_media_ads/app/bundled_media/` | Media demo. Gli MP3 sono divisi in `*.part.NNN` e ricomposti dal `Dockerfile`. |
-| `carellas_media_ads_beta/` | Add-on **beta** (`stage: experimental`), separato, porta 8100. |
-| `tests/test_server.py`, `tests/test_beta_server.py` | Test `unittest` per stabile e beta. |
+| `carellas_media_ads_beta/` | Add-on **beta** (`stage: experimental`), separato, porte 8100/8102/8104. Le novità nascono qui. |
+| `tests/test_beta_server.py` | Test `unittest` della beta. |
+| `tests/test_server.py` | Gli stessi test eseguiti sulla stabile (cartella e porte della stabile), più i controlli del pacchetto stabile. |
 | `docs/` | Note di collaudo sull'impianto reale. |
 | `.github/workflows/` | CI (`test.yml`) e workflow di generazione demo e pubblicazione beta. |
 
-### Porte (stabile)
+### Porte
 
-- `8099`: pannello amministrativo, API e contenuti locali. Usato anche da Ingress. **Solo LAN o Ingress.**
-- `8101`: Player TV protetto da login. È l'unica porta che può essere esposta su Internet.
+Il codice legge le porte da `CARELLAS_PORT`, `CARELLAS_PLAYER_PORT` e `CARELLAS_REMOTE_PORT` (impostate nel `Dockerfile` della stabile; senza variabili valgono quelle della beta).
+
+| | Stabile | Beta |
+|---|---|---|
+| Pannello amministrativo, API e contenuti locali (Ingress). **Solo LAN o Ingress.** | `8099` | `8100` |
+| Player TV protetto da login | `8101` | `8102` |
+| Pannello con login per l'accesso da Internet | `8103` | `8104` |
 
 ## Comandi
 
@@ -57,7 +64,7 @@ I test caricano `server.py` tramite `importlib`, usano directory temporanee con 
 - **Traduzioni IT/DE:** il pannello è scritto in italiano e tradotto in tedesco a runtime tramite la mappa `itDe` / la funzione `deText()` in `index.html`. Ogni nuovo testo visibile deve avere la sua traduzione tedesca.
 - **Niente dipendenze nuove** se non indispensabili: il server è volutamente in libreria standard più FFmpeg. Se ne aggiungi una, va installata nel `Dockerfile`.
 - **File unici:** `server.py` e `index.html` sono monolitici per scelta. Non dividerli in moduli senza una richiesta esplicita.
-- **Stabile e beta sono separati:** una modifica allo stabile non va copiata nella beta (e viceversa) se non è richiesto.
+- **Stabile e beta sono separati:** le novità si sviluppano nella beta; nella stabile arrivano solo con un passaggio esplicito (vedi sotto). Non modificare la stabile a mano senza una richiesta.
 - Le impostazioni regolabili usano variabili d'ambiente `CARELLAS_*` con valore predefinito in testa a `server.py`.
 
 ## Rilascio di una nuova versione (stabile)
@@ -68,6 +75,17 @@ Seguire lo schema dei commit esistenti:
 2. Aggiungere in cima al `README.md` una sezione `## Novità stabile X.Y.Z` con punti brevi in italiano, rivolti all'utente finale.
 3. Se cambia la generazione dei video IPTV, aumentare `IPTVEngine.BUILD_FORMAT_VERSION` in modo che i canali esistenti vengano rigenerati.
 4. Messaggi di commit in italiano all'imperativo, ad esempio `Versione 0.4.48: <cosa cambia>` o `Correggi ...`.
+
+## Passaggio della beta sulla stabile
+
+Solo su richiesta esplicita:
+
+1. Copiare i file di `carellas_media_ads_beta/app/` in `carellas_media_ads/app/` (la stabile tiene `bundled_media/`).
+2. Allineare il `Dockerfile` della stabile ai pacchetti della beta, lasciando le variabili `CARELLAS_*_PORT` della stabile.
+3. Versione stabile senza `-beta` in `config.yaml` e sezione `## Novità stabile` nel README.
+4. `python -m unittest discover -s tests`: gli stessi test girano su beta e stabile.
+
+Le impostazioni non passano da sole (ogni add-on ha i suoi dati): nella beta **Impostazioni → Copia delle impostazioni → Esporta**, poi nella stabile **Importa**. L'importazione adatta gli indirizzi locali alle porte della stabile e rigenera i canali TV.
 
 ## Attenzione
 

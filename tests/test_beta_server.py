@@ -14,14 +14,22 @@ from http.server import ThreadingHTTPServer
 
 
 class CarellasServerTest(unittest.TestCase):
+    # La stabile (tests/test_server.py) riusa questi test con la sua cartella e le sue porte.
+    ADDON = "carellas_media_ads_beta"
+    PORTS = (8100, 8102, 8104)
+
     @classmethod
     def setUpClass(cls):
+        cls.addon_dir = Path(__file__).parents[1] / cls.ADDON
+        cls.port, cls.player_port, cls.remote_port = cls.PORTS
+        os.environ["CARELLAS_PORT"], os.environ["CARELLAS_PLAYER_PORT"], os.environ["CARELLAS_REMOTE_PORT"] = (
+            str(port) for port in cls.PORTS)
         cls.temp = tempfile.TemporaryDirectory()
         os.environ["CARELLAS_DATA_DIR"] = str(Path(cls.temp.name) / "data")
         os.environ["CARELLAS_MEDIA_DIR"] = str(Path(cls.temp.name) / "media")
         # Nei test lo stato finto dei Sonos è subito quello giusto: niente attesa iniziale.
         os.environ["CARELLAS_SONOS_START_SETTLE_SECONDS"] = "0"
-        source = Path(__file__).parents[1] / "carellas_media_ads_beta/app/server.py"
+        source = cls.addon_dir / "app/server.py"
         spec = importlib.util.spec_from_file_location("carellas_server", source)
         cls.app = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.app)
@@ -62,7 +70,7 @@ class CarellasServerTest(unittest.TestCase):
             return response.status, json.loads(response.read())
 
     def test_channel_page_edits_channels_without_zone(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index.html").read_text(encoding="utf-8")
         # Ogni canale ha la sua pagina: nome, zona, sequenza e impostazioni anche se non è in una zona.
         self.assertIn("canale:pageCanale", html)
         self.assertIn('data-bind="iptv.channels.${i}.name"', html)
@@ -84,8 +92,8 @@ class CarellasServerTest(unittest.TestCase):
         status, payload = self.request("/api/hassio_ingress/example/api/state")
         self.assertEqual(status, 200)
         self.assertEqual(payload["entities"][0]["entity_id"], "media_player.sala")
-        self.assertEqual(payload["runtime"]["media_base_url"], "http://192.168.1.10:8100")
-        self.assertEqual(payload["runtime"]["player_local_url"], "http://192.168.1.10:8102")
+        self.assertEqual(payload["runtime"]["media_base_url"], f"http://192.168.1.10:{self.port}")
+        self.assertEqual(payload["runtime"]["player_local_url"], f"http://192.168.1.10:{self.player_port}")
 
     def test_operator_page_through_ingress(self):
         # Dentro Home Assistant /operatori arriva con il prefisso di Ingress: deve aprire la pagina degli operatori.
@@ -320,7 +328,7 @@ class CarellasServerTest(unittest.TestCase):
             self.app.INSTAGRAM_TOKEN_FILE.unlink(missing_ok=True)
 
     def test_instagram_settings_in_panel(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index.html").read_text(encoding="utf-8")
         self.assertIn("['instagram','Instagram']", html)
         self.assertIn("${instagramSettings()}", html)
         self.assertIn('type="password" autocomplete="off"', html)
@@ -383,7 +391,7 @@ class CarellasServerTest(unittest.TestCase):
         self.assertNotIn("password", account)
         self.assertTrue(account["password_hash"].startswith("pbkdf2_sha256$"))
         self.assertTrue(self.app.password_matches("segreta1", account["password_hash"]))
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/player.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/player.html").read_text(encoding="utf-8")
         self.assertIn('video.muted=false', html)
         self.assertIn("objectFit=state.fit", html)
         self.assertIn("100vw;height:100vh", html)
@@ -393,7 +401,7 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("Visualizza password", html)
         self.assertIn("Passwort anzeigen", html)
         self.assertIn("$('language').style.display=name?'flex':'none'", html)
-        dashboard = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index_classic.html").read_text(encoding="utf-8")
+        dashboard = (self.addon_dir / "app/index_classic.html").read_text(encoding="utf-8")
         self.assertIn('id="playerUsers"', dashboard)
         self.assertIn('id="playerUserSelect"', dashboard)
         self.assertIn('onchange="selectPlayerUser(this.value)"', dashboard)
@@ -627,7 +635,7 @@ class CarellasServerTest(unittest.TestCase):
                 self.assertIn(fragment, graph, name)
 
     def test_dashboard_lists_new_effects_in_both_languages(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index_classic.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index_classic.html").read_text(encoding="utf-8")
         for label in (
             "Ken Burns diagonale", "Ken Burns inverso", "Panoramica verso destra",
             "Panoramica verso sinistra", "Panoramica verso il basso", "Panoramica verso l’alto",
@@ -884,7 +892,7 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual([item["entity_id"] for item in payload["entities"]], ["media_player.sala"])
 
     def test_editor_preserves_unsaved_settings_and_shows_sequence_order(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index_classic.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index_classic.html").read_text(encoding="utf-8")
         self.assertIn("if(dirty&&!force)return", html)
         self.assertIn("Ordine di riproduzione, da sinistra a destra", html)
         self.assertIn("Sequenza realmente generata", html)
@@ -895,7 +903,7 @@ class CarellasServerTest(unittest.TestCase):
         self.assertNotIn('id="audioDriver"', html)
 
     def test_desktop_sonos_picker_and_ingress_music_controls(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index_classic.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index_classic.html").read_text(encoding="utf-8")
         self.assertIn('id="audioPlayers" class="speaker-picker"', html)
         self.assertIn('id="musicPlayers" class="speaker-picker"', html)
         self.assertIn("speakerValues('musicPlayers')", html)
@@ -918,7 +926,7 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("function filterSonosSourceOptions()", html)
 
     def test_dashboard_is_responsive_on_phone(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index_classic.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index_classic.html").read_text(encoding="utf-8")
         self.assertIn("@media(max-width:700px)", html)
         self.assertIn("overflow-x:hidden", html)
         self.assertIn(".speaker-option span{min-width:0;max-width:100%;flex:1;overflow:hidden}", html)
@@ -928,7 +936,7 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn(".savebar{position:static", html)
 
     def test_apple_time_fields_do_not_open_unstable_native_picker(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index_classic.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index_classic.html").read_text(encoding="utf-8")
         self.assertIn("function stabilizeAppleTimeInputs", html)
         self.assertIn("function normalizeClockInput", html)
         self.assertIn("input.type='text'", html)
@@ -936,7 +944,7 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("stableTimeObserver.observe", html)
 
     def test_language_switch_is_always_visible_and_persists_immediately(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index_classic.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index_classic.html").read_text(encoding="utf-8")
         self.assertIn('class="language-control"', html)
         self.assertIn('id="language" aria-label="Lingua / Sprache"', html)
         self.assertEqual(html.count('id="language"'), 1)
@@ -944,25 +952,25 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("JSON.stringify({language:lang})", html)
 
     def test_audio_duration_is_automatic_in_the_interface(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index_classic.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index_classic.html").read_text(encoding="utf-8")
         self.assertIn("Automatica: viene letta direttamente dal file audio", html)
         self.assertIn("formatDuration(m.duration)", html)
         self.assertNotIn('id="spotDuration" type="number"', html)
 
     def test_stop_spot_button_is_available_on_dashboard_and_audio_page(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index_classic.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index_classic.html").read_text(encoding="utf-8")
         self.assertEqual(html.count('onclick="stopAudio()"'), 2)
         self.assertIn("api/audio/stop", html)
 
     def test_audio_frequency_and_repeat_controls_are_unambiguous(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index_classic.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index_classic.html").read_text(encoding="utf-8")
         self.assertIn("Riproduci uno spot ogni (minuti)", html)
         self.assertIn("A ogni intervallo viene riprodotto un solo spot", html)
         self.assertIn("Uno alla volta, nell’ordine della lista", html)
         self.assertNotIn("Quante volte consecutive", html)
 
     def test_complete_german_ui_and_audio_rotation_summary_are_available(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index_classic.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index_classic.html").read_text(encoding="utf-8")
         self.assertIn("Sonos-Audiowerbung", html)
         self.assertIn("Geplante Playlists und Radios", html)
         self.assertIn("IPTV-Kanäle für mehrere Fernseher", html)
@@ -1404,7 +1412,7 @@ class CarellasServerTest(unittest.TestCase):
         self.app.validate_music_slots(base)
 
     def test_time_fields_use_clock_and_overlaps_are_shown_before_saving(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index.html").read_text(encoding="utf-8")
         # Tutti i campi orario sono orologi veri (type=time), nessuno resta testo libero.
         self.assertNotIn('<input class="inp time"', html)
         self.assertEqual(html.count('<input type="time" step="60" class="inp time"'), 5)
@@ -1417,7 +1425,7 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("['Fasce sovrapposte: {0} e {1}','Überlappende Zeiträume: {0} und {1}']", html)
 
     def test_slot_edits_cannot_create_overlaps(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index.html").read_text(encoding="utf-8")
         # Ogni modifica di orari, giorni, casse o zone passa dal controllo prima di restare nella bozza.
         self.assertIn("function keepSlotsApart(before,s,field)", html)
         for hook in ("slotTimeChanged(t,before,s,'start')", "slotTimeChanged(t,before,s,'end')",
@@ -1567,7 +1575,7 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(volume[2]["volume_level"], 0.25)
 
     def test_settings_menu_and_channel_tv_targets(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index.html").read_text(encoding="utf-8")
         # Ogni sezione delle Impostazioni ha il suo indirizzo, raggiungibile dal menu laterale e dalla tendina.
         for key in ("collegamento", "canali", "player", "utenti", "schermo", "lingua"):
             self.assertIn(f"['{key}',", html)
@@ -1616,7 +1624,7 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(joins[0][2]["group_members"], ["media_player.bar"])
 
     def test_main_screen_has_original_tv_settings(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index.html").read_text(encoding="utf-8")
         page = html[html.index("function mainTvSettings()"):html.index("function pagePalinsesto()")]
         # Come nel pannello originale: più fasce orarie, secondi e prova per contenuto,
         # adattamento dell'immagine, prova di accensione e spegnimento, indirizzo dello schermo LAN.
@@ -1675,16 +1683,16 @@ class CarellasServerTest(unittest.TestCase):
             self.assertEqual(self.app.store.config["media_base_url"], "http://192.168.1.50:8099")
             self.assertEqual(self.app.store.config["browser_player"]["public_url"], "https://tvspot.esempio.com")
             self.assertEqual(self.app.player_public_url(), "https://tvspot.esempio.com")
-            self.assertEqual(self.app.player_local_url(), "http://192.168.1.50:8102")
+            self.assertEqual(self.app.player_local_url(), f"http://192.168.1.50:{self.player_port}")
         finally:
             self.app.store.update({"media_base_url": saved_media, "browser_player": saved_player})
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index.html").read_text(encoding="utf-8")
         # Il pulsante apre sempre un sito e la sezione Player avvisa se manca l'IP numerico.
         self.assertIn("if(url&&!/^https?:\/\//i.test(url))url='https://'+url;", html)
         self.assertIn('data-act="focus-local-url"', html)
 
     def test_player_settings_show_local_link_like_stable(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index.html").read_text(encoding="utf-8")
         # Come nello stabile: oltre al dominio pubblico si vede il link locale IP:porta del Player TV.
         self.assertIn("r.player_local_url&&r.player_local_url!==r.player_url", html)
         self.assertIn("['Link locale (rete del locale, da usare anche in Cloudflare)',", html)
@@ -1975,7 +1983,7 @@ class CarellasServerTest(unittest.TestCase):
             status, body = self.request("/api/radio/search", "POST", {"q": "Kiss Kiss"})
         self.assertEqual((status, body["stations"][0]["name"]), (200, "Radio Kiss Kiss Italia"))
         search.assert_called_once_with("Kiss Kiss")
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index.html").read_text(encoding="utf-8")
         self.assertIn('data-act="src-tab" data-v="radio"', html)
         self.assertIn('data-act="src-tab" data-v="playlist"', html)
         self.assertIn("command('api/radio/search',{q})", html)
@@ -2195,7 +2203,7 @@ class CarellasServerTest(unittest.TestCase):
                 urllib.request.urlopen(req)
 
     def test_zone_page_has_menu_editor(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index.html").read_text(encoding="utf-8")
         self.assertIn("${ch?menuEditor(ch):''}", html)
         for snippet in ("sw(on,'menu-enable'", "data-bind=\"${p}.page_seconds\"", "pages.length<12", "r.images||r.image", "data-bind=\"${p}.logo_mode\"", "data-bind=\"${p}.ad_percent\"", "data-menu-pdf=", "'menu-preview':async el=>",
                         "post('api/menu/preview',{menu:ch.menu})", "fetch('api/menu/pdf?filename='",
@@ -2376,7 +2384,7 @@ class CarellasServerTest(unittest.TestCase):
         self.assertFalse(engine.music_active)
 
     def test_music_slot_editor_is_available_on_phone(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index_classic.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index_classic.html").read_text(encoding="utf-8")
         self.assertIn("Orari di accensione musica", html)
         self.assertIn("Aggiungi playlist o radio", html)
         self.assertIn("Durata (minuti)", html)
@@ -2399,7 +2407,7 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("sonos_playlist_source", html)
 
     def test_upload_refreshes_library_without_discarding_unsaved_settings(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index_classic.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index_classic.html").read_text(encoding="utf-8")
         self.assertIn("async function refreshMediaLibrary()", html)
         self.assertIn("preserveMediaChoices()", html)
         self.assertIn("api/state?media_refresh=", html)
@@ -2501,7 +2509,7 @@ class CarellasServerTest(unittest.TestCase):
         self.assertTrue(payload["ok"])
 
     def test_library_audio_uses_ingress_relative_player(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index_classic.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index_classic.html").read_text(encoding="utf-8")
         self.assertIn("function libraryMediaUrl(name)", html)
         self.assertIn('<audio class="library-audio" controls', html)
         self.assertNotIn("state.runtime.media_base_url+'/media/'", html)
@@ -2783,7 +2791,7 @@ class CarellasServerTest(unittest.TestCase):
             self.assertIn(("media_player", "volume_set", {"entity_id": ["media_player.bar"], "volume_level": 0.55}), self.calls)
         finally:
             self.app.SONOS_VOLUME_MEMORY.clear()
-        source = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/server.py").read_text(encoding="utf-8")
+        source = (self.addon_dir / "app/server.py").read_text(encoding="utf-8")
         self.assertIn("remembered_sonos_volumes(expected, self.music_volume)", source)
 
     def test_only_selected_sonos_are_grouped_and_spot_uses_coordinator(self):
@@ -3183,7 +3191,7 @@ class CarellasServerTest(unittest.TestCase):
             music["slots"] = saved
 
     def test_zones_page_has_music_and_spot_table(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index.html").read_text(encoding="utf-8")
         page = html[html.index("function pageZone()"):html.index("function zoneEditor(")]
         # Una riga per zona con gli stessi interruttori della pagina della singola zona.
         self.assertIn("L('Musica e spot per zona')", page)
@@ -3196,7 +3204,7 @@ class CarellasServerTest(unittest.TestCase):
             self.assertIn(label, html)
 
     def test_new_interface_has_all_mock_screens_and_uses_existing_api(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index.html").read_text(encoding="utf-8")
         # Tavole A–E del mock: Oggi, Palinsesto, Zone, Configurazione guidata, telefono.
         for page in ("function pageOggi()", "function pagePalinsesto()", "function pageZona()",
                      "function pageGuidata()", "function pageContenuti()", "function pageRegistro()",
@@ -3217,7 +3225,7 @@ class CarellasServerTest(unittest.TestCase):
             self.assertIn(label, html)
 
     def test_today_page_shows_real_sonos_state(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index.html").read_text(encoding="utf-8")
         # Fascia attiva ma Sonos fermi: la pagina lo dice e propone di riavviare la musica.
         self.assertIn("function musicStoppedNow()", html)
         self.assertIn("if(musicStoppedNow())list.push(", html)
@@ -3499,14 +3507,14 @@ class CarellasServerTest(unittest.TestCase):
                 self.app.store.config = json.loads(json.dumps(saved))
         finally:
             self.app.store.config = saved
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index.html").read_text(encoding="utf-8")
         self.assertIn("['remoto','Accesso da Internet']", html)
         self.assertIn('id="set-remoto"', html)
         self.assertIn('data-bind="remote_admin.public_url"', html)
         self.assertIn('<form method="post" action="logout"', html)
         self.assertIn("['Accesso da Internet','Zugang über das Internet']", html)
-        config = (Path(__file__).parents[1] / "carellas_media_ads_beta/config.yaml").read_text(encoding="utf-8")
-        self.assertIn("8104/tcp: 8104", config)
+        config = (self.addon_dir / "config.yaml").read_text(encoding="utf-8")
+        self.assertIn(f"{self.remote_port}/tcp: {self.remote_port}", config)
 
     def test_website_event_dates(self):
         from datetime import date
@@ -3634,14 +3642,14 @@ class CarellasServerTest(unittest.TestCase):
         finally:
             for name in names:
                 (self.app.MEDIA_DIR / name).unlink(missing_ok=True)
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index.html").read_text(encoding="utf-8")
         self.assertIn('id="set-eventi"', html)
         self.assertIn('data-bind="social.website_events.channel_id"', html)
         self.assertIn("command('api/social/events/check',{})", html)
         self.assertIn("['Eventi dal sito','Events von der Website']", html)
 
     def test_side_menu_zones_in_dropdown(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index.html").read_text(encoding="utf-8")
         # Le zone del menu laterale stanno in una tendina chiusa di serie; il browser ricorda se è aperta.
         self.assertIn('data-act="side-zones" aria-expanded="${sideZonesOpen}"', html)
         self.assertIn("localStorage.getItem('carellas.sideZones')==='1'", html)
@@ -3701,12 +3709,12 @@ class CarellasServerTest(unittest.TestCase):
         finally:
             audio.update(saved)
             scheduler.audio_index = 0
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index.html").read_text(encoding="utf-8")
         self.assertIn("'spot-now':()=>command('api/test/audio',{name:rt().next_spot||cfg().audio.ads?.[0],next:true}", html)
         self.assertIn('data-act="spot-test"', html)
 
     def test_schedule_blocks_are_easy_to_tell_apart(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index.html").read_text(encoding="utf-8")
         # Ogni fascia ha il suo colore, spazio tra i blocchi, nome e orario dentro il blocco e le linee delle ore.
         self.assertIn("const SLOT_COLORS=[", html)
         self.assertIn("""<span class="t">${esc(slotTitle(s))}</span><span class="h">${esc(s.start+'–'+slotEnd(s))}</span>""", html)
@@ -3715,7 +3723,7 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("['Musica (un colore per fascia)','Musik (eine Farbe pro Zeitraum)']", html)
 
     def test_short_schedule_blocks_stay_readable(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index.html").read_text(encoding="utf-8")
         # Zoom automatico: la fascia più corta resta larga abbastanza; con − e + si cambia a mano.
         self.assertIn("const autoZoom=Math.max(1,Math.min(6,Math.ceil(90*(H1-H0)/(Math.max(5,shortest)*(S.laneBase||560)))));", html)
         self.assertIn("'zoom-auto':()=>{S.sel.zoom=null;render()}", html)
@@ -3792,7 +3800,7 @@ class CarellasServerTest(unittest.TestCase):
             for store_ in (app.SONOS_MANUAL_VOLUMES, app.SONOS_LAST_SET, app.SONOS_LAST_SET_AT, app.SONOS_MANUAL_CANDIDATES, app.SONOS_VOLUME_MEMORY):
                 store_.clear()
             app.SONOS_MANUAL_FILE.unlink(missing_ok=True)
-        source = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/server.py").read_text(encoding="utf-8")
+        source = (self.addon_dir / "app/server.py").read_text(encoding="utf-8")
         # Durante uno spot i volumi non vengono letti né scambiati per scelte a mano.
         self.assertIn("if not result[\"missing\"] and not audio_playback_lock.locked():", source)
 
@@ -4260,7 +4268,7 @@ class CarellasServerTest(unittest.TestCase):
         finally:
             app.store.config["music"] = saved
             app.MIX_CACHE["signature"] = None
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index.html").read_text(encoding="utf-8")
         self.assertIn("const editor=S.sel.mix?mixEditor():", html)
         self.assertIn("${mixOn?mixBlocks(d):''}", html)
         self.assertIn("['Mix automatico','Automatischer Mix']", html)
@@ -4311,12 +4319,12 @@ class CarellasServerTest(unittest.TestCase):
         finally:
             music["leader"] = saved_leader
             app.SONOS_UNRESPONSIVE.clear()
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index.html").read_text(encoding="utf-8")
         self.assertIn('data-bind="music.leader"', html)
         self.assertIn("['Cassa principale (guida il gruppo)','Hauptlautsprecher (führt die Gruppe)']", html)
 
     def test_today_timeline_is_as_clear_as_the_schedule(self):
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index.html").read_text(encoding="utf-8")
         # Oggi → «La giornata»: blocchi colorati con nome e orario, zoom automatico, mix e ora attuale.
         self.assertIn("const todayBlocks=mixOnNow()?mixToday():slotsOn(day);", html)
         self.assertIn("const tlZoom=Math.max(1,Math.min(6,Math.ceil(90*(h1-h0)/(Math.max(5,shortestToday)*(S.tlBase||560)))));", html)
@@ -4383,7 +4391,7 @@ class CarellasServerTest(unittest.TestCase):
         with mock.patch.object(app.scheduler, "music_off") as off:
             self.assertEqual(self.request("/api/music/manual", "POST", {"action": "off"})[0], 200)
         off.assert_called_once()
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index.html").read_text(encoding="utf-8")
         self.assertIn("'music-off':()=>command('api/music/manual',{action:'off'},'Musica spenta')", html)
         self.assertIn('data-pick="music-on"', html)
         self.assertIn("if(['off','paused'].includes(rt().music_override?.mode))return false;", html)
@@ -4438,7 +4446,7 @@ class CarellasServerTest(unittest.TestCase):
             self.assertIn("api/staff/state", response.read().decode())
         app.SONOS_MANUAL_VOLUMES.clear()
         app.SONOS_MANUAL_FILE.unlink(missing_ok=True)
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index.html").read_text(encoding="utf-8")
         self.assertIn("data-bind=\"${p}.role\"", html)
 
     def test_website_event_image_fills_the_screen(self):
@@ -4530,7 +4538,7 @@ class CarellasServerTest(unittest.TestCase):
         finally:
             app.MUSIC_EXCLUDED.clear()
             app.store.update({"zones": saved_zones, "audio": {"players": saved_audio}})
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/operatori.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/operatori.html").read_text(encoding="utf-8")
         for marker in ("data-zmusic=", "data-zspots=", "data-pvol=", 'data-ctl="next"'):
             self.assertIn(marker, html)
         # Stessa grafica di «Ora in onda» e scelta della lingua IT/DE (ricordata sul tablet).
@@ -4551,11 +4559,11 @@ class CarellasServerTest(unittest.TestCase):
         self.assertEqual(status, 200)
         sala = next(s for s in payload["sonos"] if s["entity_id"] == "media_player.sala")
         self.assertEqual((sala["media_title"], sala["media_artist"]), ("Albachiara", "Vasco Rossi"))
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/index.html").read_text(encoding="utf-8")
         self.assertIn("function nowTrack(){", html)
         self.assertIn('class="now-track"', html)
         self.assertIn("['Brano in onda','Titel läuft']", html)
-        staff = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/operatori.html").read_text(encoding="utf-8")
+        staff = (self.addon_dir / "app/operatori.html").read_text(encoding="utf-8")
         self.assertIn("(c.media_artist?' — '+c.media_artist:'')", staff)
 
     def test_playlist_tracks_are_listed_and_can_be_played(self):
@@ -4592,7 +4600,7 @@ class CarellasServerTest(unittest.TestCase):
         self.assertIn("/api/music/queue", app.STAFF_GET_PATHS)
         self.assertIn("/api/music/queue/play", app.STAFF_POST_PATHS)
         for page in ("index.html", "operatori.html"):
-            html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app" / page).read_text(encoding="utf-8")
+            html = (self.addon_dir / "app" / page).read_text(encoding="utf-8")
             self.assertIn("function queueCard(){", html, page)
             self.assertIn('data-act="queue-toggle"', html, page)
             self.assertIn("api/music/queue/play", html, page)
@@ -4643,7 +4651,7 @@ class CarellasServerTest(unittest.TestCase):
         finally:
             app.SONOS_MANUAL_VOLUMES.clear()
         for page in ("index.html", "operatori.html"):
-            html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app" / page).read_text(encoding="utf-8")
+            html = (self.addon_dir / "app" / page).read_text(encoding="utf-8")
             self.assertIn("function musicVolumeLabel(players,planned)", html, page)
             self.assertIn("musicVolumeLabel(slot.players,", html, page)
             self.assertIn("'scelto a mano, fascia {0}'", html, page)
@@ -4683,9 +4691,9 @@ class CarellasServerTest(unittest.TestCase):
         finally:
             app.SPOTS_EXCLUDED.clear()
             app.store.update({"zones": saved_zones, "audio": saved_audio})
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/operatori.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/operatori.html").read_text(encoding="utf-8")
         self.assertIn("on:!spotsOnIn(z),today:true", html)
-        panel = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/index.html").read_text(encoding="utf-8")
+        panel = (self.addon_dir / "app/index.html").read_text(encoding="utf-8")
         self.assertIn("Lf('Spot tolti per oggi: {0}'", panel)
 
     def test_operators_spot_page_history_and_log(self):
@@ -4743,7 +4751,7 @@ class CarellasServerTest(unittest.TestCase):
             app.store.update({"audio": saved_audio})
             for name in ("Spot_uno.mp3", "Foto_menu.jpg"):
                 (app.MEDIA_DIR / name).unlink(missing_ok=True)
-        html = (Path(__file__).parents[1] / "carellas_media_ads_beta/app/operatori.html").read_text(encoding="utf-8")
+        html = (self.addon_dir / "app/operatori.html").read_text(encoding="utf-8")
         # Menu come nel pannello: tutto su musica e spot, niente impostazioni né TV.
         for marker in ("['palinsesto','Palinsesto','cal']", "function pageSpot()", "function pageStorico()",
                        "function pageRegistro()", "data-spot-today=", "'Togli per oggi':'Heute herausnehmen'"):
@@ -4752,7 +4760,7 @@ class CarellasServerTest(unittest.TestCase):
         self.assertNotIn("['tv','TV']", html)
 
     def test_music_list_scrolls_and_zones_button_on_small_screens(self):
-        base = Path(__file__).parents[1] / "carellas_media_ads_beta/app"
+        base = self.addon_dir / "app"
         staff = (base / "operatori.html").read_text(encoding="utf-8")
         panel = (base / "index.html").read_text(encoding="utf-8")
         # La barra in basso copriva la fine della lista: il foglio deve starle sopra e scorrere al suo interno.
@@ -4796,6 +4804,77 @@ class CarellasServerTest(unittest.TestCase):
         app.store.config["zones"] = [{"id": "sala", "name": "Sala", "players": ["media_player.sala"]}]
         with mock.patch.object(app.ha, "states", return_value=states):
             self.assertIsNone(app.find_zone("media_player.sala"))
+
+    def test_settings_backup_moves_everything_and_adapts_beta_ports(self):
+        app = self.app
+        store = app.store
+        saved_config = json.loads(json.dumps(store.config))
+        saved_history = list(app.spot_history.entries)
+        try:
+            # Impostazioni come le avrebbe la beta: porte 8100/8102/8104 negli indirizzi locali.
+            store.update({
+                "media_base_url": "http://192.168.1.50:8100",
+                "zones": [{"id": "sala", "name": "Sala", "players": ["media_player.sala"]}],
+                "browser_player": {"public_url": "http://192.168.1.50:8102"},
+            })
+            app.SONOS_MANUAL_FILE.write_text(json.dumps({"media_player.sala": [0.3, "2026-11-01T10:00:00+01:00"]}),
+                                             encoding="utf-8")
+            with urllib.request.urlopen(self.base + "/api/backup") as response:
+                self.assertIn("attachment", response.headers.get("Content-Disposition"))
+                backup = json.loads(response.read())
+            self.assertEqual(backup["format"], "carellas-media-ads-backup")
+            self.assertEqual(backup["config"]["zones"][0]["name"], "Sala")
+            self.assertEqual(backup["files"]["sonos_volumes"]["media_player.sala"][0], 0.3)
+            backup["ports"] = {"panel": 8100, "player": 8102, "remote": 8104}
+            backup["files"]["spot_history"] = {"entries": [{
+                "id": "beta1", "time": "2026-11-01T12:00:00+01:00", "spot": "spot.mp3", "players": [],
+                "trigger": "automatic", "status": "played", "duration": 20, "reason": "",
+            }]}
+            # Il pannello che importa è la stabile: porte 8099/8101/8103.
+            store.update({"zones": [], "media_base_url": ""})
+            app.SONOS_MANUAL_VOLUMES.clear()
+            with mock.patch.object(app, "PORT", 8099), mock.patch.object(app, "PLAYER_PORT", 8101), \
+                    mock.patch.object(app, "REMOTE_PORT", 8103), \
+                    mock.patch.object(app.iptv, "build_async", return_value=True):
+                _, result = self.request("/api/backup/import", "POST", backup)
+            self.assertIn("config", result["imported"])
+            self.assertEqual(result["ports_rewritten"], [8100, 8102, 8104])
+            self.assertEqual(store.config["zones"][0]["name"], "Sala")
+            self.assertEqual(store.config["media_base_url"], "http://192.168.1.50:8099")
+            self.assertEqual(store.config["browser_player"]["public_url"], "http://192.168.1.50:8101")
+            # Dati in memoria riletti senza riavviare l'add-on.
+            self.assertEqual([e["id"] for e in app.spot_history.entries], ["beta1"])
+            self.assertEqual(app.SONOS_MANUAL_VOLUMES["media_player.sala"][0], 0.3)
+            # Anche dopo un riavvio la configurazione importata resta.
+            self.assertEqual(json.loads(app.CONFIG_FILE.read_text(encoding="utf-8"))["zones"][0]["id"], "sala")
+        finally:
+            store.config = saved_config
+            store.save()
+            app.spot_history.entries = saved_history
+            app.SONOS_MANUAL_FILE.unlink(missing_ok=True)
+            app.SONOS_MANUAL_VOLUMES.clear()
+
+    def test_settings_backup_rejects_other_files_and_operators(self):
+        before = json.dumps(self.app.store.config, sort_keys=True)
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.request("/api/backup/import", "POST", {"config": {"zones": []}})
+        caught.exception.close()
+        self.assertEqual(json.dumps(self.app.store.config, sort_keys=True), before)
+        # Chi entra da Home Assistant senza essere amministratore non può né esportare né importare.
+        for path, method in (("/api/backup", "GET"), ("/api/backup/import", "POST")):
+            data = None if method == "GET" else b"{}"
+            request = urllib.request.Request(self.base + path, data=data, method=method, headers={
+                "Content-Type": "application/json", "X-Remote-User-Id": "operaio"})
+            with mock.patch.object(self.app, "ha_user_is_admin", return_value=False):
+                with self.assertRaises(urllib.error.HTTPError) as caught:
+                    urllib.request.urlopen(request)
+            self.assertEqual(caught.exception.code, 403)
+            caught.exception.close()
+
+    def test_ports_can_be_set_for_the_stable_addon(self):
+        source = (self.addon_dir / "app/server.py").read_text(encoding="utf-8")
+        for name, default in (("CARELLAS_PORT", "8100"), ("CARELLAS_PLAYER_PORT", "8102"), ("CARELLAS_REMOTE_PORT", "8104")):
+            self.assertIn(f'os.environ.get("{name}", "{default}")', source)
 
     def test_overnight_schedule(self):
         schedule = [{"days": [6], "start": "22:00", "end": "02:00", "enabled": True}]
