@@ -17,18 +17,21 @@ jobs:
         with:
           python-version: "3.13"
       - name: Compile
-        run: python -m py_compile carellas_media_ads/app/server.py
+        run: python -m py_compile carellas_media_ads/app/server.py carellas_media_ads_beta/app/server.py
       - name: Validate dashboard JavaScript
         run: |
           python - <<'PY'
           from pathlib import Path
           import re
-          html = Path("carellas_media_ads/app/index.html").read_text()
-          scripts = re.findall(r"<script>(.*?)</script>", html, re.S)
-          if not scripts:
-              raise SystemExit("No inline JavaScript found")
-          Path("/tmp/carellas-dashboard.js").write_text("\n".join(scripts))
+          # Stabile e beta: pannello, pagina operatori e pannello precedente (/classic).
+          for addon in ("carellas_media_ads", "carellas_media_ads_beta"):
+              for page in ("index", "operatori", "index_classic"):
+                  html = Path(f"{addon}/app/{page}.html").read_text()
+                  scripts = re.findall(r"<script>(.*?)</script>", html, re.S)
+                  if not scripts:
+                      raise SystemExit(f"No inline JavaScript found in {addon}/app/{page}.html")
+                  Path(f"/tmp/{addon}-{page}.js").write_text("\n".join(scripts))
           PY
-          node --check /tmp/carellas-dashboard.js
+          for file in /tmp/carellas_media_ads*-*.js; do node --check "$file"; done
       - name: Unit tests
         run: python -m unittest discover -s tests -v
